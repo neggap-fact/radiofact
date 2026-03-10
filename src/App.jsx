@@ -75,7 +75,7 @@ export default function App() {
 useEffect(() => {
   async function testSupabase() {
     const { data, error } = await supabase
-      .from("clients")
+      .from("clientes")
       .select("*");
 
     if (error) {
