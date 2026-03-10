@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { supabase } from "./supabase";
 
 const Icon = ({ d, size = 18, className = "" }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -71,6 +72,22 @@ const INIT_EXPENSES = [
 ];
 
 export default function App() {
+useEffect(() => {
+  async function testSupabase() {
+    const { data, error } = await supabase
+      .from("clients")
+      .select("*");
+
+    if (error) {
+      console.error("Error Supabase:", error);
+    } else {
+      console.log("Supabase conectado. Clientes:", data);
+    }
+  }
+
+  testSupabase();
+}, []);
+
   const [currentUser, setCurrentUser] = useState(null);
   const [users, setUsers] = useState(INIT_USERS);
   const [clients, setClients] = useState(INIT_CLIENTS);
