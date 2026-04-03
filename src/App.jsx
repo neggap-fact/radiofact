@@ -512,10 +512,52 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
     const detail=`${ct.descripcion} — Período: ${periodo}${ct.textoOpcional?" — "+ct.textoOpcional:""}${extraText?" — "+extraText:""}`;
     return{id:`inv-${Date.now()}-${Math.random()}`,contractId:ct.id,clientId:ct.clientId,clientName:client?.razonSocial,clientEmail:client?.email,tipoFactura:client?.tipoFactura,numero:`${client?.tipoFactura}-0001-${num}`,month:billMonth+1,year:billYear,periodo,detalle:detail,neto:ct.montoNeto,iva:ct.iva,total:ct.total,estado:"Emitida",cae:"",fechaPago:"",emailEnviado:false,emitida:new Date().toISOString()};
   };
-  const approveAndEmit=(contractIds,texts={})=>{
-    const newInvoices=contractIds.map(ctId=>{const ct=contracts.find(c=>c.id===ctId);return buildInvoice(ct,texts[ctId]||"");});
-    setInvoices(prev=>[...prev,...newInvoices]);
-    setNotifications(prev=>prev.map(n=>({...n,read:true})));
+  const BACKEND_URL = "https://radiofact-backend-production.up.railway.app";
+
+  const approveAndEmit = async (contractIds, texts = {}) => {
+    const results = [];
+    for (const ctId of contractIds) {
+      const ct = contracts.find(c => c.id === ctId);
+      const client = clients.find(c => c.id === ct.clientId);
+      const cuitLimpio = client.cuit.replace(/-/g, "");
+      const tipoFactura = client.tipoFactura === "A" ? 1 : 6;
+      try {
+        const res = await fetch(`${BACKEND_URL}/facturar`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cuit_cliente: parseInt(cuitLimpio),
+            tipo_doc: 80,
+            tipo_factura: tipoFactura,
+            punto_venta: 3,
+            monto_neto: ct.montoNeto,
+            monto_iva: ct.iva,
+            monto_total: ct.total,
+            concepto: 2,
+          }),
+        });
+        const data = await res.json();
+        const inv = buildInvoice(ct, texts[ctId] || "");
+        if (data.exito) {
+          inv.cae = data.datos.cae;
+          inv.cae_vencimiento = data.datos.cae_vencimiento;
+          inv.numero = `${client.tipoFactura}-0003-${String(data.datos.numero).padStart(8,"0")}`;
+          inv.estado = "Emitida";
+        } else {
+          inv.estado = "Borrador";
+          inv.error = data.error;
+          alert(`⚠️ Error en factura de ${client.razonSocial}: ${data.error}`);
+        }
+        results.push(inv);
+      } catch (e) {
+        const inv = buildInvoice(ct, texts[ctId] || "");
+        inv.estado = "Borrador";
+        results.push(inv);
+        alert(`❌ Error de conexión para ${client?.razonSocial}`);
+      }
+    }
+    setInvoices(prev => [...prev, ...results]);
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
     setReviewModal(null);
   };
   const updateInvoice=(id,data)=>setInvoices(prev=>prev.map(i=>i.id===id?{...i,...data}:i));
