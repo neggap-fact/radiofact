@@ -25,6 +25,7 @@ const Icons = {
   send: "M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z",
   expenses: "M3 3h18v18H3zM3 9h18M9 21V9",
   download: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3",
+  pdf: "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M8 13h8M8 17h5",
   report: "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M8 13h8M8 17h5",
 };
 
@@ -196,7 +197,7 @@ useEffect(() => {
           {page==="dashboard"&&<Dashboard clients={clients} contracts={contracts} invoices={invoices} expenses={expenses} notifications={notifications} setPage={setPage}/>}
           {page==="clients"&&<Clients clients={clients} setClients={setClients} contracts={contracts} canEdit={canEdit}/>}
           {page==="contracts"&&<Contracts contracts={contracts} setContracts={setContracts} clients={clients} canEdit={canEdit}/>}
-          {page==="billing"&&<Billing clients={clients} contracts={contracts} invoices={invoices} setInvoices={setInvoices} notifications={notifications} setNotifications={setNotifications} config={config} canEdit={canEdit}/>}
+          {page==="billing"&&<Billing clients={clients} contracts={contracts} invoices={invoices} setInvoices={setInvoices} notifications={notifications} setNotifications={setNotifications} config={config} canEdit={canEdit} descargarPDF={descargarPDF}/>}
           {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} canEdit={canEdit}/>}
           {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses}/>}
           {page==="reports"&&<Reports clients={clients} contracts={contracts} invoices={invoices} expenses={expenses}/>}
@@ -489,7 +490,7 @@ function ContractModal({data,clients,onSave,onClose}){
   );
 }
 
-function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifications,config,canEdit}){
+function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifications,config,canEdit,descargarPDF}){
   const today=new Date();
   const [selMonth,setSelMonth]=useState(today.getMonth());
   const [selYear,setSelYear]=useState(today.getFullYear());
@@ -561,6 +562,46 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
     setReviewModal(null);
   };
   const updateInvoice=(id,data)=>setInvoices(prev=>prev.map(i=>i.id===id?{...i,...data}:i));
+
+  const descargarPDF = async (inv) => {
+    try {
+      const client = clients.find(c => c.id === inv.clientId);
+      const res = await fetch(`${BACKEND_URL}/pdf-factura`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          numero: inv.numero,
+          clientName: inv.clientName,
+          clientCuit: client?.cuit || "-",
+          clientDomicilio: client?.domicilio || "-",
+          periodo: inv.periodo,
+          detalle: inv.detalle,
+          neto: inv.neto,
+          iva: inv.iva,
+          total: inv.total,
+          cae: inv.cae,
+          cae_vencimiento: inv.cae_vencimiento,
+          fecha: inv.fecha || new Date().toISOString().slice(0,10).replace(/-/g,""),
+          tipoFactura: inv.tipoFactura,
+          empresa: "LA VANGUARDIA NOTICIAS",
+          empresaCuit: "30-71644424-0",
+          empresaDomicilio: "Gobernador Gregores 1370, Caleta Olivia",
+        }),
+      });
+      if (!res.ok) throw new Error("Error generando PDF");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Factura-${inv.numero}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch(e) {
+      alert("Error descargando PDF: " + e.message);
+    }
+  };
   return(
     <div className="space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
@@ -602,7 +643,7 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>{["Número","Cliente","Neto","IVA","Total","Estado","CAE",""].map(h=><th key={h} className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>)}</tr>
+              <tr>{["Número","Cliente","Neto","IVA","Total","Estado","CAE","PDF",""].map(h=><th key={h} className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>)}</tr>
             </thead>
             <tbody>
               {monthInvoices.map(inv=>(
@@ -625,6 +666,13 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
                   <td className="px-3 py-2.5">
                     {inv.cae?<span className="font-mono text-xs text-gray-400">{inv.cae.slice(0,8)}...</span>:
                       canEdit&&<input placeholder="CAE" value={inv.cae||""} onChange={e=>updateInvoice(inv.id,{cae:e.target.value})} className="text-xs border border-gray-200 rounded px-1.5 py-1 w-24 focus:outline-none"/>}
+                  </td>
+                  <td className="px-3 py-2.5">
+                    {inv.cae && (
+                      <button onClick={()=>descargarPDF(inv)} title="Descargar PDF" className="text-red-400 hover:text-red-600">
+                        <Icon d={Icons.pdf} size={14}/>
+                      </button>
+                    )}
                   </td>
                   <td className="px-3 py-2.5">
                     <button onClick={()=>setEmailModal(inv)} className={`${inv.emailEnviado?"text-green-500":"text-gray-400 hover:text-blue-600"}`}>
