@@ -562,6 +562,7 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
     setReviewModal(null);
   };
   const updateInvoice=(id,data)=>setInvoices(prev=>prev.map(i=>i.id===id?{...i,...data}:i));
+
   return(
     <div className="space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
