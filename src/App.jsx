@@ -614,17 +614,17 @@ function ContractModal({data,clients,onSave,onClose}){
 
 function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifications,config,canEdit,descargarPDF}){
   const today=new Date();
-  const [selMonth,setSelMonth]=useState(today.getMonth());
+  const [selMonth,setSelMonth]=useState(today.getMonth()+1);
   const [selYear,setSelYear]=useState(today.getFullYear());
   const [reviewModal,setReviewModal]=useState(null);
   const [emailModal,setEmailModal]=useState(null);
-  const billMonth=selMonth===0?11:selMonth-1;
-  const billYear=selMonth===0?selYear-1:selYear;
+  const billMonth=selMonth;
+  const billYear=selYear;
   const pendingContracts=contracts.filter(ct=>{
     if(!ct.active) return false;
-    return !invoices.find(inv=>inv.contractId===ct.id&&inv.month===billMonth+1&&inv.year===billYear);
+    return !invoices.find(inv=>inv.contractId===ct.id&&inv.month===billMonth&&inv.year===billYear);
   });
-  const monthInvoices=invoices.filter(i=>i.month===billMonth+1&&i.year===billYear);
+  const monthInvoices=invoices.filter(i=>i.month===billMonth&&i.year===billYear);
   const totNeto=monthInvoices.reduce((s,i)=>s+i.neto,0);
   const totIva=monthInvoices.reduce((s,i)=>s+i.iva,0);
   const totTotal=monthInvoices.reduce((s,i)=>s+i.total,0);
@@ -633,7 +633,7 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
     const num=String(invoices.length+1).padStart(8,"0");
     const periodo=`${MONTHS[billMonth]} ${billYear}`;
     const detail=`${ct.descripcion} — Período: ${periodo}${ct.textoOpcional?" — "+ct.textoOpcional:""}${extraText?" — "+extraText:""}`;
-    return{id:`inv-${Date.now()}-${Math.random()}`,contractId:ct.id,clientId:ct.clientId,clientName:client?.razonSocial,clientEmail:client?.email,tipoFactura:client?.tipoFactura,numero:`${client?.tipoFactura}-0001-${num}`,month:billMonth+1,year:billYear,periodo,detalle:detail,neto:ct.montoNeto,iva:ct.iva,total:ct.total,estado:"Emitida",cae:"",fechaPago:"",emailEnviado:false,emitida:new Date().toISOString()};
+    return{id:`inv-${Date.now()}-${Math.random()}`,contractId:ct.id,clientId:ct.clientId,clientName:client?.razonSocial,clientEmail:client?.email,tipoFactura:client?.tipoFactura,numero:`${client?.tipoFactura}-0001-${num}`,month:billMonth,year:billYear,periodo,detalle:detail,neto:ct.montoNeto,iva:ct.iva,total:ct.total,estado:"Emitida",cae:"",fechaPago:"",emailEnviado:false,emitida:new Date().toISOString()};
   };
   const approveAndEmit = async (contractIds, texts = {}) => {
     const results = [];
@@ -772,7 +772,7 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
         {monthInvoices.length===0&&<div className="text-center py-8 text-gray-400 text-sm">Sin facturas para este período</div>}
       </div>
       {reviewModal&&<ReviewModal contracts={reviewModal} clients={clients} onApprove={approveAndEmit} onClose={()=>setReviewModal(null)}/>}
-      {emailModal&&<EmailModal invoice={emailModal} config={config} onClose={()=>setEmailModal(null)} onSent={()=>{updateInvoice(emailModal.id,{emailEnviado:true});setEmailModal(null);}}/>}
+      {emailModal&&<EmailModal invoice={emailModal} config={config} clients={clients} onClose={()=>setEmailModal(null)} onSent={()=>{updateInvoice(emailModal.id,{emailEnviado:true});setEmailModal(null);}}/>}
     </div>
   );
 }
@@ -825,11 +825,51 @@ function ReviewModal({contracts,clients,onApprove,onClose}){
   );
 }
 
-function EmailModal({invoice,config,onClose,onSent}){
+function EmailModal({invoice,config,clients,onClose,onSent}){
   const body=config.emailTemplate.replace("{cliente}",invoice.clientName).replace("{numero}",invoice.numero).replace("{periodo}",invoice.periodo).replace("{total}",fmtMoney(invoice.total)).replace("{empresa}",config.empresa);
   const [msg,setMsg]=useState(body);
   const [sending,setSending]=useState(false);
-  const send=()=>{setSending(true);setTimeout(()=>{setSending(false);onSent();},1500);};
+  const [error,setError]=useState("");
+  const client = clients?.find(c=>c.id===invoice.clientId);
+
+  const send=async()=>{
+    if(!invoice.clientEmail){ setError("Esta factura no tiene email del cliente"); return; }
+    setSending(true);
+    setError("");
+    try {
+      const res = await fetch(`${BACKEND_URL}/enviar-email`, {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          numero: invoice.numero,
+          clientName: invoice.clientName,
+          clientCuit: client?.cuit || invoice.clientCuit || "-",
+          clientDomicilio: client?.domicilio || "-",
+          periodo: invoice.periodo,
+          detalle: invoice.detalle,
+          neto: invoice.neto,
+          iva: invoice.iva,
+          total: invoice.total,
+          cae: invoice.cae,
+          cae_vencimiento: invoice.cae_vencimiento,
+          fecha: invoice.fecha,
+          tipoFactura: invoice.tipoFactura,
+          empresa: config.empresa || "LA VANGUARDIA NOTICIAS",
+          empresaCuit: config.cuit || "30-71644424-0",
+          empresaDomicilio: config.domicilio || "Gobernador Gregores 1370, Caleta Olivia",
+          emailDestino: invoice.clientEmail,
+          emailAsunto: `Factura ${invoice.numero} — ${invoice.periodo}`,
+          emailCuerpo: msg,
+        }),
+      });
+      const data = await res.json();
+      if(data.exito){ onSent(); }
+      else { setError(data.error || "Error al enviar"); }
+    } catch(e) {
+      setError("Error de conexión: " + e.message);
+    }
+    setSending(false);
+  };
   return(
     <Modal title="Enviar factura por email" onClose={onClose} wide>
       <div className="space-y-3">
@@ -842,6 +882,7 @@ function EmailModal({invoice,config,onClose,onSent}){
           <textarea value={msg} onChange={e=>setMsg(e.target.value)} rows={7} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none resize-none"/>
         </div>
         <div className="p-2 bg-blue-50 rounded text-xs text-blue-600">📎 PDF adjunto automáticamente</div>
+        {error&&<p className="text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
       </div>
       <div className="flex justify-end gap-2 mt-4">
         <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">Cancelar</button>
@@ -1389,8 +1430,9 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
   const [form, setForm] = useState(empty);
   const [emitiendo, setEmitiendo] = useState(false);
   const [resultado, setResultado] = useState(null);
-
-  const f = k => e => setForm(p=>({...p,[k]:e.target.value}));
+  const [emailTexto, setEmailTexto] = useState("");
+  const [enviandoEmail, setEnviandoEmail] = useState(false);
+  const [emailEnviado, setEmailEnviado] = useState(false);
 
   const neto = parseFloat(form.montoNeto)||0;
   const iva = Math.round(neto*0.105*100)/100;
@@ -1405,6 +1447,46 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
       const c = clients.find(cl=>cl.id===id);
       if(c) setForm(p=>({...p,clienteId:id,razonSocial:c.razonSocial,cuit:c.cuit,domicilio:c.domicilio,condicionIVA:c.condicionIVA,tipoFactura:c.tipoFactura,email:c.email}));
     }
+  };
+
+  const enviarEmail = async () => {
+    if(!resultado?.inv) return;
+    if(!form.email) { alert("Este cliente no tiene email cargado"); return; }
+    setEnviandoEmail(true);
+    try {
+      const inv = resultado.inv;
+      const res = await fetch(`${BACKEND_URL}/enviar-email`, {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          numero: inv.numero,
+          clientName: inv.clientName,
+          clientCuit: form.cuit,
+          clientDomicilio: form.domicilio,
+          periodo: inv.periodo,
+          detalle: inv.detalle,
+          neto: inv.neto,
+          iva: inv.iva,
+          total: inv.total,
+          cae: inv.cae,
+          cae_vencimiento: inv.cae_vencimiento,
+          fecha: inv.fecha,
+          tipoFactura: inv.tipoFactura,
+          empresa: "LA VANGUARDIA NOTICIAS",
+          empresaCuit: "30-71644424-0",
+          empresaDomicilio: "Gobernador Gregores 1370, Caleta Olivia",
+          emailDestino: form.email,
+          emailAsunto: `Factura ${inv.numero} — ${inv.periodo}`,
+          emailCuerpo: emailTexto,
+        }),
+      });
+      const data = await res.json();
+      if(data.exito) setEmailEnviado(true);
+      else alert("Error al enviar: " + data.error);
+    } catch(e) {
+      alert("Error de conexión: " + e.message);
+    }
+    setEnviandoEmail(false);
   };
 
   const emitir = async () => {
@@ -1482,6 +1564,9 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
         // Guardar factura en Supabase
         await guardarFacturaSupabase(inv, clientId);
         setInvoices(prev=>[inv,...prev]);
+        // Generar texto base del email
+        setEmailTexto(`Estimado/a ${form.razonSocial},\n\nAdjunto encontrará la factura ${inv.numero} correspondiente a:\n${form.detalle}\n\nNeto: ${fmtMoney(neto)}\nIVA 10.5%: ${fmtMoney(iva)}\nTotal: ${fmtMoney(total)}\n\nCAE: ${data.datos.cae}\n\nQuedamos a su disposición.\n\nLA VANGUARDIA NOTICIAS`);
+        setEmailEnviado(false);
         setResultado({exito:true, inv});
         setForm(empty);
       } else {
@@ -1567,6 +1652,26 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
                 <Icon d={Icons.pdf} size={14}/>Descargar PDF
               </button>
             </div>
+
+            {form.email && (
+              <div className="mt-4 pt-4 border-t border-green-200 space-y-2">
+                <p className="text-xs font-semibold text-green-800">📧 Enviar por email a: {form.email}</p>
+                <textarea
+                  value={emailTexto}
+                  onChange={e=>setEmailTexto(e.target.value)}
+                  rows={8}
+                  className="w-full px-3 py-2 border border-green-200 rounded-lg text-xs focus:outline-none resize-none bg-white"
+                />
+                <button
+                  onClick={enviarEmail}
+                  disabled={enviandoEmail || emailEnviado}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium ${emailEnviado?"bg-gray-100 text-gray-500":"bg-blue-600 text-white hover:bg-blue-700"} disabled:opacity-50`}
+                >
+                  <Icon d={Icons.mail} size={14}/>
+                  {enviandoEmail ? "Enviando..." : emailEnviado ? "✅ Email enviado" : "Enviar email con PDF"}
+                </button>
+              </div>
+            )}
           ) : (
             <div>
               <p className="font-semibold text-red-800">❌ Error al emitir</p>
@@ -1577,8 +1682,13 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
       )}
 
       {canEdit && (
-        <button onClick={emitir} disabled={emitiendo} className="w-full bg-blue-600 text-white py-3 rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2">
-          {emitiendo ? "⏳ Emitiendo factura..." : <><Icon d={Icons.send} size={16}/>Emitir Factura a ARCA</>}
+        <button onClick={emitir} disabled={emitiendo || resultado?.exito} className="w-full bg-blue-600 text-white py-3 rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2">
+          {emitiendo ? "⏳ Emitiendo factura..." : resultado?.exito ? "✅ Factura emitida" : <><Icon d={Icons.send} size={16}/>Emitir Factura a ARCA</>}
+        </button>
+      )}
+      {resultado?.exito && (
+        <button onClick={()=>{setResultado(null);setForm(empty);}} className="w-full border border-blue-600 text-blue-600 py-2 rounded-lg text-sm font-medium hover:bg-blue-50">
+          + Nueva factura
         </button>
       )}
     </div>
