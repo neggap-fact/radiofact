@@ -167,6 +167,8 @@ useEffect(() => {
         if(d.config) setConfig(d.config);
         if(d.notifications) setNotifications(d.notifications);
       }
+      const savedUser = localStorage.getItem("radiofact-session");
+      if(savedUser) setCurrentUser(JSON.parse(savedUser));
     }catch(e){}
   },[]);
 
@@ -177,7 +179,11 @@ useEffect(() => {
 
   const handleLogin = ()=>{
     const u = users.find(u=>u.email===loginForm.email&&u.password===loginForm.password&&u.active);
-    if(u){setCurrentUser(u);setLoginError("");}
+    if(u){
+      setCurrentUser(u);
+      setLoginError("");
+      localStorage.setItem("radiofact-session", JSON.stringify(u));
+    }
     else setLoginError("Email o contraseña incorrectos.");
   };
 
@@ -221,7 +227,7 @@ useEffect(() => {
               <div className="text-xs text-gray-400 capitalize">{currentUser.role}</div>
             </div>
           </div>
-          <button onClick={()=>setCurrentUser(null)} className="w-full flex items-center gap-2 text-xs text-gray-500 hover:text-red-600 px-1 py-1">
+          <button onClick={()=>{setCurrentUser(null);localStorage.removeItem("radiofact-session");}} className="w-full flex items-center gap-2 text-xs text-gray-500 hover:text-red-600 px-1 py-1">
             <Icon d={Icons.logout} size={13}/>Cerrar sesión
           </button>
         </div>
@@ -265,12 +271,6 @@ function LoginScreen({form,setForm,onLogin,error}){
           <Field label="Contraseña" value={form.password} onChange={e=>setForm(f=>({...f,password:e.target.value}))} type="password" placeholder="••••••••" onKeyDown={e=>e.key==="Enter"&&onLogin()}/>
           {error&&<p className="text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
           <button onClick={onLogin} className="w-full bg-blue-600 text-white py-2.5 rounded-lg text-sm font-semibold hover:bg-blue-700">Ingresar</button>
-        </div>
-        <div className="mt-5 p-3 bg-gray-50 rounded-lg text-xs text-gray-500 space-y-1">
-          <p className="font-semibold text-gray-600 mb-1.5">👤 Usuarios demo:</p>
-          <p>admin@radio.com / admin123 → <span className="text-purple-600 font-medium">Webmaster</span></p>
-          <p>maria@radio.com / maria123 → <span className="text-blue-600 font-medium">Administrador</span></p>
-          <p>carlos@radio.com / carlos123 → <span className="text-gray-600 font-medium">Operador</span></p>
         </div>
       </div>
     </div>
