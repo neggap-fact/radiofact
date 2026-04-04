@@ -29,6 +29,8 @@ const Icons = {
   report: "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M8 13h8M8 17h5",
 };
 
+const BACKEND_URL = "https://radiofact-backend-production.up.railway.app";
+
 const MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const EXPENSE_CATS = ["Proveedores","Personal","Servicios","Impuestos","Alquiler","Otros"];
 
@@ -513,8 +515,6 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
     const detail=`${ct.descripcion} — Período: ${periodo}${ct.textoOpcional?" — "+ct.textoOpcional:""}${extraText?" — "+extraText:""}`;
     return{id:`inv-${Date.now()}-${Math.random()}`,contractId:ct.id,clientId:ct.clientId,clientName:client?.razonSocial,clientEmail:client?.email,tipoFactura:client?.tipoFactura,numero:`${client?.tipoFactura}-0001-${num}`,month:billMonth+1,year:billYear,periodo,detalle:detail,neto:ct.montoNeto,iva:ct.iva,total:ct.total,estado:"Emitida",cae:"",fechaPago:"",emailEnviado:false,emitida:new Date().toISOString()};
   };
-  const BACKEND_URL = "https://radiofact-backend-production.up.railway.app";
-
   const approveAndEmit = async (contractIds, texts = {}) => {
     const results = [];
     for (const ctId of contractIds) {
@@ -562,46 +562,6 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
     setReviewModal(null);
   };
   const updateInvoice=(id,data)=>setInvoices(prev=>prev.map(i=>i.id===id?{...i,...data}:i));
-
-  const descargarPDF = async (inv) => {
-    try {
-      const client = clients.find(c => c.id === inv.clientId);
-      const res = await fetch(`${BACKEND_URL}/pdf-factura`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          numero: inv.numero,
-          clientName: inv.clientName,
-          clientCuit: client?.cuit || "-",
-          clientDomicilio: client?.domicilio || "-",
-          periodo: inv.periodo,
-          detalle: inv.detalle,
-          neto: inv.neto,
-          iva: inv.iva,
-          total: inv.total,
-          cae: inv.cae,
-          cae_vencimiento: inv.cae_vencimiento,
-          fecha: inv.fecha || new Date().toISOString().slice(0,10).replace(/-/g,""),
-          tipoFactura: inv.tipoFactura,
-          empresa: "LA VANGUARDIA NOTICIAS",
-          empresaCuit: "30-71644424-0",
-          empresaDomicilio: "Gobernador Gregores 1370, Caleta Olivia",
-        }),
-      });
-      if (!res.ok) throw new Error("Error generando PDF");
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `Factura-${inv.numero}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch(e) {
-      alert("Error descargando PDF: " + e.message);
-    }
-  };
   return(
     <div className="space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
