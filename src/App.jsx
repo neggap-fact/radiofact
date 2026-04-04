@@ -110,6 +110,46 @@ useEffect(() => {
   const [loginForm, setLoginForm] = useState({email:"",password:""});
   const [loginError, setLoginError] = useState("");
 
+  const descargarPDF = async (inv) => {
+    try {
+      const client = clients.find(c => c.id === inv.clientId);
+      const res = await fetch(`${BACKEND_URL}/pdf-factura`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          numero: inv.numero,
+          clientName: inv.clientName,
+          clientCuit: client?.cuit || "-",
+          clientDomicilio: client?.domicilio || "-",
+          periodo: inv.periodo,
+          detalle: inv.detalle,
+          neto: inv.neto,
+          iva: inv.iva,
+          total: inv.total,
+          cae: inv.cae,
+          cae_vencimiento: inv.cae_vencimiento,
+          fecha: inv.fecha || new Date().toISOString().slice(0,10).replace(/-/g,""),
+          tipoFactura: inv.tipoFactura,
+          empresa: "LA VANGUARDIA NOTICIAS",
+          empresaCuit: "30-71644424-0",
+          empresaDomicilio: "Gobernador Gregores 1370, Caleta Olivia",
+        }),
+      });
+      if (!res.ok) throw new Error("Error generando PDF");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Factura-${inv.numero}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch(e) {
+      alert("Error descargando PDF: " + e.message);
+    }
+  };
+
   const save = useCallback(async(data)=>{
     try{ localStorage.setItem("radiofact-v3", JSON.stringify(data)); }catch(e){}
   },[]);
