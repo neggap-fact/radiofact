@@ -75,40 +75,103 @@ const INIT_EXPENSES = [
 ];
 
 export default function App() {
-useEffect(() => {
-  async function testSupabase() {
-    const { data, error } = await supabase
-      .from("clientes")
-      .select("*");
-
-    if (error) {
-      console.error("Error Supabase:", error);
-    } else {
-      console.log("Supabase conectado. Clientes:", data);
-    }
-  }
-
-  testSupabase();
-}, []);
-
   const [currentUser, setCurrentUser] = useState(null);
   const [users, setUsers] = useState(INIT_USERS);
-  const [clients, setClients] = useState(INIT_CLIENTS);
+  const [clients, setClients] = useState([]);
   const [contracts, setContracts] = useState(INIT_CONTRACTS);
-  const [invoices, setInvoices] = useState(INIT_INVOICES);
+  const [invoices, setInvoices] = useState([]);
   const [expenses, setExpenses] = useState(INIT_EXPENSES);
-  const [notifications, setNotifications] = useState([
-    {id:"n1",type:"billing",month:1,year:2026,count:2,read:false,message:"2 facturas de Febrero 2026 pendientes de revisión"}
-  ]);
+  const [notifications, setNotifications] = useState([]);
   const [page, setPage] = useState("dashboard");
   const [config, setConfig] = useState({
-    empresa:"Radio Publicidad S.A.",cuit:"30-99999999-9",
-    domicilio:"Av. Principal 100, Caleta Olivia",email:"info@radiopublicidad.com.ar",
+    empresa:"LA VANGUARDIA NOTICIAS",cuit:"30-71644424-0",
+    domicilio:"Gobernador Gregores 1370, Caleta Olivia",email:"info@lavanguardianoticias.com.ar",
     diaFacturacion:1,diasGracia:5,
     emailTemplate:"Estimado/a {cliente},\n\nAdjunto encontrará la factura {numero} correspondiente al período {periodo}.\n\nMonto total: {total}\n\nQuedamos a su disposición.\n\nSaludos,\n{empresa}",
   });
   const [loginForm, setLoginForm] = useState({email:"",password:""});
   const [loginError, setLoginError] = useState("");
+
+  // Cargar clientes desde Supabase
+  useEffect(()=>{
+    async function cargarClientes() {
+      const {data,error} = await supabase.from("clientes").select("*").order("razon_social");
+      if(!error && data) {
+        setClients(data.map(c=>({
+          id: c.id,
+          razonSocial: c.razon_social,
+          cuit: c.cuit,
+          domicilio: c.domicilio,
+          condicionIVA: c.condicion_iva,
+          tipoFactura: c.tipo_factura,
+          email: c.email,
+          telefono: c.telefono || "",
+          active: c.activo !== false,
+        })));
+      }
+    }
+    cargarClientes();
+  },[]);
+
+  // Cargar facturas desde Supabase
+  useEffect(()=>{
+    async function cargarFacturas() {
+      const {data,error} = await supabase.from("facturas").select("*").order("created_at",{ascending:false});
+      if(!error && data) {
+        setInvoices(data.map(f=>({
+          id: f.id,
+          contractId: f.contrato_id,
+          clientId: f.cliente_id,
+          clientName: f.client_name || "",
+          clientEmail: f.client_email || "",
+          tipoFactura: f.tipo_comprobante===1?"A":"B",
+          numero: f.numero_comprobante ? `${f.tipo_comprobante===1?"A":"B"}-0003-${String(f.numero_comprobante).padStart(8,"0")}` : "",
+          month: f.fecha_emision ? new Date(f.fecha_emision).getMonth()+1 : new Date().getMonth()+1,
+          year: f.fecha_emision ? new Date(f.fecha_emision).getFullYear() : new Date().getFullYear(),
+          periodo: f.periodo || "",
+          detalle: f.detalle || "",
+          neto: parseFloat(f.neto)||0,
+          iva: parseFloat(f.iva)||0,
+          total: parseFloat(f.total)||0,
+          estado: f.estado || "Emitida",
+          cae: f.cae || "",
+          cae_vencimiento: f.cae_vencimiento || "",
+          fechaPago: f.fecha_pago || "",
+          emailEnviado: false,
+          fecha: f.fecha_emision ? f.fecha_emision.replace(/-/g,"") : "",
+        })));
+      }
+    }
+    cargarFacturas();
+  },[]);
+
+  // Guardar factura en Supabase
+  const guardarFacturaSupabase = async (inv, clientId) => {
+    const tipoComp = inv.tipoFactura === "A" ? 1 : 6;
+    await supabase.from("facturas").insert({
+      contrato_id: inv.contractId || null,
+      cliente_id: clientId || inv.clientId || null,
+      client_name: inv.clientName,
+      client_email: inv.clientEmail || "",
+      periodo: inv.periodo,
+      detalle: inv.detalle,
+      neto: inv.neto,
+      iva: inv.iva,
+      total: inv.total,
+      numero_comprobante: inv.numero ? parseInt(inv.numero.split("-")[2]) : null,
+      tipo_comprobante: tipoComp,
+      cae: inv.cae,
+      cae_vencimiento: inv.cae_vencimiento || null,
+      estado: inv.estado || "Emitida",
+      fecha_emision: inv.fecha ? `${inv.fecha.slice(0,4)}-${inv.fecha.slice(4,6)}-${inv.fecha.slice(6,8)}` : todayStr(),
+      punto_venta: 3,
+      tipo_doc_cliente: 80,
+      cuit_cliente: inv.clientCuit || "",
+      moneda: "PES",
+      cotizacion: 1,
+      resultado: "A",
+    });
+  };
 
   const descargarPDF = async (inv) => {
     try {
@@ -160,12 +223,9 @@ useEffect(() => {
       if(raw){
         const d = JSON.parse(raw);
         if(d.users) setUsers(d.users);
-        if(d.clients) setClients(d.clients);
         if(d.contracts) setContracts(d.contracts);
-        if(d.invoices) setInvoices(d.invoices);
         if(d.expenses) setExpenses(d.expenses);
         if(d.config) setConfig(d.config);
-        if(d.notifications) setNotifications(d.notifications);
       }
       const savedUser = localStorage.getItem("radiofact-session");
       if(savedUser) setCurrentUser(JSON.parse(savedUser));
@@ -174,8 +234,8 @@ useEffect(() => {
 
   useEffect(()=>{
     if(!currentUser) return;
-    save({users,clients,contracts,invoices,expenses,config,notifications});
-  },[users,clients,contracts,invoices,expenses,config,notifications]);
+    save({users,contracts,expenses,config});
+  },[users,contracts,expenses,config]);
 
   const handleLogin = ()=>{
     const u = users.find(u=>u.email===loginForm.email&&u.password===loginForm.password&&u.active);
@@ -197,6 +257,7 @@ useEffect(() => {
     {id:"clients",label:"Clientes",icon:Icons.clients},
     {id:"contracts",label:"Contratos",icon:Icons.contracts},
     {id:"billing",label:"Facturación",icon:Icons.billing},
+    {id:"factura-directa",label:"Factura Directa",icon:Icons.pdf},
     {id:"expenses",label:"Gastos",icon:Icons.expenses},
     {id:"finance",label:"Finanzas",icon:Icons.finance},
     {id:"reports",label:"Reportes",icon:Icons.download},
@@ -246,6 +307,7 @@ useEffect(() => {
           {page==="clients"&&<Clients clients={clients} setClients={setClients} contracts={contracts} canEdit={canEdit}/>}
           {page==="contracts"&&<Contracts contracts={contracts} setContracts={setContracts} clients={clients} canEdit={canEdit}/>}
           {page==="billing"&&<Billing clients={clients} contracts={contracts} invoices={invoices} setInvoices={setInvoices} notifications={notifications} setNotifications={setNotifications} config={config} canEdit={canEdit} descargarPDF={descargarPDF}/>}
+          {page==="factura-directa"&&<FacturaDirecta clients={clients} setClients={setClients} invoices={invoices} setInvoices={setInvoices} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase}/>}
           {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} canEdit={canEdit}/>}
           {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses}/>}
           {page==="reports"&&<Reports clients={clients} contracts={contracts} invoices={invoices} expenses={expenses}/>}
@@ -355,9 +417,27 @@ function Clients({clients,setClients,contracts,canEdit}){
   const [search,setSearch]=useState("");
   const empty={razonSocial:"",cuit:"",domicilio:"",condicionIVA:"Responsable Inscripto",tipoFactura:"A",email:"",telefono:"",active:true};
   const filtered=clients.filter(c=>c.razonSocial.toLowerCase().includes(search.toLowerCase())||c.cuit.includes(search));
-  const save=(data)=>{
-    if(data.id) setClients(prev=>prev.map(c=>c.id===data.id?data:c));
-    else setClients(prev=>[...prev,{...data,id:`c-${Date.now()}`}]);
+  const save=async(data)=>{
+    const supabaseData = {
+      razon_social: data.razonSocial,
+      cuit: data.cuit,
+      domicilio: data.domicilio,
+      condicion_iva: data.condicionIVA,
+      tipo_factura: data.tipoFactura,
+      email: data.email,
+      telefono: data.telefono || "",
+      activo: data.active !== false,
+    };
+    if(data.id && !data.id.startsWith("c-")) {
+      // Actualizar en Supabase
+      await supabase.from("clientes").update(supabaseData).eq("id", data.id);
+      setClients(prev=>prev.map(c=>c.id===data.id?data:c));
+    } else {
+      // Insertar en Supabase
+      const {data:newClient} = await supabase.from("clientes").insert(supabaseData).select().single();
+      if(newClient) setClients(prev=>[...prev,{...data,id:newClient.id}]);
+      else setClients(prev=>[...prev,{...data,id:`c-${Date.now()}`}]);
+    }
     setModal(null);
   };
   return(
@@ -584,6 +664,10 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
           inv.cae_vencimiento = data.datos.cae_vencimiento;
           inv.numero = `${client.tipoFactura}-0003-${String(data.datos.numero).padStart(8,"0")}`;
           inv.estado = "Emitida";
+          inv.fecha = data.datos.fecha;
+          inv.clientCuit = client.cuit;
+          // Guardar en Supabase
+          await guardarFacturaSupabase(inv, ct.clientId);
         } else {
           inv.estado = "Borrador";
           inv.error = data.error;
@@ -1291,4 +1375,212 @@ function Field({label,value,onChange,type="text",placeholder="",onKeyDown}){
 function EstadoBadge({estado}){
   const colors={Borrador:"bg-gray-100 text-gray-600",Emitida:"bg-blue-50 text-blue-700",Pagada:"bg-green-50 text-green-700"};
   return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${colors[estado]||"bg-gray-100 text-gray-600"}`}>{estado}</span>;
+}
+
+function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, descargarPDF, guardarFacturaSupabase}) {
+  const empty = {
+    // Datos del cliente
+    razonSocial:"", cuit:"", domicilio:"", condicionIVA:"Responsable Inscripto", tipoFactura:"B", email:"",
+    // Datos de la factura
+    detalle:"", montoNeto:"", concepto:2,
+    // Cliente existente o nuevo
+    clienteId:"nuevo",
+  };
+  const [form, setForm] = useState(empty);
+  const [emitiendo, setEmitiendo] = useState(false);
+  const [resultado, setResultado] = useState(null);
+
+  const f = k => e => setForm(p=>({...p,[k]:e.target.value}));
+
+  const neto = parseFloat(form.montoNeto)||0;
+  const iva = Math.round(neto*0.105*100)/100;
+  const total = Math.round((neto+iva)*100)/100;
+
+  const clienteSeleccionado = clients.find(c=>c.id===form.clienteId);
+
+  const handleClienteChange = (id) => {
+    if(id==="nuevo") {
+      setForm(p=>({...p,clienteId:"nuevo",razonSocial:"",cuit:"",domicilio:"",condicionIVA:"Responsable Inscripto",tipoFactura:"B",email:""}));
+    } else {
+      const c = clients.find(cl=>cl.id===id);
+      if(c) setForm(p=>({...p,clienteId:id,razonSocial:c.razonSocial,cuit:c.cuit,domicilio:c.domicilio,condicionIVA:c.condicionIVA,tipoFactura:c.tipoFactura,email:c.email}));
+    }
+  };
+
+  const emitir = async () => {
+    if(!form.razonSocial||!form.cuit||!form.detalle||!form.montoNeto) {
+      alert("Completá todos los campos obligatorios");
+      return;
+    }
+    setEmitiendo(true);
+    setResultado(null);
+    try {
+      const cuitLimpio = form.cuit.replace(/-/g,"");
+      const tipoFactura = form.tipoFactura==="A" ? 1 : 6;
+
+      const res = await fetch(`${BACKEND_URL}/facturar`, {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          cuit_cliente: parseInt(cuitLimpio),
+          tipo_doc: 80,
+          tipo_factura: tipoFactura,
+          punto_venta: 3,
+          monto_neto: neto,
+          monto_iva: iva,
+          monto_total: total,
+          concepto: parseInt(form.concepto),
+        }),
+      });
+      const data = await res.json();
+
+      if(data.exito) {
+        // Guardar cliente en Supabase si es nuevo
+        let clientId = form.clienteId !== "nuevo" ? form.clienteId : null;
+        if(form.clienteId==="nuevo") {
+          const {data:newClient} = await supabase.from("clientes").insert({
+            razon_social: form.razonSocial,
+            cuit: form.cuit,
+            domicilio: form.domicilio,
+            condicion_iva: form.condicionIVA,
+            tipo_factura: form.tipoFactura,
+            email: form.email,
+            activo: true,
+          }).select().single();
+          if(newClient) {
+            clientId = newClient.id;
+            setClients(prev=>[...prev,{
+              id:newClient.id,razonSocial:form.razonSocial,cuit:form.cuit,
+              domicilio:form.domicilio,condicionIVA:form.condicionIVA,
+              tipoFactura:form.tipoFactura,email:form.email,active:true
+            }]);
+          }
+        }
+
+        const inv = {
+          id: `inv-directa-${Date.now()}`,
+          contractId: null,
+          clientId: clientId,
+          clientName: form.razonSocial,
+          clientEmail: form.email,
+          clientCuit: form.cuit,
+          tipoFactura: form.tipoFactura,
+          numero: `${form.tipoFactura}-0003-${String(data.datos.numero).padStart(8,"0")}`,
+          month: new Date().getMonth()+1,
+          year: new Date().getFullYear(),
+          periodo: `${MONTHS[new Date().getMonth()]} ${new Date().getFullYear()}`,
+          detalle: form.detalle,
+          neto, iva, total,
+          estado: "Emitida",
+          cae: data.datos.cae,
+          cae_vencimiento: data.datos.cae_vencimiento,
+          fecha: data.datos.fecha,
+          fechaPago: "",
+          emailEnviado: false,
+        };
+
+        // Guardar factura en Supabase
+        await guardarFacturaSupabase(inv, clientId);
+        setInvoices(prev=>[inv,...prev]);
+        setResultado({exito:true, inv});
+        setForm(empty);
+      } else {
+        setResultado({exito:false, error:data.error});
+      }
+    } catch(e) {
+      setResultado({exito:false, error:e.message});
+    }
+    setEmitiendo(false);
+  };
+
+  return(
+    <div className="max-w-2xl space-y-4">
+      <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+        <h3 className="font-semibold text-sm border-b border-gray-100 pb-2">📋 Datos del receptor</h3>
+
+        <div>
+          <label className="text-xs font-medium text-gray-600">Cliente existente o nuevo</label>
+          <select value={form.clienteId} onChange={e=>handleClienteChange(e.target.value)} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+            <option value="nuevo">➕ Nuevo cliente</option>
+            {clients.filter(c=>c.active!==false).map(c=><option key={c.id} value={c.id}>{c.razonSocial} — {c.cuit}</option>)}
+          </select>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2"><Field label="Razón Social *" value={form.razonSocial} onChange={f("razonSocial")}/></div>
+          <Field label="CUIT *" value={form.cuit} onChange={f("cuit")} placeholder="30-12345678-9"/>
+          <Field label="Email" value={form.email} onChange={f("email")} type="email"/>
+          <div className="col-span-2"><Field label="Domicilio" value={form.domicilio} onChange={f("domicilio")}/></div>
+          <div>
+            <label className="text-xs font-medium text-gray-600">Condición IVA</label>
+            <select value={form.condicionIVA} onChange={f("condicionIVA")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+              {["Responsable Inscripto","Monotributista","Exento","Consumidor Final"].map(o=><option key={o}>{o}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-600">Tipo Factura</label>
+            <select value={form.tipoFactura} onChange={f("tipoFactura")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+              <option value="A">Factura A (Responsable Inscripto)</option>
+              <option value="B">Factura B (Consumidor / Mono)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+        <h3 className="font-semibold text-sm border-b border-gray-100 pb-2">💰 Datos de la factura</h3>
+        <div>
+          <label className="text-xs font-medium text-gray-600">Concepto</label>
+          <select value={form.concepto} onChange={f("concepto")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+            <option value={1}>Productos</option>
+            <option value={2}>Servicios</option>
+            <option value={3}>Productos y Servicios</option>
+          </select>
+        </div>
+        <Field label="Descripción del servicio *" value={form.detalle} onChange={f("detalle")} placeholder="Publicidad radio — Abril 2026"/>
+        <Field label="Monto neto ($) *" value={form.montoNeto} onChange={f("montoNeto")} type="number"/>
+
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-gray-400">Neto</p>
+            <p className="font-bold text-sm">{fmtMoney(neto)}</p>
+          </div>
+          <div className="bg-orange-50 rounded-lg p-3">
+            <p className="text-xs text-orange-400">IVA 10.5%</p>
+            <p className="font-bold text-sm text-orange-700">{fmtMoney(iva)}</p>
+          </div>
+          <div className="bg-blue-50 rounded-lg p-3">
+            <p className="text-xs text-blue-400">Total</p>
+            <p className="font-bold text-sm text-blue-700">{fmtMoney(total)}</p>
+          </div>
+        </div>
+      </div>
+
+      {resultado && (
+        <div className={`rounded-xl border p-4 ${resultado.exito?"bg-green-50 border-green-200":"bg-red-50 border-red-200"}`}>
+          {resultado.exito ? (
+            <div className="space-y-2">
+              <p className="font-semibold text-green-800">✅ Factura emitida correctamente</p>
+              <p className="text-sm text-green-700">Número: <strong>{resultado.inv.numero}</strong></p>
+              <p className="text-sm text-green-700">CAE: <strong>{resultado.inv.cae}</strong></p>
+              <button onClick={()=>descargarPDF(resultado.inv)} className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 mt-2">
+                <Icon d={Icons.pdf} size={14}/>Descargar PDF
+              </button>
+            </div>
+          ) : (
+            <div>
+              <p className="font-semibold text-red-800">❌ Error al emitir</p>
+              <p className="text-sm text-red-700 mt-1">{resultado.error}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {canEdit && (
+        <button onClick={emitir} disabled={emitiendo} className="w-full bg-blue-600 text-white py-3 rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2">
+          {emitiendo ? "⏳ Emitiendo factura..." : <><Icon d={Icons.send} size={16}/>Emitir Factura a ARCA</>}
+        </button>
+      )}
+    </div>
+  );
 }
