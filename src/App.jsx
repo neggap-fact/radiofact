@@ -30,6 +30,7 @@ const Icons = {
 };
 
 const BACKEND_URL = "https://radiofact-backend-production.up.railway.app";
+const DEBUG_MODE = true; // Cambiar a false para emitir facturas reales a ARCA
 
 const MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const EXPENSE_CATS = ["Proveedores","Personal","Servicios","Impuestos","Alquiler","Otros"];
@@ -647,22 +648,29 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
       const cuitLimpio = client.cuit.replace(/-/g, "");
       const tipoFactura = client.tipoFactura === "A" ? 1 : 6;
       try {
-        const res = await fetch(`${BACKEND_URL}/facturar`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            cuit_cliente: parseInt(cuitLimpio),
-            tipo_doc: 80,
-            tipo_factura: tipoFactura,
-            punto_venta: 3,
-            monto_neto: ct.montoNeto,
-            monto_iva: ct.iva,
-            monto_total: ct.total,
-            concepto: 2,
-          }),
-        });
-        const data = await res.json();
-        const inv = buildInvoice(ct, texts[ctId] || "");
+        // Modo debug: simula respuesta de ARCA sin llamarla
+        let data;
+        if(DEBUG_MODE) {
+          const fakeNum = Math.floor(Math.random()*900)+100;
+          data = { exito: true, datos: { cae: `DEBUG${Date.now()}`, cae_vencimiento: "20260430", numero: fakeNum, fecha: todayStr().replace(/-/g,"") }};
+          console.log("🔧 DEBUG MODE: Factura simulada, no se envió a ARCA");
+        } else {
+          const res = await fetch(`${BACKEND_URL}/facturar`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              cuit_cliente: parseInt(cuitLimpio),
+              tipo_doc: 80,
+              tipo_factura: tipoFactura,
+              punto_venta: 3,
+              monto_neto: ct.montoNeto,
+              monto_iva: ct.iva,
+              monto_total: ct.total,
+              concepto: 2,
+            }),
+          });
+          data = await res.json();
+        }        const inv = buildInvoice(ct, texts[ctId] || "");
         if (data.exito) {
           inv.cae = data.datos.cae;
           inv.cae_vencimiento = data.datos.cae_vencimiento;
@@ -1504,21 +1512,29 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
       const cuitLimpio = form.cuit.replace(/-/g,"");
       const tipoFactura = form.tipoFactura==="A" ? 1 : 6;
 
-      const res = await fetch(`${BACKEND_URL}/facturar`, {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({
-          cuit_cliente: parseInt(cuitLimpio),
-          tipo_doc: 80,
-          tipo_factura: tipoFactura,
-          punto_venta: 3,
-          monto_neto: neto,
-          monto_iva: iva,
-          monto_total: total,
-          concepto: parseInt(form.concepto),
-        }),
-      });
-      const data = await res.json();
+      // Modo debug: simula respuesta de ARCA sin llamarla
+      let data;
+      if(DEBUG_MODE) {
+        const fakeNum = Math.floor(Math.random()*900)+100;
+        data = { exito: true, datos: { cae: `DEBUG${Date.now()}`, cae_vencimiento: "20260430", numero: fakeNum, fecha: todayStr().replace(/-/g,"") }};
+        console.log("🔧 DEBUG MODE: Factura simulada, no se envió a ARCA");
+      } else {
+        const res = await fetch(`${BACKEND_URL}/facturar`, {
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({
+            cuit_cliente: parseInt(cuitLimpio),
+            tipo_doc: 80,
+            tipo_factura: tipoFactura,
+            punto_venta: 3,
+            monto_neto: neto,
+            monto_iva: iva,
+            monto_total: total,
+            concepto: parseInt(form.concepto),
+          }),
+        });
+        data = await res.json();
+      }
 
       if(data.exito) {
         // Guardar cliente en Supabase si es nuevo
