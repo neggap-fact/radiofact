@@ -1462,7 +1462,8 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
 
   const enviarEmail = async () => {
     if(!resultado?.inv) return;
-    if(!form.email) { alert("Este cliente no tiene email cargado"); return; }
+    const emailDestino = resultado.clientEmail;
+    if(!emailDestino) { alert("Este cliente no tiene email cargado"); return; }
     setEnviandoEmail(true);
     try {
       const inv = resultado.inv;
@@ -1472,8 +1473,8 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
         body: JSON.stringify({
           numero: inv.numero,
           clientName: inv.clientName,
-          clientCuit: form.cuit,
-          clientDomicilio: form.domicilio,
+          clientCuit: resultado.clientCuitGuardado || inv.clientCuit || "-",
+          clientDomicilio: resultado.clientDomicilioGuardado || "-",
           periodo: inv.periodo,
           detalle: inv.detalle,
           neto: inv.neto,
@@ -1486,7 +1487,7 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
           empresa: "LA VANGUARDIA NOTICIAS",
           empresaCuit: "30-71644424-0",
           empresaDomicilio: "Gobernador Gregores 1370, Caleta Olivia",
-          emailDestino: form.email,
+          emailDestino: emailDestino,
           emailAsunto: `Factura ${inv.numero} — ${inv.periodo}`,
           emailCuerpo: emailTexto,
         }),
@@ -1537,22 +1538,26 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
       if(data.exito) {
         let clientId = form.clienteId !== "nuevo" ? form.clienteId : null;
         if(form.clienteId==="nuevo") {
-          const {data:newClient} = await supabase.from("clientes").insert({
+          const {data:newClient, error:clientError} = await supabase.from("clientes").insert({
             razon_social: form.razonSocial,
             cuit: form.cuit,
-            domicilio: form.domicilio,
+            domicilio: form.domicilio || "",
             condicion_iva: form.condicionIVA,
             tipo_factura: form.tipoFactura,
-            email: form.email,
+            email: form.email || "",
+            telefono: "",
             activo: true,
           }).select().single();
+          if(clientError) console.error("Error al guardar cliente:", clientError);
           if(newClient) {
             clientId = newClient.id;
             setClients(prev=>[...prev,{
               id:newClient.id,razonSocial:form.razonSocial,cuit:form.cuit,
-              domicilio:form.domicilio,condicionIVA:form.condicionIVA,
-              tipoFactura:form.tipoFactura,email:form.email,active:true
+              domicilio:form.domicilio||"",condicionIVA:form.condicionIVA,
+              tipoFactura:form.tipoFactura,email:form.email||"",
+              telefono:"",active:true
             }]);
+            console.log("Cliente guardado en Supabase:", newClient.id);
           }
         }
 
@@ -1580,9 +1585,14 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
 
         await guardarFacturaSupabase(inv, clientId);
         setInvoices(prev=>[inv,...prev]);
+        // Guardamos email y cuit ANTES de limpiar el form
+        const clientEmail = form.email;
+        const clientCuitGuardado = form.cuit;
+        const clientDomicilioGuardado = form.domicilio;
         setEmailTexto(`Estimado/a ${form.razonSocial},\n\nAdjunto encontrará la factura ${inv.numero} correspondiente a:\n${form.detalle}\n\nNeto: ${fmtMoney(neto)}\nIVA 10.5%: ${fmtMoney(iva)}\nTotal: ${fmtMoney(total)}\n\nCAE: ${data.datos.cae}\n\nQuedamos a su disposición.\n\nLA VANGUARDIA NOTICIAS`);
         setEmailEnviado(false);
-        setResultado({exito:true, inv});
+        // Guardamos email en resultado para poder usarlo después de limpiar el form
+        setResultado({exito:true, inv, clientEmail, clientCuitGuardado, clientDomicilioGuardado});
         setForm(empty);
       } else {
         setResultado({exito:false, error:data.error});
@@ -1664,9 +1674,9 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
               <button onClick={()=>descargarPDF(resultado.inv)} className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 mt-2">
                 <Icon d={Icons.pdf} size={14}/>Descargar PDF
               </button>
-              {form.email && (
+              {resultado.clientEmail && (
                 <div className="mt-4 pt-4 border-t border-green-200 space-y-2">
-                  <p className="text-xs font-semibold text-green-800">📧 Enviar por email a: {form.email}</p>
+                  <p className="text-xs font-semibold text-green-800">📧 Enviar por email a: {resultado.clientEmail}</p>
                   <textarea
                     value={emailTexto}
                     onChange={e=>setEmailTexto(e.target.value)}
