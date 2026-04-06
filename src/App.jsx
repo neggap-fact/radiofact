@@ -148,7 +148,7 @@ export default function App() {
   // Guardar factura en Supabase
   const guardarFacturaSupabase = async (inv, clientId) => {
     const tipoComp = inv.tipoFactura === "A" ? 1 : 6;
-    await supabase.from("facturas").insert({
+    const payload = {
       contrato_id: inv.contractId || null,
       cliente_id: clientId || inv.clientId || null,
       client_name: inv.clientName,
@@ -170,7 +170,11 @@ export default function App() {
       moneda: "PES",
       cotizacion: 1,
       resultado: "A",
-    });
+    };
+    console.log("Guardando factura en Supabase:", payload);
+    const {data, error} = await supabase.from("facturas").insert(payload).select();
+    if(error) console.error("Error Supabase al guardar factura:", error);
+    else console.log("Factura guardada OK:", data);
   };
 
   const descargarPDF = async (inv) => {
