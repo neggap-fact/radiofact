@@ -311,7 +311,8 @@ export default function App() {
           {page==="dashboard"&&<Dashboard clients={clients} contracts={contracts} invoices={invoices} expenses={expenses} notifications={notifications} setPage={setPage}/>}
           {page==="clients"&&<Clients clients={clients} setClients={setClients} contracts={contracts} canEdit={canEdit}/>}
           {page==="contracts"&&<Contracts contracts={contracts} setContracts={setContracts} clients={clients} canEdit={canEdit}/>}
-          {page==="billing"&&<Billing clients={clients} contracts={contracts} invoices={invoices} setInvoices={setInvoices} notifications={notifications} setNotifications={setNotifications} config={config} canEdit={canEdit} descargarPDF={descargarPDF}/>}
+          {/* FIX 1: agregado guardarFacturaSupabase como prop */}
+          {page==="billing"&&<Billing clients={clients} contracts={contracts} invoices={invoices} setInvoices={setInvoices} notifications={notifications} setNotifications={setNotifications} config={config} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase}/>}
           {page==="factura-directa"&&<FacturaDirecta clients={clients} setClients={setClients} invoices={invoices} setInvoices={setInvoices} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase}/>}
           {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} canEdit={canEdit}/>}
           {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses}/>}
@@ -434,11 +435,9 @@ function Clients({clients,setClients,contracts,canEdit}){
       activo: data.active !== false,
     };
     if(data.id && !data.id.startsWith("c-")) {
-      // Actualizar en Supabase
       await supabase.from("clientes").update(supabaseData).eq("id", data.id);
       setClients(prev=>prev.map(c=>c.id===data.id?data:c));
     } else {
-      // Insertar en Supabase
       const {data:newClient} = await supabase.from("clientes").insert(supabaseData).select().single();
       if(newClient) setClients(prev=>[...prev,{...data,id:newClient.id}]);
       else setClients(prev=>[...prev,{...data,id:`c-${Date.now()}`}]);
@@ -617,7 +616,8 @@ function ContractModal({data,clients,onSave,onClose}){
   );
 }
 
-function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifications,config,canEdit,descargarPDF}){
+// FIX 2: agregado guardarFacturaSupabase a la firma del componente Billing
+function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifications,config,canEdit,descargarPDF,guardarFacturaSupabase}){
   const today=new Date();
   const [selMonth,setSelMonth]=useState(today.getMonth()+1);
   const [selYear,setSelYear]=useState(today.getFullYear());
@@ -636,7 +636,7 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
   const buildInvoice=(ct,extraText="")=>{
     const client=clients.find(c=>c.id===ct.clientId);
     const num=String(invoices.length+1).padStart(8,"0");
-    const periodo=`${MONTHS[billMonth]} ${billYear}`;
+    const periodo=`${MONTHS[billMonth-1]} ${billYear}`;
     const detail=`${ct.descripcion} — Período: ${periodo}${ct.textoOpcional?" — "+ct.textoOpcional:""}${extraText?" — "+extraText:""}`;
     return{id:`inv-${Date.now()}-${Math.random()}`,contractId:ct.id,clientId:ct.clientId,clientName:client?.razonSocial,clientEmail:client?.email,tipoFactura:client?.tipoFactura,numero:`${client?.tipoFactura}-0001-${num}`,month:billMonth,year:billYear,periodo,detalle:detail,neto:ct.montoNeto,iva:ct.iva,total:ct.total,estado:"Emitida",cae:"",fechaPago:"",emailEnviado:false,emitida:new Date().toISOString()};
   };
@@ -648,7 +648,6 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
       const cuitLimpio = client.cuit.replace(/-/g, "");
       const tipoFactura = client.tipoFactura === "A" ? 1 : 6;
       try {
-        // Modo debug: simula respuesta de ARCA sin llamarla
         let data;
         if(DEBUG_MODE) {
           const fakeNum = Math.floor(Math.random()*900)+100;
@@ -670,7 +669,8 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
             }),
           });
           data = await res.json();
-        }        const inv = buildInvoice(ct, texts[ctId] || "");
+        }
+        const inv = buildInvoice(ct, texts[ctId] || "");
         if (data.exito) {
           inv.cae = data.datos.cae;
           inv.cae_vencimiento = data.datos.cae_vencimiento;
@@ -678,7 +678,6 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
           inv.estado = "Emitida";
           inv.fecha = data.datos.fecha;
           inv.clientCuit = client.cuit;
-          // Guardar en Supabase
           await guardarFacturaSupabase(inv, ct.clientId);
         } else {
           inv.estado = "Borrador";
@@ -703,12 +702,12 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
     <div className="space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
         <select value={selMonth} onChange={e=>setSelMonth(Number(e.target.value))} className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
-          {MONTHS.map((m,i)=><option key={i} value={i}>{m}</option>)}
+          {MONTHS.map((m,i)=><option key={i} value={i+1}>{m}</option>)}
         </select>
         <select value={selYear} onChange={e=>setSelYear(Number(e.target.value))} className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
           {[2024,2025,2026].map(y=><option key={y}>{y}</option>)}
         </select>
-        <span className="text-xs text-gray-500">Período: <strong>{MONTHS[billMonth]} {billYear}</strong></span>
+        <span className="text-xs text-gray-500">Período: <strong>{MONTHS[billMonth-1]} {billYear}</strong></span>
       </div>
       {monthInvoices.length>0&&(
         <div className="grid grid-cols-3 gap-3">
@@ -726,7 +725,7 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
             <Icon d={Icons.alert} size={18} className="text-amber-600 flex-shrink-0"/>
             <div>
               <p className="font-semibold text-amber-800 text-sm">{pendingContracts.length} contrato(s) sin facturar</p>
-              <p className="text-xs text-amber-600">{MONTHS[billMonth]} {billYear}</p>
+              <p className="text-xs text-amber-600">{MONTHS[billMonth-1]} {billYear}</p>
             </div>
           </div>
           <button onClick={()=>setReviewModal(pendingContracts)} className="bg-amber-600 text-white text-sm px-4 py-2 rounded-lg hover:bg-amber-700 flex-shrink-0">Revisar y aprobar</button>
@@ -734,7 +733,7 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
       )}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-          <h3 className="font-semibold text-sm">Facturas — {MONTHS[billMonth]} {billYear}</h3>
+          <h3 className="font-semibold text-sm">Facturas — {MONTHS[billMonth-1]} {billYear}</h3>
           <span className="text-xs text-gray-400">{monthInvoices.length} facturas</span>
         </div>
         <div className="overflow-x-auto">
@@ -1073,7 +1072,7 @@ function Reports({clients,contracts,invoices,expenses}){
         ].map(s=>(
           <div key={s.label} className="bg-white rounded-xl border border-gray-200 p-3">
             <p className="text-xs text-gray-400">{s.label}</p>
-            <p className={`font-bold text-base mt-0.5 ${s.color==="blue"?"text-blue-700":s.color==="orange"?"text-orange-600":"text-green-700"===s.color?"text-green-700":"text-red-600"}`}>{s.value}</p>
+            <p className={`font-bold text-base mt-0.5 ${s.color==="blue"?"text-blue-700":s.color==="orange"?"text-orange-600":s.color==="green"?"text-green-700":"text-red-600"}`}>{s.value}</p>
           </div>
         ))}
       </div>
@@ -1430,13 +1429,11 @@ function EstadoBadge({estado}){
   return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${colors[estado]||"bg-gray-100 text-gray-600"}`}>{estado}</span>;
 }
 
+// FIX 3: corregido el JSX de FacturaDirecta - {form.email && ...} movido dentro del div space-y-2
 function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, descargarPDF, guardarFacturaSupabase}) {
   const empty = {
-    // Datos del cliente
     razonSocial:"", cuit:"", domicilio:"", condicionIVA:"Responsable Inscripto", tipoFactura:"B", email:"",
-    // Datos de la factura
     detalle:"", montoNeto:"", concepto:2,
-    // Cliente existente o nuevo
     clienteId:"nuevo",
   };
   const [form, setForm] = useState(empty);
@@ -1449,6 +1446,8 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
   const neto = parseFloat(form.montoNeto)||0;
   const iva = Math.round(neto*0.105*100)/100;
   const total = Math.round((neto+iva)*100)/100;
+
+  const f = k => e => setForm(p => ({...p, [k]: e.target.value}));
 
   const clienteSeleccionado = clients.find(c=>c.id===form.clienteId);
 
@@ -1512,7 +1511,6 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
       const cuitLimpio = form.cuit.replace(/-/g,"");
       const tipoFactura = form.tipoFactura==="A" ? 1 : 6;
 
-      // Modo debug: simula respuesta de ARCA sin llamarla
       let data;
       if(DEBUG_MODE) {
         const fakeNum = Math.floor(Math.random()*900)+100;
@@ -1537,7 +1535,6 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
       }
 
       if(data.exito) {
-        // Guardar cliente en Supabase si es nuevo
         let clientId = form.clienteId !== "nuevo" ? form.clienteId : null;
         if(form.clienteId==="nuevo") {
           const {data:newClient} = await supabase.from("clientes").insert({
@@ -1581,10 +1578,8 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
           emailEnviado: false,
         };
 
-        // Guardar factura en Supabase
         await guardarFacturaSupabase(inv, clientId);
         setInvoices(prev=>[inv,...prev]);
-        // Generar texto base del email
         setEmailTexto(`Estimado/a ${form.razonSocial},\n\nAdjunto encontrará la factura ${inv.numero} correspondiente a:\n${form.detalle}\n\nNeto: ${fmtMoney(neto)}\nIVA 10.5%: ${fmtMoney(iva)}\nTotal: ${fmtMoney(total)}\n\nCAE: ${data.datos.cae}\n\nQuedamos a su disposición.\n\nLA VANGUARDIA NOTICIAS`);
         setEmailEnviado(false);
         setResultado({exito:true, inv});
@@ -1602,7 +1597,6 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
     <div className="max-w-2xl space-y-4">
       <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
         <h3 className="font-semibold text-sm border-b border-gray-100 pb-2">📋 Datos del receptor</h3>
-
         <div>
           <label className="text-xs font-medium text-gray-600">Cliente existente o nuevo</label>
           <select value={form.clienteId} onChange={e=>handleClienteChange(e.target.value)} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
@@ -1610,7 +1604,6 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
             {clients.filter(c=>c.active!==false).map(c=><option key={c.id} value={c.id}>{c.razonSocial} — {c.cuit}</option>)}
           </select>
         </div>
-
         <div className="grid grid-cols-2 gap-3">
           <div className="col-span-2"><Field label="Razón Social *" value={form.razonSocial} onChange={f("razonSocial")}/></div>
           <Field label="CUIT *" value={form.cuit} onChange={f("cuit")} placeholder="30-12345678-9"/>
@@ -1644,7 +1637,6 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
         </div>
         <Field label="Descripción del servicio *" value={form.detalle} onChange={f("detalle")} placeholder="Publicidad radio — Abril 2026"/>
         <Field label="Monto neto ($) *" value={form.montoNeto} onChange={f("montoNeto")} type="number"/>
-
         <div className="grid grid-cols-3 gap-3">
           <div className="bg-gray-50 rounded-lg p-3">
             <p className="text-xs text-gray-400">Neto</p>
@@ -1664,6 +1656,7 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
       {resultado && (
         <div className={`rounded-xl border p-4 ${resultado.exito?"bg-green-50 border-green-200":"bg-red-50 border-red-200"}`}>
           {resultado.exito ? (
+            // FIX 3: {form.email && ...} ahora está DENTRO del div space-y-2
             <div className="space-y-2">
               <p className="font-semibold text-green-800">✅ Factura emitida correctamente</p>
               <p className="text-sm text-green-700">Número: <strong>{resultado.inv.numero}</strong></p>
@@ -1671,27 +1664,26 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
               <button onClick={()=>descargarPDF(resultado.inv)} className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 mt-2">
                 <Icon d={Icons.pdf} size={14}/>Descargar PDF
               </button>
+              {form.email && (
+                <div className="mt-4 pt-4 border-t border-green-200 space-y-2">
+                  <p className="text-xs font-semibold text-green-800">📧 Enviar por email a: {form.email}</p>
+                  <textarea
+                    value={emailTexto}
+                    onChange={e=>setEmailTexto(e.target.value)}
+                    rows={8}
+                    className="w-full px-3 py-2 border border-green-200 rounded-lg text-xs focus:outline-none resize-none bg-white"
+                  />
+                  <button
+                    onClick={enviarEmail}
+                    disabled={enviandoEmail || emailEnviado}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium ${emailEnviado?"bg-gray-100 text-gray-500":"bg-blue-600 text-white hover:bg-blue-700"} disabled:opacity-50`}
+                  >
+                    <Icon d={Icons.mail} size={14}/>
+                    {enviandoEmail ? "Enviando..." : emailEnviado ? "✅ Email enviado" : "Enviar email con PDF"}
+                  </button>
+                </div>
+              )}
             </div>
-
-            {form.email && (
-              <div className="mt-4 pt-4 border-t border-green-200 space-y-2">
-                <p className="text-xs font-semibold text-green-800">📧 Enviar por email a: {form.email}</p>
-                <textarea
-                  value={emailTexto}
-                  onChange={e=>setEmailTexto(e.target.value)}
-                  rows={8}
-                  className="w-full px-3 py-2 border border-green-200 rounded-lg text-xs focus:outline-none resize-none bg-white"
-                />
-                <button
-                  onClick={enviarEmail}
-                  disabled={enviandoEmail || emailEnviado}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium ${emailEnviado?"bg-gray-100 text-gray-500":"bg-blue-600 text-white hover:bg-blue-700"} disabled:opacity-50`}
-                >
-                  <Icon d={Icons.mail} size={14}/>
-                  {enviandoEmail ? "Enviando..." : emailEnviado ? "✅ Email enviado" : "Enviar email con PDF"}
-                </button>
-              </div>
-            )}
           ) : (
             <div>
               <p className="font-semibold text-red-800">❌ Error al emitir</p>
