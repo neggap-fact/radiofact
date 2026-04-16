@@ -30,7 +30,7 @@ const Icons = {
 };
 
 const BACKEND_URL = "https://radiofact-backend-production.up.railway.app";
-const DEBUG_MODE = true; // Cambiar a false para emitir facturas reales a ARCA
+const DEBUG_MODE = false; // Cambiar a false para emitir facturas reales a ARCA
 
 const MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const EXPENSE_CATS = ["Proveedores","Personal","Servicios","Impuestos","Alquiler","Otros"];
