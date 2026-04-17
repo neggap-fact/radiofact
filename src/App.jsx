@@ -1434,12 +1434,17 @@ function EstadoBadge({estado}){
 // FIX 3: corregido el JSX de FacturaDirecta - {form.email && ...} movido dentro del div space-y-2
 function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, descargarPDF, guardarFacturaSupabase}) {
   const hoy = new Date();
+  const todayISO = hoy.toISOString().split("T")[0];
   const empty = {
     razonSocial:"", cuit:"", domicilio:"", condicionIVA:"Responsable Inscripto", tipoFactura:"B", email:"",
     detalle:"", montoNeto:"", concepto:2,
     clienteId:"nuevo",
+    tipoPeriodo:"mes",
     mes: hoy.getMonth() + 1,
     anio: hoy.getFullYear(),
+    fechaDesde: todayISO,
+    fechaHasta: todayISO,
+    fechaDia: todayISO,
   };
   const [form, setForm] = useState(empty);
   const [emitiendo, setEmitiendo] = useState(false);
@@ -1535,8 +1540,10 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
             monto_iva: iva,
             monto_total: total,
             concepto: parseInt(form.concepto),
-            mes: parseInt(form.mes),
-            anio: parseInt(form.anio),
+            mes: form.tipoPeriodo === "mes" ? parseInt(form.mes) : null,
+            anio: form.tipoPeriodo === "mes" ? parseInt(form.anio) : null,
+            fch_serv_desde: form.tipoPeriodo === "rango" ? form.fechaDesde.replace(/-/g,"") : form.tipoPeriodo === "dia" ? form.fechaDia.replace(/-/g,"") : null,
+            fch_serv_hasta: form.tipoPeriodo === "rango" ? form.fechaHasta.replace(/-/g,"") : form.tipoPeriodo === "dia" ? form.fechaDia.replace(/-/g,"") : null,
           }),
         });
         data = await res.json();
@@ -1644,20 +1651,39 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
 
       <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
         <h3 className="font-semibold text-sm border-b border-gray-100 pb-2">💰 Datos de la factura</h3>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-xs font-medium text-gray-600">Mes del período</label>
-            <select value={form.mes} onChange={f("mes")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
-              {MONTHS.map((m,i)=><option key={i} value={i+1}>{m}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-gray-600">Año del período</label>
-            <select value={form.anio} onChange={f("anio")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
-              {[2024,2025,2026,2027].map(y=><option key={y}>{y}</option>)}
-            </select>
-          </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600">Tipo de período</label>
+          <select value={form.tipoPeriodo} onChange={f("tipoPeriodo")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+            <option value="mes">Mes completo</option>
+            <option value="rango">Rango de fechas</option>
+            <option value="dia">Día puntual</option>
+          </select>
         </div>
+        {form.tipoPeriodo === "mes" && (
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-gray-600">Mes</label>
+              <select value={form.mes} onChange={f("mes")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+                {MONTHS.map((m,i)=><option key={i} value={i+1}>{m}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600">Año</label>
+              <select value={form.anio} onChange={f("anio")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+                {[2024,2025,2026,2027].map(y=><option key={y}>{y}</option>)}
+              </select>
+            </div>
+          </div>
+        )}
+        {form.tipoPeriodo === "rango" && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Fecha desde" value={form.fechaDesde} onChange={f("fechaDesde")} type="date"/>
+            <Field label="Fecha hasta" value={form.fechaHasta} onChange={f("fechaHasta")} type="date"/>
+          </div>
+        )}
+        {form.tipoPeriodo === "dia" && (
+          <Field label="Fecha del servicio" value={form.fechaDia} onChange={f("fechaDia")} type="date"/>
+        )}
         <div>
           <label className="text-xs font-medium text-gray-600">Concepto</label>
           <select value={form.concepto} onChange={f("concepto")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
