@@ -666,6 +666,8 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
               monto_iva: ct.iva,
               monto_total: ct.total,
               concepto: 2,
+              mes: billMonth,
+              anio: billYear,
             }),
           });
           data = await res.json();
@@ -1530,6 +1532,8 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
             monto_iva: iva,
             monto_total: total,
             concepto: parseInt(form.concepto),
+            mes: new Date().getMonth() + 1,
+            anio: new Date().getFullYear(),
           }),
         });
         data = await res.json();
