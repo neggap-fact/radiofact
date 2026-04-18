@@ -623,13 +623,25 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
   const [selYear,setSelYear]=useState(today.getFullYear());
   const [reviewModal,setReviewModal]=useState(null);
   const [emailModal,setEmailModal]=useState(null);
+  const [filtroCliente,setFiltroCliente]=useState("");
+  const [filtroEstado,setFiltroEstado]=useState("");
+  const [filtroEmail,setFiltroEmail]=useState("");
+  const [filtroBusqueda,setFiltroBusqueda]=useState("");
   const billMonth=selMonth;
   const billYear=selYear;
   const pendingContracts=contracts.filter(ct=>{
     if(!ct.active) return false;
     return !invoices.find(inv=>inv.contractId===ct.id&&inv.month===billMonth&&inv.year===billYear);
   });
-  const monthInvoices=invoices.filter(i=>i.month===billMonth&&i.year===billYear);
+  const monthInvoicesBase=invoices.filter(i=>i.month===billMonth&&i.year===billYear);
+  const monthInvoices=monthInvoicesBase.filter(i=>{
+    if(filtroCliente && i.clientId!==filtroCliente) return false;
+    if(filtroEstado && i.estado!==filtroEstado) return false;
+    if(filtroEmail==="enviado" && !i.emailEnviado) return false;
+    if(filtroEmail==="no_enviado" && i.emailEnviado) return false;
+    if(filtroBusqueda && !i.numero?.toLowerCase().includes(filtroBusqueda.toLowerCase()) && !i.clientName?.toLowerCase().includes(filtroBusqueda.toLowerCase())) return false;
+    return true;
+  });
   const totNeto=monthInvoices.reduce((s,i)=>s+i.neto,0);
   const totIva=monthInvoices.reduce((s,i)=>s+i.iva,0);
   const totTotal=monthInvoices.reduce((s,i)=>s+i.total,0);
@@ -734,9 +746,28 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
         </div>
       )}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+        <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
           <h3 className="font-semibold text-sm">Facturas — {MONTHS[billMonth-1]} {billYear}</h3>
-          <span className="text-xs text-gray-400">{monthInvoices.length} facturas</span>
+          <span className="text-xs text-gray-400">{monthInvoices.length} de {monthInvoicesBase.length} facturas</span>
+        </div>
+        <div className="px-4 py-2 border-b border-gray-100 flex flex-wrap gap-2">
+          <input value={filtroBusqueda} onChange={e=>setFiltroBusqueda(e.target.value)} placeholder="Buscar número o cliente..." className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none flex-1 min-w-32"/>
+          <select value={filtroCliente} onChange={e=>setFiltroCliente(e.target.value)} className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none">
+            <option value="">Todos los clientes</option>
+            {clients.filter(c=>c.active).map(c=><option key={c.id} value={c.id}>{c.razonSocial}</option>)}
+          </select>
+          <select value={filtroEstado} onChange={e=>setFiltroEstado(e.target.value)} className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none">
+            <option value="">Todos los estados</option>
+            <option value="Emitida">Emitida</option>
+            <option value="Pagada">Pagada</option>
+            <option value="Borrador">Borrador</option>
+          </select>
+          <select value={filtroEmail} onChange={e=>setFiltroEmail(e.target.value)} className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none">
+            <option value="">Todos los emails</option>
+            <option value="enviado">Email enviado</option>
+            <option value="no_enviado">Sin enviar</option>
+          </select>
+          {(filtroCliente||filtroEstado||filtroEmail||filtroBusqueda)&&<button onClick={()=>{setFiltroCliente("");setFiltroEstado("");setFiltroEmail("");setFiltroBusqueda("");}} className="px-2 py-1.5 text-xs text-red-500 hover:bg-red-50 rounded-lg">✕ Limpiar</button>}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
