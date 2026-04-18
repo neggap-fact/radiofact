@@ -114,6 +114,29 @@ export default function App() {
     cargarClientes();
   },[]);
 
+  // Cargar contratos desde Supabase
+  useEffect(()=>{
+    async function cargarContratos() {
+      const {data,error} = await supabase.from("contratos").select("*").order("created_at",{ascending:false});
+      if(!error && data && data.length > 0) {
+        setContracts(data.map(c=>({
+          id: c.id,
+          clientId: c.cliente_id,
+          descripcion: c.descripcion || "",
+          montoNeto: parseFloat(c.monto)||0,
+          iva: parseFloat(c.iva)||0,
+          total: Math.round((parseFloat(c.monto)+parseFloat(c.iva))*100)/100,
+          fechaInicio: c.fecha_inicio || todayStr(),
+          duracionMeses: c.duracion_meses || 12,
+          diaFacturacion: c.dia_facturacion || 1,
+          textoOpcional: c.texto_opcional || "",
+          active: c.activo !== false,
+        })));
+      }
+    }
+    cargarContratos();
+  },[]);
+
   // Cargar facturas desde Supabase
   useEffect(()=>{
     async function cargarFacturas() {
@@ -515,12 +538,34 @@ function Contracts({contracts,setContracts,clients,canEdit}){
   const [filterClient,setFilterClient]=useState("");
   const empty={clientId:clients[0]?.id||"",descripcion:"",montoNeto:"",fechaInicio:todayStr(),duracionMeses:12,diaFacturacion:1,textoOpcional:"",active:true};
   const filtered=contracts.filter(ct=>!filterClient||ct.clientId===filterClient);
-  const save=(data)=>{
+  const save=async(data)=>{
     const neto=parseFloat(data.montoNeto)||0;
     const iva=Math.round(neto*0.105*100)/100;
     const d={...data,montoNeto:neto,iva,total:Math.round((neto+iva)*100)/100};
-    if(d.id) setContracts(prev=>prev.map(c=>c.id===d.id?d:c));
-    else setContracts(prev=>[...prev,{...d,id:`ct-${Date.now()}`}]);
+    
+    // Guardar en Supabase
+    const payload = {
+      cliente_id: d.clientId,
+      descripcion: d.descripcion,
+      monto: neto,
+      iva: iva,
+      fecha_inicio: d.fechaInicio,
+      duracion_meses: parseInt(d.duracionMeses),
+      dia_facturacion: parseInt(d.diaFacturacion),
+      texto_opcional: d.textoOpcional || "",
+      activo: d.active !== false,
+    };
+    
+    if(d.id && !d.id.startsWith("ct-")) {
+      // Actualizar en Supabase
+      await supabase.from("contratos").update(payload).eq("id", d.id);
+      setContracts(prev=>prev.map(c=>c.id===d.id?d:c));
+    } else {
+      // Insertar en Supabase
+      const {data:newCt} = await supabase.from("contratos").insert(payload).select().single();
+      if(newCt) setContracts(prev=>[...prev,{...d,id:newCt.id}]);
+      else setContracts(prev=>[...prev,{...d,id:`ct-${Date.now()}`}]);
+    }
     setModal(null);
   };
   return(
@@ -539,7 +584,7 @@ function Contracts({contracts,setContracts,clients,canEdit}){
           end.setMonth(end.getMonth()+Number(ct.duracionMeses));
           const diff=Math.round((end-new Date())/(1000*60*60*24));
           return(
-            <div key={ct.id} className="bg-white rounded-xl border border-gray-200 p-4">
+            <div key={ct.id} onClick={()=>canEdit&&setModal(ct)} className={`bg-white rounded-xl border border-gray-200 p-4 ${canEdit?"cursor-pointer hover:border-blue-300 hover:shadow-sm transition-all":""}`}>
               <div className="flex items-start justify-between">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -560,7 +605,7 @@ function Contracts({contracts,setContracts,clients,canEdit}){
                   <p className="text-xs text-gray-400">Neto: {fmtMoney(ct.montoNeto)}</p>
                   <p className="text-xs text-orange-500">IVA: {fmtMoney(ct.iva)}</p>
                   <p className="font-bold text-sm text-blue-700">{fmtMoney(ct.total)}</p>
-                  {canEdit&&<button onClick={()=>setModal(ct)} className="mt-1 text-gray-400 hover:text-blue-600"><Icon d={Icons.edit} size={14}/></button>}
+                  {canEdit&&<Icon d={Icons.edit} size={14} className="mt-1 text-gray-300"/>}
                 </div>
               </div>
             </div>
