@@ -741,11 +741,12 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>{["Número","Cliente","Neto","IVA","Total","Estado","CAE","PDF",""].map(h=><th key={h} className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>)}</tr>
+              <tr>{["Fecha","Número","Cliente","Neto","IVA","Total","Estado","CAE","PDF",""].map(h=><th key={h} className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>)}</tr>
             </thead>
             <tbody>
               {monthInvoices.map(inv=>(
                 <tr key={inv.id} className="border-b border-gray-50 hover:bg-gray-50">
+                  <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">{inv.fecha ? `${inv.fecha.slice(6,8)}/${inv.fecha.slice(4,6)}/${inv.fecha.slice(0,4)}` : fmtDate(inv.month && inv.year ? `${inv.year}-${String(inv.month).padStart(2,"0")}-01` : "")}</td>
                   <td className="px-3 py-2.5 font-mono text-xs">{inv.numero}</td>
                   <td className="px-3 py-2.5 text-xs font-medium">{inv.clientName}</td>
                   <td className="px-3 py-2.5 text-xs text-gray-600">{fmtMoney(inv.neto)}</td>
