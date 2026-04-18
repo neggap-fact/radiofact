@@ -556,15 +556,23 @@ function Contracts({contracts,setContracts,clients,canEdit}){
       activo: d.active !== false,
     };
     
-    if(d.id && !d.id.startsWith("ct-")) {
+    // Verificar si es un UUID real de Supabase (36 chars con guiones) o un ID local
+    const esUUID = d.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(d.id);
+    
+    if(esUUID) {
       // Actualizar en Supabase
-      await supabase.from("contratos").update(payload).eq("id", d.id);
+      const {error} = await supabase.from("contratos").update(payload).eq("id", d.id);
+      if(error) console.error("Error actualizando contrato:", error);
       setContracts(prev=>prev.map(c=>c.id===d.id?d:c));
     } else {
-      // Insertar en Supabase
-      const {data:newCt} = await supabase.from("contratos").insert(payload).select().single();
-      if(newCt) setContracts(prev=>[...prev,{...d,id:newCt.id}]);
-      else setContracts(prev=>[...prev,{...d,id:`ct-${Date.now()}`}]);
+      // Insertar en Supabase (contrato nuevo o con ID local)
+      const {data:newCt, error} = await supabase.from("contratos").insert(payload).select().single();
+      if(error) console.error("Error insertando contrato:", error);
+      if(newCt) {
+        // Reemplazar el contrato local con el de Supabase
+        setContracts(prev=>prev.map(c=>c.id===d.id?{...d,id:newCt.id}:c).filter((c,i,arr)=>arr.findIndex(x=>x.id===c.id)===i));
+        if(!d.id) setContracts(prev=>[...prev,{...d,id:newCt.id}]);
+      }
     }
     setModal(null);
   };
