@@ -46,6 +46,14 @@ function fmtDate(d) {
 }
 function todayStr() { return new Date().toISOString().split("T")[0]; }
 
+// Formatea el nombre del cliente: "Razón Social — Alias" si tiene alias, solo "Razón Social" si no.
+function fmtClientName(client) {
+  if (!client) return "";
+  const rs = client.razonSocial || client.razon_social || "";
+  const al = client.alias || "";
+  return al ? `${rs} — ${al}` : rs;
+}
+
 // ── REGISTRO DE OPERACIONES ARCA (idempotencia + auditoría) ────────────────
 // Genera un UUID único por operación e inserta una fila en operaciones_arca.
 // Si el insert falla por unique constraint (UUID repetido), devuelve false:
@@ -251,6 +259,7 @@ export default function App() {
         setClients(data.map(c=>({
           id: c.id,
           razonSocial: c.razon_social,
+          alias: c.alias || "",
           cuit: c.cuit,
           domicilio: c.domicilio,
           condicionIVA: c.condicion_iva,
@@ -626,11 +635,16 @@ function Clients({clients,setClients,contracts,invoices,currentUser,canEdit}){
   const [deleting, setDeleting] = useState(false);
   const isWebmaster = currentUser?.role === "webmaster";
 
-  const empty={razonSocial:"",cuit:"",domicilio:"",condicionIVA:"Responsable Inscripto",tipoFactura:"A",email:"",telefono:"",active:true};
-  const filtered=clients.filter(c=>c.razonSocial.toLowerCase().includes(search.toLowerCase())||c.cuit.includes(search));
+  const empty={razonSocial:"",alias:"",cuit:"",domicilio:"",condicionIVA:"Responsable Inscripto",tipoFactura:"A",email:"",telefono:"",active:true};
+  const filtered=clients.filter(c=>
+    c.razonSocial.toLowerCase().includes(search.toLowerCase()) ||
+    (c.alias||"").toLowerCase().includes(search.toLowerCase()) ||
+    c.cuit.includes(search)
+  );
   const save=async(data)=>{
     const supabaseData = {
       razon_social: data.razonSocial,
+      alias: data.alias || null,
       cuit: data.cuit,
       domicilio: data.domicilio,
       condicion_iva: data.condicionIVA,
@@ -696,7 +710,10 @@ function Clients({clients,setClients,contracts,invoices,currentUser,canEdit}){
           <tbody>
             {filtered.map(c=>(
               <tr key={c.id} className="border-b border-gray-50 hover:bg-gray-50">
-                <td className="px-3 py-2.5 font-medium text-sm">{c.razonSocial}</td>
+                <td className="px-3 py-2.5 text-sm">
+                  <div className="font-medium">{c.razonSocial}</div>
+                  {c.alias && <div className="text-xs text-gray-400 truncate">{c.alias}</div>}
+                </td>
                 <td className="px-3 py-2.5 text-gray-500 font-mono text-xs">{c.cuit}</td>
                 <td className="px-3 py-2.5 text-gray-500 text-xs">{c.condicionIVA}</td>
                 <td className="px-3 py-2.5"><span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-xs font-bold">Fac.{c.tipoFactura}</span></td>
@@ -742,6 +759,10 @@ function ClientModal({data,onSave,onClose}){
     <Modal title={form.id?"Editar cliente":"Nuevo cliente"} onClose={onClose}>
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2"><Field label="Razón Social" value={form.razonSocial} onChange={f("razonSocial")}/></div>
+        <div className="col-span-2">
+          <Field label="Alias / Nombre comercial (opcional)" value={form.alias||""} onChange={f("alias")}/>
+          <p className="text-xs text-gray-400 mt-1">Solo para uso interno. No aparece en la factura ni se envía a ARCA. Útil cuando el cliente tiene un nombre comercial distinto al fiscal.</p>
+        </div>
         <Field label="CUIT" value={form.cuit} onChange={f("cuit")} placeholder="30-12345678-9"/>
         <Field label="Teléfono" value={form.telefono} onChange={f("telefono")}/>
         <div className="col-span-2"><Field label="Domicilio" value={form.domicilio} onChange={f("domicilio")}/></div>
@@ -852,7 +873,7 @@ function Contracts({contracts,setContracts,clients,invoices,currentUser,canEdit}
       <div className="flex items-center gap-3">
         <select value={filterClient} onChange={e=>setFilterClient(e.target.value)} className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
           <option value="">Todos los clientes</option>
-          {clients.map(c=><option key={c.id} value={c.id}>{c.razonSocial}</option>)}
+          {clients.map(c=><option key={c.id} value={c.id}>{fmtClientName(c)}</option>)}
         </select>
         {canEdit&&<button onClick={()=>setModal(empty)} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 ml-auto"><Icon d={Icons.plus} size={14}/>Nuevo contrato</button>}
       </div>
@@ -868,6 +889,7 @@ function Contracts({contracts,setContracts,clients,invoices,currentUser,canEdit}
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1 flex-wrap">
                     <span className="font-semibold text-sm">{client?.razonSocial}</span>
+                    {client?.alias && <span className="text-xs text-gray-400">— {client.alias}</span>}
                     <span className={`text-xs px-2 py-0.5 rounded-full ${ct.active?"bg-green-50 text-green-700":"bg-gray-100 text-gray-400"}`}>{ct.active?"Activo":"Inactivo"}</span>
                     {diff<60&&diff>0&&<span className="text-xs bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full">Vence en {diff}d</span>}
                     {diff<=0&&<span className="text-xs bg-gray-200 text-gray-500 px-2 py-0.5 rounded-full">Vencido</span>}
@@ -932,7 +954,7 @@ function ContractModal({data,clients,onSave,onClose}){
         <div className="col-span-2">
           <label className="text-xs font-medium text-gray-600">Cliente</label>
           <select value={form.clientId} onChange={f("clientId")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
-            {clients.map(c=><option key={c.id} value={c.id}>{c.razonSocial}</option>)}
+            {clients.map(c=><option key={c.id} value={c.id}>{fmtClientName(c)}</option>)}
           </select>
         </div>
         <div className="col-span-2"><Field label="Descripción del servicio" value={form.descripcion} onChange={f("descripcion")}/></div>
@@ -1010,7 +1032,7 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
       return s;
     };
     const headers = [
-      "N° Factura", "Fecha", "Período", "Cliente", "CUIT",
+      "N° Factura", "Fecha", "Período", "Cliente", "Alias", "CUIT",
       "Concepto / Detalle", "Neto", "IVA 10.5%", "Total",
       "Estado", "CAE", "Vto. CAE", "Fecha Pago",
     ];
@@ -1030,6 +1052,7 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
         fechaFmt,
         inv.periodo || "",
         inv.clientName || "",
+        cli?.alias || "",
         cli?.cuit || inv.clientCuit || "",
         inv.detalle || "",
         inv.neto?.toFixed(2) || "0",
@@ -1043,7 +1066,7 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
     });
     // Fila de totales al final
     const totalRow = [
-      "TOTALES", "", "", `${monthInvoices.length} factura(s)`, "", "",
+      "TOTALES", "", "", `${monthInvoices.length} factura(s)`, "", "", "",
       totNeto.toFixed(2), totIva.toFixed(2), totTotal.toFixed(2),
       "", "", "", "",
     ];
@@ -1189,7 +1212,7 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
           <input value={filtroBusqueda} onChange={e=>setFiltroBusqueda(e.target.value)} placeholder="Buscar número o cliente..." className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none flex-1 min-w-32"/>
           <select value={filtroCliente} onChange={e=>setFiltroCliente(e.target.value)} className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none">
             <option value="">Todos los clientes</option>
-            {clients.filter(c=>c.active).map(c=><option key={c.id} value={c.id}>{c.razonSocial}</option>)}
+            {clients.filter(c=>c.active).map(c=><option key={c.id} value={c.id}>{fmtClientName(c)}</option>)}
           </select>
           <select value={filtroEstado} onChange={e=>setFiltroEstado(e.target.value)} className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none">
             <option value="">Todos los estados</option>
@@ -1214,7 +1237,13 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
                 <tr key={inv.id} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">{inv.fecha ? `${inv.fecha.slice(6,8)}/${inv.fecha.slice(4,6)}/${inv.fecha.slice(0,4)}` : fmtDate(inv.month && inv.year ? `${inv.year}-${String(inv.month).padStart(2,"0")}-01` : "")}</td>
                   <td className="px-3 py-2.5 font-mono text-xs">{inv.numero}</td>
-                  <td className="px-3 py-2.5 text-xs font-medium">{inv.clientName}</td>
+                  <td className="px-3 py-2.5 text-xs">
+                    <div className="font-medium">{inv.clientName}</div>
+                    {(() => {
+                      const cli = clients.find(c => c.id === inv.clientId);
+                      return cli?.alias ? <div className="text-xs text-gray-400">{cli.alias}</div> : null;
+                    })()}
+                  </td>
                   <td className="px-3 py-2.5 text-xs text-gray-600">{fmtMoney(inv.neto)}</td>
                   <td className="px-3 py-2.5 text-xs text-orange-600 font-medium">{fmtMoney(inv.iva)}</td>
                   <td className="px-3 py-2.5 text-xs font-bold">{fmtMoney(inv.total)}</td>
@@ -1291,7 +1320,7 @@ function ReviewModal({contracts,clients,onApprove,onClose}){
     .map(ct => {
       const cli = clients.find(c => c.id === ct.clientId);
       return {
-        label: cli?.razonSocial || "Cliente",
+        label: fmtClientName(cli) || "Cliente",
         monto: fmtMoney(ct.total),
       };
     });
@@ -1312,6 +1341,7 @@ function ReviewModal({contracts,clients,onApprove,onClose}){
                     <p className="font-semibold text-sm">{client?.razonSocial}</p>
                     <span className="font-bold text-blue-700">{fmtMoney(ct.total)}</span>
                   </div>
+                  {client?.alias && <p className="text-xs text-gray-400 -mt-0.5">{client.alias}</p>}
                   <p className="text-xs text-gray-500 mb-1">{ct.descripcion}</p>
                   <div className="flex gap-3 text-xs text-gray-400 mb-2">
                     <span>Neto: {fmtMoney(ct.montoNeto)}</span>
@@ -1617,12 +1647,12 @@ function Reports({clients,contracts,invoices,expenses}){
     csv+=row("Total gastos",totGastos)+nl;
     csv+=row("RESULTADO NETO",resultado)+nl+nl;
     csv+=row("DETALLE DE FACTURAS")+nl;
-    csv+=row("Número","Cliente","CUIT","Tipo","Período","Neto","IVA 10.5%","Total","Estado","CAE","Fecha Pago")+nl;
-    filtInv.forEach(inv=>{const client=clients.find(c=>c.id===inv.clientId);csv+=row(inv.numero,inv.clientName,client?.cuit||"",inv.tipoFactura,inv.periodo,inv.neto,inv.iva,inv.total,inv.estado,inv.cae||"",inv.fechaPago||"")+nl;});
-    csv+=row("","","","","TOTALES",totNeto,totIva,totFact)+nl+nl;
+    csv+=row("Número","Cliente","Alias","CUIT","Tipo","Período","Neto","IVA 10.5%","Total","Estado","CAE","Fecha Pago")+nl;
+    filtInv.forEach(inv=>{const client=clients.find(c=>c.id===inv.clientId);csv+=row(inv.numero,inv.clientName,client?.alias||"",client?.cuit||"",inv.tipoFactura,inv.periodo,inv.neto,inv.iva,inv.total,inv.estado,inv.cae||"",inv.fechaPago||"")+nl;});
+    csv+=row("","","","","","TOTALES",totNeto,totIva,totFact)+nl+nl;
     csv+=row("RESUMEN POR CLIENTE")+nl;
-    csv+=row("Cliente","CUIT","Tipo","Facturas","Neto","IVA","Total","Cobrado","Saldo")+nl;
-    byClient.forEach(c=>{csv+=row(c.razonSocial,c.cuit,c.tipoFactura,c.cantidad,c.neto,c.iva,c.total,c.cobrado,c.total-c.cobrado)+nl;});
+    csv+=row("Cliente","Alias","CUIT","Tipo","Facturas","Neto","IVA","Total","Cobrado","Saldo")+nl;
+    byClient.forEach(c=>{csv+=row(c.razonSocial,c.alias||"",c.cuit,c.tipoFactura,c.cantidad,c.neto,c.iva,c.total,c.cobrado,c.total-c.cobrado)+nl;});
     csv+=nl+row("DETALLE DE GASTOS")+nl;
     csv+=row("Fecha","Descripción","Categoría","Proveedor","Comprobante","Monto","Estado")+nl;
     filtExp.forEach(e=>{csv+=row(e.fecha,e.descripcion,e.categoria,e.proveedor||"",e.comprobante||"",e.monto,e.pagado?"Pagado":"Pendiente")+nl;});
@@ -1683,7 +1713,13 @@ function Reports({clients,contracts,invoices,expenses}){
                   filtInv.map(inv=>(
                     <tr key={inv.id} className="border-b border-gray-50 hover:bg-gray-50">
                       <td className="px-3 py-2.5 font-mono text-xs">{inv.numero}</td>
-                      <td className="px-3 py-2.5 text-xs font-medium">{inv.clientName}</td>
+                      <td className="px-3 py-2.5 text-xs">
+                        <div className="font-medium">{inv.clientName}</div>
+                        {(() => {
+                          const cli = clients.find(c => c.id === inv.clientId);
+                          return cli?.alias ? <div className="text-xs text-gray-400">{cli.alias}</div> : null;
+                        })()}
+                      </td>
                       <td className="px-3 py-2.5"><span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-xs font-bold">{inv.tipoFactura}</span></td>
                       <td className="px-3 py-2.5 text-xs text-gray-500">{inv.periodo}</td>
                       <td className="px-3 py-2.5 text-xs text-gray-600">{fmtMoney(inv.neto)}</td>
@@ -1708,7 +1744,10 @@ function Reports({clients,contracts,invoices,expenses}){
                 {byClient.length===0?<tr><td colSpan={9} className="text-center py-8 text-gray-400 text-sm">Sin datos</td></tr>:
                   byClient.map(c=>(
                     <tr key={c.id} className="border-b border-gray-50 hover:bg-gray-50">
-                      <td className="px-3 py-2.5 font-medium text-sm">{c.razonSocial}</td>
+                      <td className="px-3 py-2.5 text-sm">
+                        <div className="font-medium">{c.razonSocial}</div>
+                        {c.alias && <div className="text-xs text-gray-400 truncate">{c.alias}</div>}
+                      </td>
                       <td className="px-3 py-2.5 font-mono text-xs text-gray-500">{c.cuit}</td>
                       <td className="px-3 py-2.5"><span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-xs font-bold">{c.tipoFactura}</span></td>
                       <td className="px-3 py-2.5 text-xs text-center">{c.cantidad}</td>
@@ -1777,7 +1816,10 @@ function Reports({clients,contracts,invoices,expenses}){
               <tbody>
                 {byClient.map(c=>(
                   <tr key={c.id} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="px-3 py-2.5 text-sm font-medium">{c.razonSocial}</td>
+                    <td className="px-3 py-2.5 text-sm">
+                      <div className="font-medium">{c.razonSocial}</div>
+                      {c.alias && <div className="text-xs text-gray-400">{c.alias}</div>}
+                    </td>
                     <td className="px-3 py-2.5"><span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-xs font-bold">{c.tipoFactura}</span></td>
                     <td className="px-3 py-2.5 text-xs text-gray-600">{fmtMoney(c.neto)}</td>
                     <td className="px-3 py-2.5 text-xs font-bold text-orange-600">{fmtMoney(c.iva)}</td>
@@ -1858,7 +1900,10 @@ function Finance({clients,invoices,expenses}){
           <h3 className="font-semibold text-sm mb-3 text-red-600 flex items-center gap-2"><Icon d={Icons.alert} size={15}/>Saldos pendientes</h3>
           {morosos.map(c=>(
             <div key={c.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
-              <div><p className="text-sm font-medium">{c.razonSocial}</p><p className="text-xs text-gray-400">{c.facturas.filter(i=>i.estado!=="Pagada").length} factura(s) impaga(s)</p></div>
+              <div>
+                <p className="text-sm font-medium">{c.razonSocial}{c.alias ? ` — ${c.alias}` : ""}</p>
+                <p className="text-xs text-gray-400">{c.facturas.filter(i=>i.estado!=="Pagada").length} factura(s) impaga(s)</p>
+              </div>
               <span className="font-bold text-red-600">{fmtMoney(c.facturado-c.cobrado)}</span>
             </div>
           ))}
@@ -1873,7 +1918,10 @@ function Finance({clients,invoices,expenses}){
           <tbody>
             {byClient.map(c=>(
               <tr key={c.id} className="border-b border-gray-50 hover:bg-gray-50">
-                <td className="px-4 py-3 font-medium text-sm">{c.razonSocial}</td>
+                <td className="px-4 py-3 text-sm">
+                  <div className="font-medium">{c.razonSocial}</div>
+                  {c.alias && <div className="text-xs text-gray-400">{c.alias}</div>}
+                </td>
                 <td className="px-4 py-3 text-xs text-center text-gray-500">{c.facturas.length}</td>
                 <td className="px-4 py-3 text-xs text-gray-600">{fmtMoney(c.neto)}</td>
                 <td className="px-4 py-3 text-xs font-medium text-orange-600">{fmtMoney(c.iva)}</td>
@@ -2233,7 +2281,11 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
           <label className="text-xs font-medium text-gray-600">Cliente existente o nuevo</label>
           <select value={form.clienteId} onChange={e=>handleClienteChange(e.target.value)} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
             <option value="nuevo">➕ Nuevo cliente</option>
-            {clients.filter(c=>c.active!==false).map(c=><option key={c.id} value={c.id}>{c.razonSocial} — {c.cuit}</option>)}
+            {clients.filter(c=>c.active!==false).map(c=>(
+              <option key={c.id} value={c.id}>
+                {c.razonSocial}{c.alias ? ` — ${c.alias}` : ""} — {c.cuit}
+              </option>
+            ))}
           </select>
         </div>
         <div className="grid grid-cols-2 gap-3">
