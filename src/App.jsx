@@ -27,6 +27,7 @@ const Icons = {
   download: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3",
   pdf: "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M8 13h8M8 17h5",
   report: "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M8 13h8M8 17h5",
+  trash: "M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14zM10 11v6M14 11v6",
 };
 
 const BACKEND_URL = "https://radiofact-backend-production.up.railway.app";
@@ -74,7 +75,66 @@ async function completarOperacionArca(id, responseBody, exito) {
   }).eq("id", id);
 }
 
-// ── MODAL DE CONFIRMACIÓN PARA EMISIÓN A ARCA ──────────────────────────────
+// ── MODAL DE CONFIRMACIÓN DE BORRADO (con tipeo "BORRAR" para protección extra) ──
+function ConfirmDeleteModal({ titulo, mensaje, advertencia, requireTyping = false, onConfirm, onCancel, loading }) {
+  const [typed, setTyped] = useState("");
+  const canConfirm = requireTyping ? typed === "BORRAR" : true;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-5 space-y-4">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+            <Icon d={Icons.trash} size={20} className="text-red-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-base">{titulo}</h3>
+            <p className="text-sm text-gray-600 mt-1">{mensaje}</p>
+          </div>
+        </div>
+
+        {advertencia && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+            ⚠️ {advertencia}
+          </div>
+        )}
+
+        {requireTyping && (
+          <div>
+            <label className="text-xs text-gray-600 block mb-1">
+              Para confirmar, escribí <strong>BORRAR</strong> abajo:
+            </label>
+            <input
+              type="text"
+              value={typed}
+              onChange={e => setTyped(e.target.value)}
+              autoFocus
+              placeholder="BORRAR"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-200 font-mono"
+            />
+          </div>
+        )}
+
+        <div className="flex gap-2 pt-2">
+          <button
+            onClick={onCancel}
+            disabled={loading}
+            className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={loading || !canConfirm}
+            className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? "Borrando..." : "Sí, borrar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 function ConfirmEmisionModal({ titulo, resumen, items, onConfirm, onCancel, loading }) {
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -450,12 +510,12 @@ export default function App() {
         </header>
         <main className="flex-1 overflow-y-auto p-5">
           {page==="dashboard"&&<Dashboard clients={clients} contracts={contracts} invoices={invoices} expenses={expenses} notifications={notifications} setPage={setPage}/>}
-          {page==="clients"&&<Clients clients={clients} setClients={setClients} contracts={contracts} canEdit={canEdit}/>}
-          {page==="contracts"&&<Contracts contracts={contracts} setContracts={setContracts} clients={clients} canEdit={canEdit}/>}
+          {page==="clients"&&<Clients clients={clients} setClients={setClients} contracts={contracts} invoices={invoices} currentUser={currentUser} canEdit={canEdit}/>}
+          {page==="contracts"&&<Contracts contracts={contracts} setContracts={setContracts} clients={clients} invoices={invoices} currentUser={currentUser} canEdit={canEdit}/>}
           {/* FIX 1: agregado guardarFacturaSupabase como prop */}
           {page==="billing"&&<Billing clients={clients} contracts={contracts} invoices={invoices} setInvoices={setInvoices} notifications={notifications} setNotifications={setNotifications} config={config} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase}/>}
           {page==="factura-directa"&&<FacturaDirecta clients={clients} setClients={setClients} invoices={invoices} setInvoices={setInvoices} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase}/>}
-          {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} canEdit={canEdit}/>}
+          {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} currentUser={currentUser} canEdit={canEdit}/>}
           {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses}/>}
           {page==="reports"&&<Reports clients={clients} contracts={contracts} invoices={invoices} expenses={expenses}/>}
           {page==="users"&&currentUser.role==="webmaster"&&<Users users={users} setUsers={setUsers} currentUser={currentUser}/>}
@@ -559,9 +619,13 @@ function Dashboard({clients,contracts,invoices,expenses,notifications,setPage}){
   );
 }
 
-function Clients({clients,setClients,contracts,canEdit}){
+function Clients({clients,setClients,contracts,invoices,currentUser,canEdit}){
   const [modal,setModal]=useState(null);
   const [search,setSearch]=useState("");
+  const [confirmDelete, setConfirmDelete] = useState(null); // { cliente, deps, blocked }
+  const [deleting, setDeleting] = useState(false);
+  const isWebmaster = currentUser?.role === "webmaster";
+
   const empty={razonSocial:"",cuit:"",domicilio:"",condicionIVA:"Responsable Inscripto",tipoFactura:"A",email:"",telefono:"",active:true};
   const filtered=clients.filter(c=>c.razonSocial.toLowerCase().includes(search.toLowerCase())||c.cuit.includes(search));
   const save=async(data)=>{
@@ -585,6 +649,39 @@ function Clients({clients,setClients,contracts,canEdit}){
     }
     setModal(null);
   };
+
+  // Pedir confirmación de borrado, calculando dependencias
+  const askDelete = (cli) => {
+    const ctsActivos = contracts.filter(ct => ct.clientId === cli.id);
+    const facsAsociadas = (invoices || []).filter(inv => inv.clientId === cli.id);
+    let advertencia = null;
+    let blocked = false;
+    if (facsAsociadas.length > 0) {
+      blocked = true;
+      advertencia = `Este cliente tiene ${facsAsociadas.length} factura(s) emitida(s). NO se puede borrar (queda registro fiscal). Solo se puede DESACTIVAR desde el lápiz de edición.`;
+    } else if (ctsActivos.length > 0) {
+      blocked = true;
+      advertencia = `Este cliente tiene ${ctsActivos.length} contrato(s) asociado(s). Borrá los contratos primero, o desactivá el cliente en lugar de borrarlo.`;
+    }
+    setConfirmDelete({ cli, blocked, advertencia });
+  };
+
+  const doDelete = async () => {
+    if (!confirmDelete || confirmDelete.blocked) return;
+    setDeleting(true);
+    const { cli } = confirmDelete;
+    if (cli.id && !cli.id.startsWith("c-")) {
+      const { error } = await supabase.from("clientes").delete().eq("id", cli.id);
+      if (error) {
+        alert("Error al borrar en Supabase: " + error.message);
+        setDeleting(false);
+        return;
+      }
+    }
+    setClients(prev => prev.filter(c => c.id !== cli.id));
+    setDeleting(false);
+    setConfirmDelete(null);
+  };
   return(
     <div className="space-y-4">
       <div className="flex items-center gap-3">
@@ -606,7 +703,12 @@ function Clients({clients,setClients,contracts,canEdit}){
                 <td className="px-3 py-2.5 text-gray-500 text-xs">{c.email}</td>
                 <td className="px-3 py-2.5 text-center"><span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs">{contracts.filter(ct=>ct.clientId===c.id&&ct.active).length}</span></td>
                 <td className="px-3 py-2.5"><span className={`px-2 py-0.5 rounded-full text-xs ${c.active?"bg-green-50 text-green-700":"bg-gray-100 text-gray-400"}`}>{c.active?"Activo":"Inactivo"}</span></td>
-                <td className="px-3 py-2.5">{canEdit&&<button onClick={()=>setModal(c)} className="text-gray-400 hover:text-blue-600"><Icon d={Icons.edit} size={14}/></button>}</td>
+                <td className="px-3 py-2.5">
+                  <div className="flex items-center gap-2">
+                    {canEdit&&<button onClick={()=>setModal(c)} className="text-gray-400 hover:text-blue-600" title="Editar"><Icon d={Icons.edit} size={14}/></button>}
+                    {isWebmaster&&<button onClick={()=>askDelete(c)} className="text-gray-400 hover:text-red-600" title="Borrar"><Icon d={Icons.trash} size={14}/></button>}
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -614,6 +716,21 @@ function Clients({clients,setClients,contracts,canEdit}){
         {filtered.length===0&&<div className="text-center py-8 text-gray-400 text-sm">Sin clientes</div>}
       </div>
       {modal&&<ClientModal data={modal} onSave={save} onClose={()=>setModal(null)}/>}
+      {confirmDelete && (
+        <ConfirmDeleteModal
+          titulo={confirmDelete.blocked ? "No se puede borrar" : "¿Borrar cliente?"}
+          mensaje={
+            confirmDelete.blocked
+              ? "Este cliente tiene datos asociados que impiden el borrado."
+              : `Vas a borrar definitivamente a "${confirmDelete.cli.razonSocial}". Esta acción no se puede deshacer.`
+          }
+          advertencia={confirmDelete.advertencia}
+          requireTyping={!confirmDelete.blocked}
+          loading={deleting}
+          onCancel={() => { if (!deleting) setConfirmDelete(null); }}
+          onConfirm={confirmDelete.blocked ? () => setConfirmDelete(null) : doDelete}
+        />
+      )}
     </div>
   );
 }
@@ -651,9 +768,13 @@ function ClientModal({data,onSave,onClose}){
   );
 }
 
-function Contracts({contracts,setContracts,clients,canEdit}){
+function Contracts({contracts,setContracts,clients,invoices,currentUser,canEdit}){
   const [modal,setModal]=useState(null);
   const [filterClient,setFilterClient]=useState("");
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const isWebmaster = currentUser?.role === "webmaster";
+
   const empty={clientId:clients[0]?.id||"",descripcion:"",montoNeto:"",fechaInicio:todayStr(),duracionMeses:12,diaFacturacion:1,textoOpcional:"",active:true};
   const filtered=contracts.filter(ct=>!filterClient||ct.clientId===filterClient);
   const save=async(data)=>{
@@ -694,6 +815,38 @@ function Contracts({contracts,setContracts,clients,canEdit}){
     }
     setModal(null);
   };
+
+  // Pedir confirmación de borrado, calculando facturas asociadas
+  const askDelete = (ct, e) => {
+    if (e) { e.stopPropagation(); }
+    const facsAsociadas = (invoices || []).filter(inv => inv.contractId === ct.id);
+    let advertencia = null;
+    let blocked = false;
+    if (facsAsociadas.length > 0) {
+      blocked = true;
+      advertencia = `Este contrato tiene ${facsAsociadas.length} factura(s) emitida(s). NO se puede borrar (queda registro fiscal). Solo se puede DESACTIVAR desde el lápiz de edición.`;
+    }
+    setConfirmDelete({ ct, blocked, advertencia });
+  };
+
+  const doDelete = async () => {
+    if (!confirmDelete || confirmDelete.blocked) return;
+    setDeleting(true);
+    const { ct } = confirmDelete;
+    const esUUID = ct.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ct.id);
+    if (esUUID) {
+      const { error } = await supabase.from("contratos").delete().eq("id", ct.id);
+      if (error) {
+        alert("Error al borrar en Supabase: " + error.message);
+        setDeleting(false);
+        return;
+      }
+    }
+    setContracts(prev => prev.filter(c => c.id !== ct.id));
+    setDeleting(false);
+    setConfirmDelete(null);
+  };
+
   return(
     <div className="space-y-4">
       <div className="flex items-center gap-3">
@@ -731,7 +884,16 @@ function Contracts({contracts,setContracts,clients,canEdit}){
                   <p className="text-xs text-gray-400">Neto: {fmtMoney(ct.montoNeto)}</p>
                   <p className="text-xs text-orange-500">IVA: {fmtMoney(ct.iva)}</p>
                   <p className="font-bold text-sm text-blue-700">{fmtMoney(ct.total)}</p>
-                  {canEdit&&<Icon d={Icons.edit} size={14} className="mt-1 text-gray-300"/>}
+                  <div className="flex items-center gap-2 justify-end mt-1">
+                    {canEdit&&<Icon d={Icons.edit} size={14} className="text-gray-300"/>}
+                    {isWebmaster&&(
+                      <button
+                        onClick={(e)=>askDelete(ct, e)}
+                        className="text-gray-300 hover:text-red-600"
+                        title="Borrar contrato"
+                      ><Icon d={Icons.trash} size={14}/></button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -740,6 +902,21 @@ function Contracts({contracts,setContracts,clients,canEdit}){
         {filtered.length===0&&<div className="text-center py-12 text-gray-400 text-sm bg-white rounded-xl border border-gray-200">Sin contratos</div>}
       </div>
       {modal&&<ContractModal data={modal} clients={clients} onSave={save} onClose={()=>setModal(null)}/>}
+      {confirmDelete && (
+        <ConfirmDeleteModal
+          titulo={confirmDelete.blocked ? "No se puede borrar" : "¿Borrar contrato?"}
+          mensaje={
+            confirmDelete.blocked
+              ? "Este contrato tiene datos asociados que impiden el borrado."
+              : `Vas a borrar definitivamente este contrato. Esta acción no se puede deshacer.`
+          }
+          advertencia={confirmDelete.advertencia}
+          requireTyping={!confirmDelete.blocked}
+          loading={deleting}
+          onCancel={() => { if (!deleting) setConfirmDelete(null); }}
+          onConfirm={confirmDelete.blocked ? () => setConfirmDelete(null) : doDelete}
+        />
+      )}
     </div>
   );
 }
@@ -816,6 +993,75 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
   const totNeto=monthInvoices.reduce((s,i)=>s+i.neto,0);
   const totIva=monthInvoices.reduce((s,i)=>s+i.iva,0);
   const totTotal=monthInvoices.reduce((s,i)=>s+i.total,0);
+
+  // ── DESCARGAR REPORTE MENSUAL EN CSV ─────────────────────────────────────
+  const descargarReporteCSV = () => {
+    if (monthInvoices.length === 0) {
+      alert("No hay facturas en el filtro actual para exportar.");
+      return;
+    }
+    // Función auxiliar: escapa un valor para CSV (comillas dobles, comas, saltos de línea)
+    const csvEscape = (val) => {
+      if (val === null || val === undefined) return "";
+      const s = String(val);
+      if (s.includes(",") || s.includes("\"") || s.includes("\n")) {
+        return `"${s.replace(/"/g, '""')}"`;
+      }
+      return s;
+    };
+    const headers = [
+      "N° Factura", "Fecha", "Período", "Cliente", "CUIT",
+      "Concepto / Detalle", "Neto", "IVA 10.5%", "Total",
+      "Estado", "CAE", "Vto. CAE", "Fecha Pago",
+    ];
+    const rows = monthInvoices.map(inv => {
+      const cli = clients.find(c => c.id === inv.clientId);
+      // Convertir fecha YYYYMMDD → DD/MM/YYYY
+      let fechaFmt = "";
+      if (inv.fecha && inv.fecha.length === 8) {
+        fechaFmt = `${inv.fecha.slice(6,8)}/${inv.fecha.slice(4,6)}/${inv.fecha.slice(0,4)}`;
+      }
+      let vtoFmt = "";
+      if (inv.cae_vencimiento && inv.cae_vencimiento.length === 8) {
+        vtoFmt = `${inv.cae_vencimiento.slice(6,8)}/${inv.cae_vencimiento.slice(4,6)}/${inv.cae_vencimiento.slice(0,4)}`;
+      }
+      return [
+        inv.numero || "",
+        fechaFmt,
+        inv.periodo || "",
+        inv.clientName || "",
+        cli?.cuit || inv.clientCuit || "",
+        inv.detalle || "",
+        inv.neto?.toFixed(2) || "0",
+        inv.iva?.toFixed(2) || "0",
+        inv.total?.toFixed(2) || "0",
+        inv.estado || "",
+        inv.cae || "",
+        vtoFmt,
+        inv.fechaPago || "",
+      ];
+    });
+    // Fila de totales al final
+    const totalRow = [
+      "TOTALES", "", "", `${monthInvoices.length} factura(s)`, "", "",
+      totNeto.toFixed(2), totIva.toFixed(2), totTotal.toFixed(2),
+      "", "", "", "",
+    ];
+    // Armado del CSV con BOM para que Excel respete los acentos
+    const BOM = "\uFEFF";
+    const csv = BOM + [headers, ...rows, [], totalRow]
+      .map(row => row.map(csvEscape).join(","))
+      .join("\r\n");
+    // Descargar
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const nombreMes = MONTHS[billMonth - 1] || "mes";
+    link.href = url;
+    link.download = `facturas-${nombreMes}-${billYear}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
   const buildInvoice=(ct,extraText="")=>{
     const client=clients.find(c=>c.id===ct.clientId);
     const num=String(invoices.length+1).padStart(8,"0");
@@ -902,6 +1148,15 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
           {[2024,2025,2026].map(y=><option key={y}>{y}</option>)}
         </select>
         <span className="text-xs text-gray-500">Período: <strong>{MONTHS[billMonth-1]} {billYear}</strong></span>
+        {monthInvoices.length>0&&(
+          <button
+            onClick={descargarReporteCSV}
+            className="ml-auto flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700"
+            title="Descargar reporte mensual en CSV (se abre con Excel)"
+          >
+            <Icon d={Icons.download} size={14}/>Descargar reporte
+          </button>
+        )}
       </div>
       {monthInvoices.length>0&&(
         <div className="grid grid-cols-3 gap-3">
@@ -1176,11 +1431,14 @@ function EmailModal({invoice,config,clients,onClose,onSent}){
   );
 }
 
-function Expenses({expenses,setExpenses,canEdit}){
+function Expenses({expenses,setExpenses,currentUser,canEdit}){
   const [modal,setModal]=useState(null);
   const [fMonth,setFMonth]=useState(String(new Date().getMonth()+1));
   const [fYear,setFYear]=useState(String(new Date().getFullYear()));
   const [fCat,setFCat]=useState("");
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const isWebmaster = currentUser?.role === "webmaster";
+
   const empty={descripcion:"",categoria:"Proveedores",monto:"",fecha:todayStr(),proveedor:"",comprobante:"",pagado:true,notas:""};
   const filtered=expenses.filter(e=>{const d=new Date(e.fecha);return(!fMonth||d.getMonth()+1===Number(fMonth))&&(!fYear||d.getFullYear()===Number(fYear))&&(!fCat||e.categoria===fCat);});
   const save=(data)=>{
@@ -1189,6 +1447,40 @@ function Expenses({expenses,setExpenses,canEdit}){
     else setExpenses(prev=>[...prev,{...d,id:`ex-${Date.now()}`}]);
     setModal(null);
   };
+
+  // Borrar gasto individual
+  const askDeleteOne = (gasto) => {
+    setConfirmDelete({
+      tipo: "uno",
+      titulo: "¿Borrar este gasto?",
+      mensaje: `Vas a borrar el gasto: "${gasto.descripcion}" por ${fmtMoney(gasto.monto)}.`,
+      action: () => {
+        setExpenses(prev => prev.filter(e => e.id !== gasto.id));
+        setConfirmDelete(null);
+      },
+    });
+  };
+
+  // Borrar todos los gastos del filtro actual (solo webmaster)
+  const askDeleteAll = () => {
+    if (filtered.length === 0) {
+      alert("No hay gastos en el filtro actual para borrar.");
+      return;
+    }
+    const periodo = fMonth ? `${MONTHS[Number(fMonth)-1]} ${fYear}` : `año ${fYear}`;
+    setConfirmDelete({
+      tipo: "todos",
+      titulo: `¿Borrar TODOS los gastos de ${periodo}?`,
+      mensaje: `Vas a borrar ${filtered.length} gasto(s) por un total de ${fmtMoney(totFiltered)}.`,
+      advertencia: "Esta acción es irreversible. No queda copia en ningún lado.",
+      action: () => {
+        const idsABorrar = new Set(filtered.map(e => e.id));
+        setExpenses(prev => prev.filter(e => !idsABorrar.has(e.id)));
+        setConfirmDelete(null);
+      },
+    });
+  };
+
   const totFiltered=filtered.reduce((s,e)=>s+e.monto,0);
   const byCat=EXPENSE_CATS.map(cat=>({cat,total:filtered.filter(e=>e.categoria===cat).reduce((s,e)=>s+e.monto,0)})).filter(x=>x.total>0).sort((a,b)=>b.total-a.total);
   return(
@@ -1206,6 +1498,15 @@ function Expenses({expenses,setExpenses,canEdit}){
           {EXPENSE_CATS.map(c=><option key={c}>{c}</option>)}
         </select>
         {canEdit&&<button onClick={()=>setModal(empty)} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 ml-auto"><Icon d={Icons.plus} size={14}/>Nuevo gasto</button>}
+        {isWebmaster&&filtered.length>0&&(
+          <button
+            onClick={askDeleteAll}
+            className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-lg text-xs font-medium hover:bg-red-100"
+            title="Borrar todos los gastos visibles en el filtro actual"
+          >
+            <Icon d={Icons.trash} size={14}/>Borrar todos del filtro
+          </button>
+        )}
       </div>
       {byCat.length>0&&(
         <div className="grid grid-cols-4 gap-3">
@@ -1228,7 +1529,12 @@ function Expenses({expenses,setExpenses,canEdit}){
                 <td className="px-3 py-2.5 text-xs font-mono text-gray-400">{e.comprobante||"—"}</td>
                 <td className="px-3 py-2.5 text-xs font-semibold text-red-600">{fmtMoney(e.monto)}</td>
                 <td className="px-3 py-2.5"><span className={`text-xs px-2 py-0.5 rounded-full ${e.pagado?"bg-green-50 text-green-700":"bg-amber-50 text-amber-700"}`}>{e.pagado?"Pagado":"Pendiente"}</span></td>
-                <td className="px-3 py-2.5">{canEdit&&<button onClick={()=>setModal(e)} className="text-gray-400 hover:text-blue-600"><Icon d={Icons.edit} size={14}/></button>}</td>
+                <td className="px-3 py-2.5">
+                  <div className="flex items-center gap-2">
+                    {canEdit&&<button onClick={()=>setModal(e)} className="text-gray-400 hover:text-blue-600" title="Editar"><Icon d={Icons.edit} size={14}/></button>}
+                    {canEdit&&<button onClick={()=>askDeleteOne(e)} className="text-gray-400 hover:text-red-600" title="Borrar"><Icon d={Icons.trash} size={14}/></button>}
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -1236,6 +1542,16 @@ function Expenses({expenses,setExpenses,canEdit}){
         {filtered.length===0&&<div className="text-center py-8 text-gray-400 text-sm">Sin gastos</div>}
       </div>
       {modal&&<ExpenseModal data={modal} onSave={save} onClose={()=>setModal(null)}/>}
+      {confirmDelete && (
+        <ConfirmDeleteModal
+          titulo={confirmDelete.titulo}
+          mensaje={confirmDelete.mensaje}
+          advertencia={confirmDelete.advertencia}
+          requireTyping={confirmDelete.tipo === "todos"}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={confirmDelete.action}
+        />
+      )}
     </div>
   );
 }
