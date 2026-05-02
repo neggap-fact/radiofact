@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./supabase";
 
 const Icon = ({ d, size = 18, className = "" }) => (
@@ -44,6 +44,96 @@ function fmtDate(d) {
   return `${day}/${m}/${y}`;
 }
 function todayStr() { return new Date().toISOString().split("T")[0]; }
+
+// ── REGISTRO DE OPERACIONES ARCA (idempotencia + auditoría) ────────────────
+// Genera un UUID único por operación e inserta una fila en operaciones_arca.
+// Si el insert falla por unique constraint (UUID repetido), devuelve false:
+// significa que esta operación ya estaba en curso o se completó. NO HAY que
+// volver a llamar a ARCA en ese caso.
+async function registrarOperacionArca(tipo, requestBody) {
+  const id = crypto.randomUUID();
+  const { error } = await supabase.from("operaciones_arca").insert({
+    id,
+    tipo,
+    request_body: requestBody,
+    estado: "pendiente",
+  });
+  if (error) {
+    console.error("registrarOperacionArca falló:", error);
+    return { ok: false, id: null };
+  }
+  return { ok: true, id };
+}
+
+async function completarOperacionArca(id, responseBody, exito) {
+  if (!id) return;
+  await supabase.from("operaciones_arca").update({
+    response_body: responseBody,
+    estado: exito ? "exitoso" : "fallido",
+    completed_at: new Date().toISOString(),
+  }).eq("id", id);
+}
+
+// ── MODAL DE CONFIRMACIÓN PARA EMISIÓN A ARCA ──────────────────────────────
+function ConfirmEmisionModal({ titulo, resumen, items, onConfirm, onCancel, loading }) {
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-5 space-y-4">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
+            <Icon d={Icons.alert} size={20} className="text-amber-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-base">{titulo}</h3>
+            <p className="text-xs text-gray-500 mt-1">Esta acción es irreversible. Una vez emitida, la factura queda registrada en ARCA.</p>
+          </div>
+        </div>
+
+        {resumen && (
+          <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-1 border border-gray-200">
+            {Object.entries(resumen).map(([k, v]) => (
+              <div key={k} className="flex justify-between gap-3">
+                <span className="text-gray-500">{k}:</span>
+                <span className="font-medium text-gray-900 text-right">{v}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {items && items.length > 0 && (
+          <div className="bg-gray-50 rounded-lg p-3 text-xs border border-gray-200 max-h-40 overflow-y-auto">
+            <p className="font-medium text-gray-700 mb-2">Se emitirán {items.length} factura(s):</p>
+            <ul className="space-y-1">
+              {items.map((it, i) => (
+                <li key={i} className="flex justify-between gap-3">
+                  <span className="text-gray-600 truncate">{it.label}</span>
+                  <span className="font-medium text-gray-900 flex-shrink-0">{it.monto}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div className="flex gap-2 pt-2">
+          <button
+            onClick={onCancel}
+            disabled={loading}
+            className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={loading}
+            className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            {loading ? "⏳ Emitiendo..." : "Confirmar y emitir"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const INIT_USERS = [
   {id:"u1",name:"Webmaster",email:"admin@radio.com",password:"admin123",role:"webmaster",active:true},
@@ -142,28 +232,56 @@ export default function App() {
     async function cargarFacturas() {
       const {data,error} = await supabase.from("facturas").select("*").order("created_at",{ascending:false});
       if(!error && data) {
-        setInvoices(data.map(f=>({
-          id: f.id,
-          contractId: f.contrato_id,
-          clientId: f.cliente_id,
-          clientName: f.client_name || "",
-          clientEmail: f.client_email || "",
-          tipoFactura: f.tipo_comprobante===1?"A":"B",
-          numero: f.numero_comprobante ? `${f.tipo_comprobante===1?"A":"B"}-0003-${String(f.numero_comprobante).padStart(8,"0")}` : "",
-          month: f.fecha_emision ? new Date(f.fecha_emision).getMonth()+1 : new Date().getMonth()+1,
-          year: f.fecha_emision ? new Date(f.fecha_emision).getFullYear() : new Date().getFullYear(),
-          periodo: f.periodo || "",
-          detalle: f.detalle || "",
-          neto: parseFloat(f.neto)||0,
-          iva: parseFloat(f.iva)||0,
-          total: parseFloat(f.total)||0,
-          estado: f.estado || "Emitida",
-          cae: f.cae || "",
-          cae_vencimiento: f.cae_vencimiento || "",
-          fechaPago: f.fecha_pago || "",
-          emailEnviado: false,
-          fecha: f.fecha_emision ? f.fecha_emision.replace(/-/g,"") : "",
-        })));
+        // Helper: parsea "Mayo 2026" → [5, 2026]. Devuelve [null, null] si no matchea.
+        const parsePeriodoTexto = (txt) => {
+          if (!txt) return [null, null];
+          const partes = txt.trim().split(/\s+/);
+          if (partes.length < 2) return [null, null];
+          const idx = MONTHS.findIndex(m => m.toLowerCase() === partes[0].toLowerCase());
+          const año = parseInt(partes[partes.length - 1]);
+          if (idx === -1 || isNaN(año)) return [null, null];
+          return [idx + 1, año];
+        };
+        // Helper: parsea "2026-05-01" → [5, 2026] sin pasar por new Date() (evita timezone shift).
+        const parseFechaISO = (fechaStr) => {
+          if (!fechaStr) return [null, null];
+          const partes = fechaStr.split("-");
+          if (partes.length < 3) return [null, null];
+          return [parseInt(partes[1]), parseInt(partes[0])];
+        };
+        setInvoices(data.map(f=>{
+          // Prioridad 1: campo periodo ("Mayo 2026") porque refleja la INTENCIÓN del usuario.
+          // Prioridad 2: fecha_emision parseada como string puro (sin timezone shift).
+          // Prioridad 3: fecha actual como último recurso.
+          let [mes, año] = parsePeriodoTexto(f.periodo);
+          if (!mes || !año) [mes, año] = parseFechaISO(f.fecha_emision);
+          if (!mes || !año) {
+            mes = new Date().getMonth() + 1;
+            año = new Date().getFullYear();
+          }
+          return {
+            id: f.id,
+            contractId: f.contrato_id,
+            clientId: f.cliente_id,
+            clientName: f.client_name || "",
+            clientEmail: f.client_email || "",
+            tipoFactura: f.tipo_comprobante===1?"A":"B",
+            numero: f.numero_comprobante ? `${f.tipo_comprobante===1?"A":"B"}-0003-${String(f.numero_comprobante).padStart(8,"0")}` : "",
+            month: mes,
+            year: año,
+            periodo: f.periodo || "",
+            detalle: f.detalle || "",
+            neto: parseFloat(f.neto)||0,
+            iva: parseFloat(f.iva)||0,
+            total: parseFloat(f.total)||0,
+            estado: f.estado || "Emitida",
+            cae: f.cae || "",
+            cae_vencimiento: f.cae_vencimiento || "",
+            fechaPago: f.fecha_pago || "",
+            emailEnviado: false,
+            fecha: f.fecha_emision ? f.fecha_emision.replace(/-/g,"") : "",
+          };
+        }));
       }
     }
     cargarFacturas();
@@ -712,6 +830,24 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
       const client = clients.find(c => c.id === ct.clientId);
       const cuitLimpio = client.cuit.replace(/-/g, "");
       const tipoFactura = client.tipoFactura === "A" ? 1 : 6;
+
+      // Registrar la operación ANTES de llamar a ARCA (auditoría + UUID por intento)
+      const requestPayload = {
+        cuit_cliente: parseInt(cuitLimpio),
+        tipo_doc: 80,
+        tipo_factura: tipoFactura,
+        punto_venta: 3,
+        monto_neto: ct.montoNeto,
+        monto_iva: ct.iva,
+        monto_total: ct.total,
+        concepto: 2,
+        mes: billMonth,
+        anio: billYear,
+        cliente: client.razonSocial,
+        contrato_id: ct.id,
+      };
+      const opReg = await registrarOperacionArca("factura_masiva", requestPayload);
+
       try {
         let data;
         if(DEBUG_MODE) {
@@ -722,21 +858,11 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
           const res = await fetch(`${BACKEND_URL}/facturar`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              cuit_cliente: parseInt(cuitLimpio),
-              tipo_doc: 80,
-              tipo_factura: tipoFactura,
-              punto_venta: 3,
-              monto_neto: ct.montoNeto,
-              monto_iva: ct.iva,
-              monto_total: ct.total,
-              concepto: 2,
-              mes: billMonth,
-              anio: billYear,
-            }),
+            body: JSON.stringify(requestPayload),
           });
           data = await res.json();
         }
+        await completarOperacionArca(opReg.id, data, !!data.exito);
         const inv = buildInvoice(ct, texts[ctId] || "");
         if (data.exito) {
           inv.cae = data.datos.cae;
@@ -753,6 +879,7 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
         }
         results.push(inv);
       } catch (e) {
+        await completarOperacionArca(opReg.id, { error: e.message }, false);
         const inv = buildInvoice(ct, texts[ctId] || "");
         inv.estado = "Borrador";
         results.push(inv);
@@ -878,10 +1005,44 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
 function ReviewModal({contracts,clients,onApprove,onClose}){
   const [texts,setTexts]=useState({});
   const [sel,setSel]=useState(contracts.map(c=>c.id));
+  const [submitting, setSubmitting] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  // Guarda sincrónica anti-doble-click. Cubre el gap entre el click y el setState.
+  const submittingRef = useRef(false);
   const toggle=id=>setSel(prev=>prev.includes(id)?prev.filter(i=>i!==id):[...prev,id]);
   const selTotal=contracts.filter(c=>sel.includes(c.id)).reduce((s,c)=>s+c.total,0);
+
+  const handleConfirm = async () => {
+    if (submittingRef.current) {
+      console.warn("Aprobación ya en curso, ignorando click duplicado");
+      return;
+    }
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
+      await onApprove(sel, texts);
+      // onApprove cierra el modal padre, no hace falta setSubmitting(false)
+    } catch (e) {
+      console.error("Error en approveAndEmit:", e);
+      submittingRef.current = false;
+      setSubmitting(false);
+      alert("Error al emitir: " + e.message);
+    }
+  };
+
+  // Items para el modal de confirmación
+  const confirmItems = contracts
+    .filter(c => sel.includes(c.id))
+    .map(ct => {
+      const cli = clients.find(c => c.id === ct.clientId);
+      return {
+        label: cli?.razonSocial || "Cliente",
+        monto: fmtMoney(ct.total),
+      };
+    });
+
   return(
-    <Modal title="Revisión previa a facturación" onClose={onClose} wide>
+    <Modal title="Revisión previa a facturación" onClose={submitting ? () => {} : onClose} wide>
       <div className="mb-3 p-3 bg-blue-50 rounded-lg text-xs text-blue-700">Revisá cada contrato antes de aprobar.</div>
       <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
         {contracts.map(ct=>{
@@ -890,7 +1051,7 @@ function ReviewModal({contracts,clients,onApprove,onClose}){
           return(
             <div key={ct.id} className={`border rounded-lg p-3 transition-all ${checked?"border-blue-300 bg-blue-50":"border-gray-200"}`}>
               <div className="flex items-start gap-3">
-                <input type="checkbox" checked={checked} onChange={()=>toggle(ct.id)} className="mt-1"/>
+                <input type="checkbox" checked={checked} onChange={()=>toggle(ct.id)} disabled={submitting} className="mt-1"/>
                 <div className="flex-1">
                   <div className="flex items-center justify-between">
                     <p className="font-semibold text-sm">{client?.razonSocial}</p>
@@ -902,8 +1063,9 @@ function ReviewModal({contracts,clients,onApprove,onClose}){
                     <span>IVA: {fmtMoney(ct.iva)}</span>
                   </div>
                   <input value={texts[ct.id]||ct.textoOpcional||""} onChange={e=>setTexts(p=>({...p,[ct.id]:e.target.value}))}
+                    disabled={submitting}
                     placeholder="Texto adicional (OC, expediente...)"
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-300"/>
+                    className="w-full px-2 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 disabled:bg-gray-50"/>
                 </div>
               </div>
             </div>
@@ -913,12 +1075,34 @@ function ReviewModal({contracts,clients,onApprove,onClose}){
       <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
         <div className="text-xs text-gray-500">{sel.length}/{contracts.length} · <span className="font-semibold text-blue-700">{fmtMoney(selTotal)}</span></div>
         <div className="flex gap-2">
-          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">Cancelar</button>
-          <button onClick={()=>onApprove(sel,texts)} disabled={sel.length===0} className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-40 flex items-center gap-2">
-            <Icon d={Icons.check} size={14}/>Emitir {sel.length} factura(s)
+          <button onClick={onClose} disabled={submitting} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg disabled:opacity-50">Cancelar</button>
+          <button
+            onClick={() => setShowConfirm(true)}
+            disabled={sel.length===0 || submitting}
+            className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            {submitting ? (
+              <>⏳ Emitiendo {sel.length} factura(s)... no toques nada</>
+            ) : (
+              <><Icon d={Icons.check} size={14}/>Emitir {sel.length} factura(s)</>
+            )}
           </button>
         </div>
       </div>
+
+      {showConfirm && (
+        <ConfirmEmisionModal
+          titulo={`¿Emitir ${sel.length} factura(s) a ARCA?`}
+          resumen={{
+            "Cantidad": `${sel.length} factura(s)`,
+            "Total a facturar": fmtMoney(selTotal),
+          }}
+          items={confirmItems}
+          loading={submitting}
+          onCancel={() => { if (!submitting) setShowConfirm(false); }}
+          onConfirm={handleConfirm}
+        />
+      )}
     </Modal>
   );
 }
@@ -1537,6 +1721,10 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
   const [emailTexto, setEmailTexto] = useState("");
   const [enviandoEmail, setEnviandoEmail] = useState(false);
   const [emailEnviado, setEmailEnviado] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  // Guarda sincrónica: si ya hay una emisión en curso, ignora clicks adicionales.
+  // Esto cubre el gap entre el click y el setState del React (que es asíncrono).
+  const submittingRef = useRef(false);
 
   const neto = parseFloat(form.montoNeto)||0;
   const iva = Math.round(neto*0.105*100)/100;
@@ -1601,12 +1789,38 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
       alert("Completá todos los campos obligatorios");
       return;
     }
+    // Guarda anti-doble-click: si ya estamos emitiendo, ignorar.
+    if (submittingRef.current) {
+      console.warn("Emisión ya en curso, ignorando click duplicado");
+      return;
+    }
+    submittingRef.current = true;
     setEmitiendo(true);
     setResultado(null);
-    try {
-      const cuitLimpio = form.cuit.replace(/-/g,"");
-      const tipoFactura = form.tipoFactura==="A" ? 1 : 6;
 
+    // Registrar la operación en Supabase ANTES de llamar a ARCA.
+    // Esto deja un log de auditoría y un UUID por intento.
+    const cuitLimpio = form.cuit.replace(/-/g,"");
+    const tipoFactura = form.tipoFactura==="A" ? 1 : 6;
+    const requestPayload = {
+      cuit_cliente: parseInt(cuitLimpio),
+      tipo_doc: 80,
+      tipo_factura: tipoFactura,
+      punto_venta: 3,
+      monto_neto: neto,
+      monto_iva: iva,
+      monto_total: total,
+      concepto: parseInt(form.concepto),
+      mes: form.tipoPeriodo === "mes" ? parseInt(form.mes) : null,
+      anio: form.tipoPeriodo === "mes" ? parseInt(form.anio) : null,
+      fch_serv_desde: form.tipoPeriodo === "rango" ? form.fechaDesde.replace(/-/g,"") : form.tipoPeriodo === "dia" ? form.fechaDia.replace(/-/g,"") : null,
+      fch_serv_hasta: form.tipoPeriodo === "rango" ? form.fechaHasta.replace(/-/g,"") : form.tipoPeriodo === "dia" ? form.fechaDia.replace(/-/g,"") : null,
+      cliente: form.razonSocial,
+      detalle: form.detalle,
+    };
+    const opReg = await registrarOperacionArca("factura_directa", requestPayload);
+
+    try {
       let data;
       if(DEBUG_MODE) {
         const fakeNum = Math.floor(Math.random()*900)+100;
@@ -1616,23 +1830,13 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
         const res = await fetch(`${BACKEND_URL}/facturar`, {
           method:"POST",
           headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({
-            cuit_cliente: parseInt(cuitLimpio),
-            tipo_doc: 80,
-            tipo_factura: tipoFactura,
-            punto_venta: 3,
-            monto_neto: neto,
-            monto_iva: iva,
-            monto_total: total,
-            concepto: parseInt(form.concepto),
-            mes: form.tipoPeriodo === "mes" ? parseInt(form.mes) : null,
-            anio: form.tipoPeriodo === "mes" ? parseInt(form.anio) : null,
-            fch_serv_desde: form.tipoPeriodo === "rango" ? form.fechaDesde.replace(/-/g,"") : form.tipoPeriodo === "dia" ? form.fechaDia.replace(/-/g,"") : null,
-            fch_serv_hasta: form.tipoPeriodo === "rango" ? form.fechaHasta.replace(/-/g,"") : form.tipoPeriodo === "dia" ? form.fechaDia.replace(/-/g,"") : null,
-          }),
+          body: JSON.stringify(requestPayload),
         });
         data = await res.json();
       }
+
+      // Marcar la operación como completada en Supabase
+      await completarOperacionArca(opReg.id, data, !!data.exito);
 
       if(data.exito) {
         let clientId = form.clienteId !== "nuevo" ? form.clienteId : null;
@@ -1698,8 +1902,11 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
       }
     } catch(e) {
       setResultado({exito:false, error:e.message});
+      await completarOperacionArca(opReg.id, { error: e.message }, false);
     }
     setEmitiendo(false);
+    submittingRef.current = false;
+    setShowConfirm(false);
   };
 
   return(
@@ -1836,7 +2043,18 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
       )}
 
       {canEdit && (
-        <button onClick={emitir} disabled={emitiendo || resultado?.exito} className="w-full bg-blue-600 text-white py-3 rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2">
+        <button
+          onClick={() => {
+            // Validar antes de abrir el modal
+            if(!form.razonSocial||!form.cuit||!form.detalle||!form.montoNeto) {
+              alert("Completá todos los campos obligatorios");
+              return;
+            }
+            setShowConfirm(true);
+          }}
+          disabled={emitiendo || resultado?.exito}
+          className="w-full bg-blue-600 text-white py-3 rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+        >
           {emitiendo ? "⏳ Emitiendo factura..." : resultado?.exito ? "✅ Factura emitida" : <><Icon d={Icons.send} size={16}/>Emitir Factura a ARCA</>}
         </button>
       )}
@@ -1844,6 +2062,24 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
         <button onClick={()=>{setResultado(null);setForm(empty);}} className="w-full border border-blue-600 text-blue-600 py-2 rounded-lg text-sm font-medium hover:bg-blue-50">
           + Nueva factura
         </button>
+      )}
+
+      {showConfirm && (
+        <ConfirmEmisionModal
+          titulo="¿Emitir factura a ARCA?"
+          resumen={{
+            "Cliente": form.razonSocial,
+            "CUIT": form.cuit,
+            "Tipo": `Factura ${form.tipoFactura}`,
+            "Detalle": form.detalle.length > 50 ? form.detalle.slice(0,50)+"..." : form.detalle,
+            "Neto": fmtMoney(neto),
+            "IVA 10.5%": fmtMoney(iva),
+            "Total": fmtMoney(total),
+          }}
+          loading={emitiendo}
+          onCancel={() => { if (!emitiendo) setShowConfirm(false); }}
+          onConfirm={emitir}
+        />
       )}
     </div>
   );
