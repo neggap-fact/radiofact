@@ -1246,6 +1246,7 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
   const [ncModal,setNcModal]=useState(null);
   const [filtroCliente,setFiltroCliente]=useState("");
   const [filtroEstado,setFiltroEstado]=useState("");
+  const [ocultarAnuladas,setOcultarAnuladas]=useState(true);
   const [filtroEmail,setFiltroEmail]=useState("");
   const [filtroBusqueda,setFiltroBusqueda]=useState("");
   const billMonth=selMonth;
@@ -1256,6 +1257,7 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
   });
   const monthInvoicesBase=invoices.filter(i=>i.month===billMonth&&i.year===billYear);
   const monthInvoices=monthInvoicesBase.filter(i=>{
+    if(ocultarAnuladas && i.estado === "Anulada") return false;
     if(filtroCliente && i.clientId!==filtroCliente) return false;
     if(filtroEstado && i.estado!==filtroEstado) return false;
     if(filtroEmail==="enviado" && !i.emailEnviado) return false;
@@ -1476,6 +1478,18 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
             <option value="enviado">Email enviado</option>
             <option value="no_enviado">Sin enviar</option>
           </select>
+          <label className="flex items-center gap-1.5 px-2 py-1.5 text-xs cursor-pointer select-none hover:bg-gray-50 rounded-lg" title="Mostrar/ocultar facturas anuladas con NC">
+            <input
+              type="checkbox"
+              checked={ocultarAnuladas}
+              onChange={e=>setOcultarAnuladas(e.target.checked)}
+              className="cursor-pointer"
+            />
+            <span className="text-gray-600">Ocultar anuladas</span>
+            {ocultarAnuladas && monthInvoicesBase.filter(i=>i.estado==="Anulada").length>0 && (
+              <span className="text-gray-400">({monthInvoicesBase.filter(i=>i.estado==="Anulada").length})</span>
+            )}
+          </label>
           {(filtroCliente||filtroEstado||filtroEmail||filtroBusqueda)&&<button onClick={()=>{setFiltroCliente("");setFiltroEstado("");setFiltroEmail("");setFiltroBusqueda("");}} className="px-2 py-1.5 text-xs text-red-500 hover:bg-red-50 rounded-lg">✕ Limpiar</button>}
         </div>
         <div className="overflow-x-auto">
@@ -2123,15 +2137,17 @@ function CreditNotes({creditNotes, invoices, clients, canEdit, onEmitir, onDesca
 
 // ── MODAL DE EMISIÓN DE NC ───────────────────────────────────────────────────
 function EmitirNCModal({ factura, cliente, onClose, onConfirm }) {
-  const [motivo, setMotivo] = useState("Duplicación por error de emisión");
+  const [motivo, setMotivo] = useState("Errores en datos de facturación. Se reemite corregida.");
   const [confirmando, setConfirmando] = useState(false);
   const submittingRef = useRef(false);
 
   const motivosFrecuentes = [
-    "Duplicación por error de emisión",
-    "Error en datos del cliente",
-    "Cancelación del servicio a pedido del cliente",
-    "Error en el monto facturado",
+    "Errores en datos de facturación. Se reemite corregida.",
+    "Período facturado incorrecto. Se reemite corregida.",
+    "Error en datos del cliente (domicilio/CUIT/razón social).",
+    "Duplicación por error de emisión.",
+    "Cancelación del servicio a pedido del cliente.",
+    "Error en el monto facturado.",
     "Otro (especificar abajo)",
   ];
 
