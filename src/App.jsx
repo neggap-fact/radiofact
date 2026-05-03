@@ -1253,7 +1253,13 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
   const billYear=selYear;
   const pendingContracts=contracts.filter(ct=>{
     if(!ct.active) return false;
-    return !invoices.find(inv=>inv.contractId===ct.id&&inv.month===billMonth&&inv.year===billYear);
+    // Ignorar facturas anuladas — el contrato vuelve a contar como "sin facturar"
+    return !invoices.find(inv=>
+      inv.contractId===ct.id &&
+      inv.month===billMonth &&
+      inv.year===billYear &&
+      inv.estado !== "Anulada"
+    );
   });
   const monthInvoicesBase=invoices.filter(i=>i.month===billMonth&&i.year===billYear);
   const monthInvoices=monthInvoicesBase.filter(i=>{
