@@ -125,8 +125,16 @@ function calcularMesesEntre(desde, hasta) {
   return meses + 1; // +1 porque "del 01/01 al 31/01" es 1 mes, no 0
 }
 
+// Devuelve la fecha más tardía entre dos strings YYYY-MM-DD
+function maxFecha(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return a > b ? a : b;
+}
+
 // Cálculo automático default: mes ANTERIOR completo (lo más común).
 // El usuario después puede editar cualquier fecha o usar los botones rápidos del ReviewModal.
+// IMPORTANTE: Vto Pago nunca puede ser anterior a HOY (ARCA error 10036).
 function calcularFechasServicio(contrato, billMonth, billYear) {
   const dvp = parseInt(contrato.diaVencimientoPago) || 0;
   // Mes anterior al de facturación
@@ -136,13 +144,13 @@ function calcularFechasServicio(contrato, billMonth, billYear) {
   // Primer y último día del mes anterior
   const desde = new Date(anioSrv, mesSrv - 1, 1);
   const hasta = new Date(anioSrv, mesSrv, 0);
-  // Vencimiento de pago = último día + dias del contrato
   const vto = new Date(hasta);
   vto.setDate(vto.getDate() + dvp);
+  const hoy = toLocalDateStr(new Date());
   return {
     servicioDesde: toLocalDateStr(desde),
     servicioHasta: toLocalDateStr(hasta),
-    vtoPago: toLocalDateStr(vto),
+    vtoPago: maxFecha(toLocalDateStr(vto), hoy),  // nunca antes de hoy
   };
 }
 
@@ -155,10 +163,11 @@ function fechasMesAnteriorCompleto(billMonth, billYear, dvp = 0) {
   const hasta = new Date(anioSrv, mesSrv, 0);
   const vto = new Date(hasta);
   vto.setDate(vto.getDate() + dvp);
+  const hoy = toLocalDateStr(new Date());
   return {
     servicioDesde: toLocalDateStr(desde),
     servicioHasta: toLocalDateStr(hasta),
-    vtoPago: toLocalDateStr(vto),
+    vtoPago: maxFecha(toLocalDateStr(vto), hoy),
   };
 }
 function fechasMesActualCompleto(billMonth, billYear, dvp = 0) {
@@ -166,10 +175,11 @@ function fechasMesActualCompleto(billMonth, billYear, dvp = 0) {
   const hasta = new Date(billYear, billMonth, 0);
   const vto = new Date(hasta);
   vto.setDate(vto.getDate() + dvp);
+  const hoy = toLocalDateStr(new Date());
   return {
     servicioDesde: toLocalDateStr(desde),
     servicioHasta: toLocalDateStr(hasta),
-    vtoPago: toLocalDateStr(vto),
+    vtoPago: maxFecha(toLocalDateStr(vto), hoy),
   };
 }
 
@@ -1999,7 +2009,7 @@ function ReviewModal({contracts,clients,billMonth,billYear,onApprove,onClose,onE
     } else if (nuevoTipo === "dia") {
       // Día puntual: usa la fecha "desde" actual o hoy
       const dia = (fechas[ctId]?.servicioDesde) || toLocalDateStr(new Date());
-      setFechas(p => ({ ...p, [ctId]: { servicioDesde: dia, servicioHasta: dia, vtoPago: sumarDias(dia, dvp) } }));
+      setFechas(p => ({ ...p, [ctId]: { servicioDesde: dia, servicioHasta: dia, vtoPago: maxFecha(sumarDias(dia, dvp), toLocalDateStr(new Date())) } }));
     }
     // Si es "rango", no cambia las fechas: el usuario las ajusta a mano
   };
@@ -2118,7 +2128,7 @@ function ReviewModal({contracts,clients,billMonth,billYear,onApprove,onClose,onE
                           if (tipoPeriodoSel[ct.id] === "dia") {
                             // Día puntual: sincroniza Hasta también
                             const dvp = parseInt(ct.diaVencimientoPago)||0;
-                            setFechas(p=>({...p,[ct.id]:{servicioDesde:nv,servicioHasta:nv,vtoPago:sumarDias(nv,dvp)}}));
+                            setFechas(p=>({...p,[ct.id]:{servicioDesde:nv,servicioHasta:nv,vtoPago:maxFecha(sumarDias(nv,dvp),toLocalDateStr(new Date()))}}));
                           } else {
                             updateFecha(ct.id,"servicioDesde",nv);
                           }
