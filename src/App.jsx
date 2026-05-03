@@ -40,6 +40,29 @@ const EXPENSE_CATS = ["Proveedores","Personal","Servicios","Impuestos","Alquiler
 function fmtMoney(n) {
   return new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:0}).format(n||0);
 }
+
+// ── ALÍCUOTA DE IIBB SANTA CRUZ (publicidad/servicios de comunicación) ──
+const IIBB_ALICUOTA = 0.03;  // 3%
+
+// Suma neto/iva/total de facturas EXCLUYENDO las anuladas con NC.
+// Devuelve { neto, iva, total, iibb, cantidad }.
+function totalizarFacturas(invoices) {
+  let neto = 0, iva = 0, total = 0, cantidad = 0;
+  for (const inv of invoices) {
+    if (inv.estado === "Anulada") continue;
+    neto += parseFloat(inv.neto) || 0;
+    iva += parseFloat(inv.iva) || 0;
+    total += parseFloat(inv.total) || 0;
+    cantidad++;
+  }
+  return {
+    neto,
+    iva,
+    total,
+    iibb: neto * IIBB_ALICUOTA,
+    cantidad,
+  };
+}
 function fmtDate(d) {
   if (!d) return "-";
   const [y,m,day] = d.split("-");
@@ -907,10 +930,13 @@ function Dashboard({clients,contracts,invoices,expenses,notifications,setPage}){
   const m=today.getMonth()+1,y=today.getFullYear();
   const mi=invoices.filter(i=>i.month===m&&i.year===y);
   const me=expenses.filter(e=>{const d=new Date(e.fecha);return d.getMonth()+1===m&&d.getFullYear()===y;});
-  const facturado=mi.reduce((s,i)=>s+i.total,0);
-  const cobrado=mi.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+i.total,0);
-  const adeudado=facturado-cobrado;
-  const ivaDelMes=mi.reduce((s,i)=>s+i.iva,0);
+  // Totales descontando facturas anuladas (NC)
+  const tot = totalizarFacturas(mi);
+  const facturado = tot.total;
+  const ivaDelMes = tot.iva;
+  const iibbDelMes = tot.iibb;
+  const cobrado = mi.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+i.total,0);
+  const adeudado = facturado - cobrado;
   const totalGastos=me.reduce((s,e)=>s+e.monto,0);
   const resultado=cobrado-totalGastos;
   const pendingNotifs=notifications.filter(n=>!n.read);
@@ -926,7 +952,7 @@ function Dashboard({clients,contracts,invoices,expenses,notifications,setPage}){
           <button onClick={()=>setPage("billing")} className="text-xs bg-amber-600 text-white px-3 py-1.5 rounded-lg hover:bg-amber-700 flex-shrink-0">Revisar</button>
         </div>
       )}
-      <div className="grid grid-cols-3 gap-3 lg:grid-cols-6">
+      <div className="grid grid-cols-3 gap-3 lg:grid-cols-7">
         {[
           {label:"Clientes",value:clients.filter(c=>c.active).length,sub:"activos"},
           {label:"Contratos",value:contracts.filter(c=>c.active).length,sub:"vigentes"},
@@ -934,6 +960,7 @@ function Dashboard({clients,contracts,invoices,expenses,notifications,setPage}){
           {label:"Cobrado",value:fmtMoney(cobrado),sub:"este mes"},
           {label:"Adeudado",value:fmtMoney(adeudado),sub:"pendiente"},
           {label:"IVA del mes",value:fmtMoney(ivaDelMes),sub:"débito fiscal"},
+          {label:"IIBB 3%",value:fmtMoney(iibbDelMes),sub:"a pagar (informativo)"},
         ].map((s,i)=>(
           <div key={i} className="bg-white rounded-xl border border-gray-200 p-3">
             <p className="text-xs text-gray-400">{s.label}</p>
@@ -1451,9 +1478,12 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
     if(filtroBusqueda && !i.numero?.toLowerCase().includes(filtroBusqueda.toLowerCase()) && !i.clientName?.toLowerCase().includes(filtroBusqueda.toLowerCase())) return false;
     return true;
   });
-  const totNeto=monthInvoices.reduce((s,i)=>s+i.neto,0);
-  const totIva=monthInvoices.reduce((s,i)=>s+i.iva,0);
-  const totTotal=monthInvoices.reduce((s,i)=>s+i.total,0);
+  // Totales del mes EXCLUYENDO facturas anuladas con NC
+  const totalesMes = totalizarFacturas(monthInvoices);
+  const totNeto = totalesMes.neto;
+  const totIva = totalesMes.iva;
+  const totTotal = totalesMes.total;
+  const totIibb = totalesMes.iibb;
 
   // ── DESCARGAR REPORTE MENSUAL EN CSV ─────────────────────────────────────
   const descargarReporteCSV = () => {
@@ -1503,15 +1533,20 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
         inv.fechaPago || "",
       ];
     });
-    // Fila de totales al final
+    // Filas de totales al final
     const totalRow = [
-      "TOTALES", "", "", `${monthInvoices.length} factura(s)`, "", "", "",
+      "TOTALES (excluye anuladas)", "", "", `${totalesMes.cantidad} factura(s)`, "", "", "",
       totNeto.toFixed(2), totIva.toFixed(2), totTotal.toFixed(2),
+      "", "", "", "",
+    ];
+    const iibbRow = [
+      "IIBB 3% sobre neto", "", "", "(informativo, no fiscal)", "", "", "",
+      totIibb.toFixed(2), "", "",
       "", "", "", "",
     ];
     // Armado del CSV con BOM para que Excel respete los acentos
     const BOM = "\uFEFF";
-    const csv = BOM + [headers, ...rows, [], totalRow]
+    const csv = BOM + [headers, ...rows, [], totalRow, iibbRow]
       .map(row => row.map(csvEscape).join(","))
       .join("\r\n");
     // Descargar
@@ -1639,11 +1674,17 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
         )}
       </div>
       {monthInvoices.length>0&&(
-        <div className="grid grid-cols-3 gap-3">
-          {[{label:"Neto",value:fmtMoney(totNeto),cls:"bg-gray-50 border-gray-200",txt:"text-gray-700"},{label:"IVA 10.5%",value:fmtMoney(totIva),cls:"bg-orange-50 border-orange-200",txt:"text-orange-700"},{label:"Total",value:fmtMoney(totTotal),cls:"bg-blue-50 border-blue-200",txt:"text-blue-700"}].map(s=>(
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {[
+            {label:"Neto",value:fmtMoney(totNeto),cls:"bg-gray-50 border-gray-200",txt:"text-gray-700",sub:totalesMes.cantidad>0?`${totalesMes.cantidad} factura(s) activas`:""},
+            {label:"IVA 10.5%",value:fmtMoney(totIva),cls:"bg-orange-50 border-orange-200",txt:"text-orange-700",sub:"débito fiscal"},
+            {label:"Total",value:fmtMoney(totTotal),cls:"bg-blue-50 border-blue-200",txt:"text-blue-700",sub:"facturado neto de NC"},
+            {label:"IIBB 3%",value:fmtMoney(totIibb),cls:"bg-purple-50 border-purple-200",txt:"text-purple-700",sub:"a pagar (informativo)"},
+          ].map(s=>(
             <div key={s.label} className={`rounded-xl border p-3 ${s.cls}`}>
               <p className="text-xs text-gray-500">{s.label}</p>
               <p className={`font-bold text-base ${s.txt}`}>{s.value}</p>
+              {s.sub && <p className="text-xs text-gray-400 mt-0.5">{s.sub}</p>}
             </div>
           ))}
         </div>
@@ -2758,14 +2799,21 @@ function Reports({clients,contracts,invoices,expenses}){
   const [activeTab,setActiveTab]=useState("facturas");
   const filtInv=invoices.filter(i=>(!fMonth||i.month===Number(fMonth))&&(!fYear||i.year===Number(fYear)));
   const filtExp=expenses.filter(e=>{const d=new Date(e.fecha);return(!fMonth||d.getMonth()+1===Number(fMonth))&&(!fYear||d.getFullYear()===Number(fYear));});
-  const totNeto=filtInv.reduce((s,i)=>s+i.neto,0);
-  const totIva=filtInv.reduce((s,i)=>s+i.iva,0);
-  const totFact=filtInv.reduce((s,i)=>s+i.total,0);
+  // Totales descontando facturas anuladas con NC
+  const totRep = totalizarFacturas(filtInv);
+  const totNeto = totRep.neto;
+  const totIva = totRep.iva;
+  const totFact = totRep.total;
+  const totIibb = totRep.iibb;
   const totCob=filtInv.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+i.total,0);
   const totAd=totFact-totCob;
   const totGastos=filtExp.reduce((s,e)=>s+e.monto,0);
   const resultado=totCob-totGastos;
-  const byClient=clients.map(c=>{const ci=filtInv.filter(i=>i.clientId===c.id);return{...c,neto:ci.reduce((s,i)=>s+i.neto,0),iva:ci.reduce((s,i)=>s+i.iva,0),total:ci.reduce((s,i)=>s+i.total,0),cobrado:ci.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+i.total,0),cantidad:ci.length,facturas:ci};}).filter(c=>c.total>0);
+  const byClient=clients.map(c=>{
+    const ci=filtInv.filter(i=>i.clientId===c.id);
+    const t = totalizarFacturas(ci);
+    return{...c,neto:t.neto,iva:t.iva,total:t.total,iibb:t.iibb,cobrado:ci.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+i.total,0),cantidad:t.cantidad,facturas:ci};
+  }).filter(c=>c.total>0);
   const periodoLabel=fMonth?`${MONTHS[Number(fMonth)-1]} ${fYear}`:`Todo ${fYear}`;
 
   const exportExcel=()=>{
@@ -2981,14 +3029,21 @@ function Finance({clients,invoices,expenses}){
   const [fYear,setFYear]=useState(String(today.getFullYear()));
   const filtInv=invoices.filter(i=>(!fMonth||i.month===Number(fMonth))&&(!fYear||i.year===Number(fYear)));
   const filtExp=expenses.filter(e=>{const d=new Date(e.fecha);return(!fMonth||d.getMonth()+1===Number(fMonth))&&(!fYear||d.getFullYear()===Number(fYear));});
-  const totNeto=filtInv.reduce((s,i)=>s+i.neto,0);
-  const totIva=filtInv.reduce((s,i)=>s+i.iva,0);
-  const totFact=filtInv.reduce((s,i)=>s+i.total,0);
+  // Totales descontando facturas anuladas con NC
+  const totFin = totalizarFacturas(filtInv);
+  const totNeto = totFin.neto;
+  const totIva = totFin.iva;
+  const totFact = totFin.total;
+  const totIibb = totFin.iibb;
   const totCob=filtInv.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+i.total,0);
   const totAd=totFact-totCob;
   const totGastos=filtExp.reduce((s,e)=>s+e.monto,0);
   const resultado=totCob-totGastos;
-  const byClient=clients.map(c=>{const ci=filtInv.filter(i=>i.clientId===c.id);return{...c,facturado:ci.reduce((s,i)=>s+i.total,0),cobrado:ci.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+i.total,0),neto:ci.reduce((s,i)=>s+i.neto,0),iva:ci.reduce((s,i)=>s+i.iva,0),facturas:ci};}).filter(c=>c.facturado>0);
+  const byClient=clients.map(c=>{
+    const ci=filtInv.filter(i=>i.clientId===c.id);
+    const t = totalizarFacturas(ci);
+    return{...c,facturado:t.total,cobrado:ci.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+i.total,0),neto:t.neto,iva:t.iva,facturas:ci};
+  }).filter(c=>c.facturado>0);
   const morosos=byClient.filter(c=>c.cobrado<c.facturado);
   return(
     <div className="space-y-4">
