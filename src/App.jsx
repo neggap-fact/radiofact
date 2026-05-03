@@ -79,6 +79,29 @@ function sumarDias(yyyymmdd, dias) {
   return toLocalDateStr(fecha);
 }
 
+// Suma N meses a una fecha "YYYY-MM-DD" y devuelve nueva "YYYY-MM-DD"
+// (resta 1 día porque "1 mes desde el 01/01 = hasta el 31/01" no "hasta el 01/02")
+function sumarMeses(yyyymmdd, meses) {
+  if (!yyyymmdd) return "";
+  const [y, m, d] = yyyymmdd.split("-").map(Number);
+  const fecha = new Date(y, m - 1, d);
+  fecha.setMonth(fecha.getMonth() + parseInt(meses));
+  fecha.setDate(fecha.getDate() - 1);
+  return toLocalDateStr(fecha);
+}
+
+// Calcula cuántos meses hay entre dos fechas "YYYY-MM-DD"
+// (aproximado: cuenta meses calendario, redondea hacia abajo)
+function calcularMesesEntre(desde, hasta) {
+  if (!desde || !hasta) return 0;
+  const [y1, m1, d1] = desde.split("-").map(Number);
+  const [y2, m2, d2] = hasta.split("-").map(Number);
+  let meses = (y2 - y1) * 12 + (m2 - m1);
+  if (d2 < d1 - 1) meses -= 1; // ajuste si el día final es antes
+  if (meses < 0) meses = 0;
+  return meses + 1; // +1 porque "del 01/01 al 31/01" es 1 mes, no 0
+}
+
 // Cálculo automático default: mes ANTERIOR completo (lo más común).
 // El usuario después puede editar cualquier fecha o usar los botones rápidos del ReviewModal.
 function calcularFechasServicio(contrato, billMonth, billYear) {
@@ -361,6 +384,7 @@ export default function App() {
           iva: parseFloat(c.iva)||0,
           total: Math.round((parseFloat(c.monto)+parseFloat(c.iva))*100)/100,
           fechaInicio: c.fecha_inicio || todayStr(),
+          fechaFin: c.fecha_fin || "",
           duracionMeses: c.duracion_meses || 12,
           diaFacturacion: c.dia_facturacion || 1,
           textoOpcional: c.texto_opcional || "",
@@ -1119,7 +1143,7 @@ function Contracts({contracts,setContracts,clients,invoices,currentUser,canEdit}
   const [deleting, setDeleting] = useState(false);
   const isWebmaster = currentUser?.role === "webmaster";
 
-  const empty={clientId:clients[0]?.id||"",descripcion:"",montoNeto:"",fechaInicio:todayStr(),duracionMeses:12,diaFacturacion:1,textoOpcional:"",diaVencimientoPago:0,active:true};
+  const empty={clientId:clients[0]?.id||"",descripcion:"",montoNeto:"",fechaInicio:todayStr(),fechaFin:"",duracionMeses:12,diaFacturacion:1,textoOpcional:"",diaVencimientoPago:0,active:true};
   const filtered=contracts.filter(ct=>!filterClient||ct.clientId===filterClient);
   const save=async(data)=>{
     const neto=parseFloat(data.montoNeto)||0;
@@ -1133,6 +1157,7 @@ function Contracts({contracts,setContracts,clients,invoices,currentUser,canEdit}
       monto: neto,
       iva: iva,
       fecha_inicio: d.fechaInicio,
+      fecha_fin: d.fechaFin || null,
       duracion_meses: parseInt(d.duracionMeses),
       dia_facturacion: parseInt(d.diaFacturacion),
       texto_opcional: d.textoOpcional || "",
@@ -1268,8 +1293,36 @@ function Contracts({contracts,setContracts,clients,invoices,currentUser,canEdit}
 }
 
 function ContractModal({data,clients,onSave,onClose}){
-  const [form,setForm]=useState(data);
+  // Inicializar fechaFin si no viene seteada (calculada desde fechaInicio + duracionMeses)
+  const initialForm = (() => {
+    const f = { ...data };
+    if (!f.fechaFin && f.fechaInicio && f.duracionMeses) {
+      f.fechaFin = sumarMeses(f.fechaInicio, parseInt(f.duracionMeses) || 12);
+    }
+    return f;
+  })();
+  const [form,setForm]=useState(initialForm);
   const f=k=>e=>setForm(p=>({...p,[k]:e.target.value}));
+
+  // Cuando cambia la fecha de inicio: recalcular fecha fin manteniendo la duración actual
+  const onFechaInicioChange = (e) => {
+    const nv = e.target.value;
+    setForm(p => {
+      const meses = parseInt(p.duracionMeses) || 12;
+      return { ...p, fechaInicio: nv, fechaFin: sumarMeses(nv, meses) };
+    });
+  };
+  // Cuando cambia la duración: recalcular fecha fin manteniendo el inicio
+  const onDuracionChange = (e) => {
+    const meses = parseInt(e.target.value) || 0;
+    setForm(p => ({ ...p, duracionMeses: meses, fechaFin: meses > 0 ? sumarMeses(p.fechaInicio, meses) : p.fechaFin }));
+  };
+  // Cuando cambia la fecha fin: recalcular duración manteniendo el inicio
+  const onFechaFinChange = (e) => {
+    const nv = e.target.value;
+    setForm(p => ({ ...p, fechaFin: nv, duracionMeses: calcularMesesEntre(p.fechaInicio, nv) }));
+  };
+
   const neto=parseFloat(form.montoNeto)||0;
   const iva=Math.round(neto*0.105*100)/100;
   return(
@@ -1291,12 +1344,18 @@ function ContractModal({data,clients,onSave,onClose}){
           <label className="text-xs font-medium text-gray-600">Total mensual</label>
           <input readOnly value={fmtMoney(neto+iva)} className="w-full mt-1 px-3 py-2 bg-blue-50 border border-blue-100 rounded-lg text-sm font-bold text-blue-700"/>
         </div>
-        <Field label="Fecha inicio" value={form.fechaInicio} onChange={f("fechaInicio")} type="date"/>
         <div>
-          <label className="text-xs font-medium text-gray-600">Duración</label>
-          <select value={form.duracionMeses} onChange={f("duracionMeses")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
-            {[1,3,6,12,24].map(o=><option key={o} value={o}>{o} meses</option>)}
-          </select>
+          <label className="text-xs font-medium text-gray-600">Fecha inicio</label>
+          <input type="date" value={form.fechaInicio||""} onChange={onFechaInicioChange} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600">Fecha fin</label>
+          <input type="date" value={form.fechaFin||""} onChange={onFechaFinChange} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+        </div>
+        <div className="col-span-2">
+          <label className="text-xs font-medium text-gray-600">Duración (meses)</label>
+          <input type="number" min="1" value={form.duracionMeses||""} onChange={onDuracionChange} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+          <p className="text-xs text-gray-400 mt-1">Inicio, Fin y Duración están sincronizados: si cambiás uno, los otros se ajustan automáticamente.</p>
         </div>
         <Field label="Día de facturación" value={form.diaFacturacion} onChange={f("diaFacturacion")} type="number"/>
         <Field label="Texto opcional (OC, expediente...)" value={form.textoOpcional} onChange={f("textoOpcional")}/>
@@ -1335,6 +1394,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
       monto: monto,
       iva: iva,
       fecha_inicio: d.fechaInicio,
+      fecha_fin: d.fechaFin || null,
       duracion_meses: parseInt(d.duracionMeses),
       dia_facturacion: parseInt(d.diaFacturacion),
       texto_opcional: d.textoOpcional || "",
@@ -1471,7 +1531,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
     const detail=`${ct.descripcion} — Período: ${periodo}${ct.textoOpcional?" — "+ct.textoOpcional:""}${extraText?" — "+extraText:""}`;
     return{id:`inv-${Date.now()}-${Math.random()}`,contractId:ct.id,clientId:ct.clientId,clientName:client?.razonSocial,clientEmail:client?.email,tipoFactura:client?.tipoFactura,numero:`${client?.tipoFactura}-0001-${num}`,month:billMonth,year:billYear,periodo,detalle:detail,neto:ct.montoNeto,iva:ct.iva,total:ct.total,estado:"Emitida",cae:"",fechaPago:"",emailEnviado:false,emitida:new Date().toISOString()};
   };
-  const approveAndEmit = async (contractIds, texts = {}, fechasArca = {}) => {
+  const approveAndEmit = async (contractIds, texts = {}, fechasArca = {}, keepOpen = false) => {
     const results = [];
     for (const ctId of contractIds) {
       const ct = contracts.find(c => c.id === ctId);
@@ -1543,8 +1603,19 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
     }
     setInvoices(prev => [...prev, ...results]);
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-    setReviewModal(null);
+    if (!keepOpen) setReviewModal(null);
+    return results;
   };
+
+  // Emitir UNA factura individual desde el preview del ReviewModal.
+  // Devuelve true si la emisión fue exitosa (CAE obtenido), false si falló.
+  const emitirFacturaIndividual = async (ct, textoOpcional, fechasArca) => {
+    const texts = { [ct.id]: textoOpcional };
+    const fechasObj = { [ct.id]: fechasArca };
+    const results = await approveAndEmit([ct.id], texts, fechasObj, true);  // true = keepOpen
+    return results && results.length > 0 && results[0].estado === "Emitida";
+  };
+
   const updateInvoice=(id,data)=>setInvoices(prev=>prev.map(i=>i.id===id?{...i,...data}:i));
 
   return(
@@ -1699,6 +1770,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
         onClose={()=>setReviewModal(null)}
         onEditContract={(ct)=>setEditContractModal(ct)}
         onToggleActive={toggleActiveContract}
+        onEmitirIndividual={emitirFacturaIndividual}
       />}
       {editContractModal && (
         <ContractModal
@@ -1724,11 +1796,136 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
   );
 }
 
-function ReviewModal({contracts,clients,billMonth,billYear,onApprove,onClose,onEditContract,onToggleActive}){
+// ── PREVIEW DE FACTURA INDIVIDUAL ANTES DE EMITIR ──────────────────────────
+// Muestra un resumen visual de la factura que se va a emitir y pide confirmación final.
+// Solo después de "Confirmar y emitir" se manda realmente a ARCA.
+function PreviewFacturaModal({ contrato, cliente, fechas, textoOpcional, onClose, onConfirmar }) {
+  const [emitiendo, setEmitiendo] = useState(false);
+  const submittingRef = useRef(false);
+
+  const handleEmitir = async () => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setEmitiendo(true);
+    try {
+      await onConfirmar();
+    } catch (e) {
+      console.error("Error en emisión individual:", e);
+      alert("Error al emitir: " + e.message);
+    } finally {
+      submittingRef.current = false;
+      setEmitiendo(false);
+    }
+  };
+
+  const fmtFechaLocal = (s) => {
+    if (!s) return "—";
+    const [y, m, d] = s.split("-");
+    return `${d}/${m}/${y}`;
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4">
+      <div className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white">
+          <h3 className="font-semibold text-base flex items-center gap-2">
+            <Icon d={Icons.send} size={18} className="text-amber-600"/>
+            Última revisión antes de emitir
+          </h3>
+          <button onClick={emitiendo ? () => {} : onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none disabled:opacity-50">×</button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+            ⚠️ Después de hacer click en "Confirmar y emitir", la factura se enviará a ARCA y obtendrá CAE. La operación es <strong>irreversible</strong>; si hay un error solo se puede anular con NC.
+          </div>
+
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <div className="bg-gray-50 px-3 py-2 border-b border-gray-200">
+              <p className="text-xs text-gray-500 font-medium uppercase">Receptor</p>
+            </div>
+            <div className="p-3 space-y-1 text-sm">
+              <p className="font-semibold">{cliente?.razonSocial}</p>
+              {cliente?.alias && <p className="text-xs text-gray-500">— {cliente.alias}</p>}
+              <p className="text-xs text-gray-600">CUIT: <span className="font-mono">{cliente?.cuit}</span></p>
+              <p className="text-xs text-gray-600">{cliente?.condicionIVA}</p>
+              <p className="text-xs text-gray-600">{cliente?.domicilio || "(sin domicilio)"}</p>
+              <p className="text-xs"><span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-bold">Factura {cliente?.tipoFactura}</span></p>
+            </div>
+          </div>
+
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <div className="bg-gray-50 px-3 py-2 border-b border-gray-200">
+              <p className="text-xs text-gray-500 font-medium uppercase">Servicio</p>
+            </div>
+            <div className="p-3 space-y-1.5 text-sm">
+              <p>{contrato.descripcion}</p>
+              {textoOpcional && <p className="text-xs text-gray-600 italic">{textoOpcional}</p>}
+              <div className="grid grid-cols-3 gap-2 text-xs pt-2 border-t border-gray-100 mt-2">
+                <div>
+                  <span className="text-gray-500 block">Servicio desde</span>
+                  <span className="font-medium">{fmtFechaLocal(fechas.servicioDesde)}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 block">Servicio hasta</span>
+                  <span className="font-medium">{fmtFechaLocal(fechas.servicioHasta)}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 block">Vto. de pago</span>
+                  <span className="font-medium">{fmtFechaLocal(fechas.vtoPago)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <div className="bg-gray-50 px-3 py-2 border-b border-gray-200">
+              <p className="text-xs text-gray-500 font-medium uppercase">Importes</p>
+            </div>
+            <div className="p-3 space-y-1 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-600">Neto</span>
+                <span>{fmtMoney(contrato.montoNeto)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">IVA 10.5%</span>
+                <span className="text-orange-600">{fmtMoney(contrato.iva)}</span>
+              </div>
+              <div className="flex justify-between pt-2 border-t border-gray-100 mt-2">
+                <span className="font-semibold">Total</span>
+                <span className="font-bold text-blue-700 text-lg">{fmtMoney(contrato.total)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="px-5 py-4 border-t border-gray-100 flex gap-2 sticky bottom-0 bg-white">
+          <button
+            onClick={onClose}
+            disabled={emitiendo}
+            className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+          >Cancelar</button>
+          <button
+            onClick={handleEmitir}
+            disabled={emitiendo}
+            className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            {emitiendo ? "⏳ Emitiendo a ARCA..." : <><Icon d={Icons.send} size={14}/>Confirmar y emitir</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReviewModal({contracts,clients,billMonth,billYear,onApprove,onClose,onEditContract,onToggleActive,onEmitirIndividual}){
   const [texts,setTexts]=useState({});
   const [sel,setSel]=useState(contracts.map(c=>c.id));
   const [submitting, setSubmitting] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [previewIndividual, setPreviewIndividual] = useState(null);
+  // Set de contractIds ya emitidos individualmente (se ocultan del listado)
+  const [yaEmitidos, setYaEmitidos] = useState(new Set());
   // Guarda sincrónica anti-doble-click
   const submittingRef = useRef(false);
 
@@ -1825,10 +2022,15 @@ function ReviewModal({contracts,clients,billMonth,billYear,onApprove,onClose,onE
   return(
     <Modal title="Revisión previa a facturación" onClose={submitting ? () => {} : onClose} wide>
       <div className="mb-3 p-3 bg-blue-50 rounded-lg text-xs text-blue-700">
-        Revisá cada contrato antes de aprobar. Hacé click en <strong>Editar contrato</strong> para modificarlo, o ajustá las 3 fechas individualmente para esta factura. El cálculo automático respeta el tipo de período (vencido/corriente) que tenga el contrato.
+        Revisá cada contrato antes de aprobar. Podés <strong>editar el contrato</strong>, ajustar las 3 fechas, <strong>emitir cada factura individualmente con preview</strong> (botón ⚡ verde) o <strong>emitir el lote completo</strong> abajo.{yaEmitidos.size>0 && <> · <strong>{yaEmitidos.size} ya emitida(s)</strong> en esta sesión.</>}
       </div>
       <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
-        {contracts.map(ct=>{
+        {contracts.filter(ct=>!yaEmitidos.has(ct.id)).length === 0 && (
+          <div className="text-center py-8 text-sm text-gray-500">
+            ✅ Todos los contratos del lote ya fueron emitidos. Cerrá este panel.
+          </div>
+        )}
+        {contracts.filter(ct=>!yaEmitidos.has(ct.id)).map(ct=>{
           const client=clients.find(c=>c.id===ct.clientId);
           const checked=sel.includes(ct.id);
           const fch = fechas[ct.id] || { servicioDesde:"", servicioHasta:"", vtoPago:"" };
@@ -1904,6 +2106,15 @@ function ReviewModal({contracts,clients,billMonth,billYear,onApprove,onClose,onE
                   <div className="flex gap-1.5 flex-wrap">
                     <button type="button" onClick={()=>onEditContract && onEditContract(ct)} disabled={submitting} className="text-[11px] px-2 py-1 text-blue-600 hover:bg-blue-50 rounded border border-blue-200 disabled:opacity-50">✏️ Editar contrato</button>
                     <button type="button" onClick={()=>onToggleActive && onToggleActive(ct)} disabled={submitting} className={`text-[11px] px-2 py-1 rounded border disabled:opacity-50 ${ct.active?"text-amber-600 hover:bg-amber-50 border-amber-200":"text-green-600 hover:bg-green-50 border-green-200"}`}>{ct.active?"⏸️ Desactivar":"▶️ Activar"}</button>
+                    {ct.active && (
+                      <button
+                        type="button"
+                        onClick={()=>setPreviewIndividual(ct.id)}
+                        disabled={submitting}
+                        className="text-[11px] px-2 py-1 text-green-700 hover:bg-green-50 rounded border border-green-300 font-medium disabled:opacity-50"
+                        title="Emitir solo esta factura (con preview)"
+                      >⚡ Emitir esta</button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1942,6 +2153,36 @@ function ReviewModal({contracts,clients,billMonth,billYear,onApprove,onClose,onE
           onConfirm={handleConfirm}
         />
       )}
+      {previewIndividual && (() => {
+        const ct = contracts.find(c => c.id === previewIndividual);
+        if (!ct) return null;
+        const cliente = clients.find(c => c.id === ct.clientId);
+        const fch = fechas[ct.id] || { servicioDesde:"", servicioHasta:"", vtoPago:"" };
+        const txt = texts[ct.id] || ct.textoOpcional || "";
+        return (
+          <PreviewFacturaModal
+            contrato={ct}
+            cliente={cliente}
+            fechas={fch}
+            textoOpcional={txt}
+            onClose={() => setPreviewIndividual(null)}
+            onConfirmar={async () => {
+              const fechasArca = {
+                fch_serv_desde: dateStrToArca(fch.servicioDesde),
+                fch_serv_hasta: dateStrToArca(fch.servicioHasta),
+                fch_vto_pago:   dateStrToArca(fch.vtoPago),
+              };
+              const ok = await onEmitirIndividual(ct, txt, fechasArca);
+              if (ok) {
+                setPreviewIndividual(null);
+                // Sacar de selección y marcar como ya emitido (oculto del listado)
+                setSel(prev => prev.filter(id => id !== ct.id));
+                setYaEmitidos(prev => new Set([...prev, ct.id]));
+              }
+            }}
+          />
+        );
+      })()}
     </Modal>
   );
 }
