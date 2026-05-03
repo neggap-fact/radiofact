@@ -70,26 +70,54 @@ function dateStrToArca(s) {
   return s.replace(/-/g, "");
 }
 
-// Dado un contrato y el mes/año de la factura, calcula las 3 fechas de servicio:
-// - servicioDesde: primer día del mes de servicio
-// - servicioHasta: último día del mes de servicio
-// - vtoPago: servicioHasta + diaVencimientoPago días
-// Si tipoPeriodo es "mes_vencido", el servicio es del mes ANTERIOR al billMonth/billYear.
-// Si es "mes_corriente", el servicio es del MISMO mes.
+// Suma N días a una fecha "YYYY-MM-DD" y devuelve nueva "YYYY-MM-DD"
+function sumarDias(yyyymmdd, dias) {
+  if (!yyyymmdd) return "";
+  const [y, m, d] = yyyymmdd.split("-").map(Number);
+  const fecha = new Date(y, m - 1, d);
+  fecha.setDate(fecha.getDate() + dias);
+  return toLocalDateStr(fecha);
+}
+
+// Cálculo automático default: mes ANTERIOR completo (lo más común).
+// El usuario después puede editar cualquier fecha o usar los botones rápidos del ReviewModal.
 function calcularFechasServicio(contrato, billMonth, billYear) {
-  const tipo = contrato.tipoPeriodo || "mes_vencido";
   const dvp = parseInt(contrato.diaVencimientoPago) || 0;
-  let mesSrv = billMonth;
+  // Mes anterior al de facturación
+  let mesSrv = billMonth - 1;
   let anioSrv = billYear;
-  if (tipo === "mes_vencido") {
-    mesSrv = billMonth - 1;
-    if (mesSrv < 1) { mesSrv = 12; anioSrv = billYear - 1; }
-  }
-  // Primer día del mes
+  if (mesSrv < 1) { mesSrv = 12; anioSrv = billYear - 1; }
+  // Primer y último día del mes anterior
   const desde = new Date(anioSrv, mesSrv - 1, 1);
-  // Último día del mes (día 0 del mes siguiente = último día del mes actual)
   const hasta = new Date(anioSrv, mesSrv, 0);
-  // Vencimiento de pago
+  // Vencimiento de pago = último día + dias del contrato
+  const vto = new Date(hasta);
+  vto.setDate(vto.getDate() + dvp);
+  return {
+    servicioDesde: toLocalDateStr(desde),
+    servicioHasta: toLocalDateStr(hasta),
+    vtoPago: toLocalDateStr(vto),
+  };
+}
+
+// Helpers para botones rápidos del ReviewModal
+function fechasMesAnteriorCompleto(billMonth, billYear, dvp = 0) {
+  let mesSrv = billMonth - 1;
+  let anioSrv = billYear;
+  if (mesSrv < 1) { mesSrv = 12; anioSrv = billYear - 1; }
+  const desde = new Date(anioSrv, mesSrv - 1, 1);
+  const hasta = new Date(anioSrv, mesSrv, 0);
+  const vto = new Date(hasta);
+  vto.setDate(vto.getDate() + dvp);
+  return {
+    servicioDesde: toLocalDateStr(desde),
+    servicioHasta: toLocalDateStr(hasta),
+    vtoPago: toLocalDateStr(vto),
+  };
+}
+function fechasMesActualCompleto(billMonth, billYear, dvp = 0) {
+  const desde = new Date(billYear, billMonth - 1, 1);
+  const hasta = new Date(billYear, billMonth, 0);
   const vto = new Date(hasta);
   vto.setDate(vto.getDate() + dvp);
   return {
@@ -336,7 +364,6 @@ export default function App() {
           duracionMeses: c.duracion_meses || 12,
           diaFacturacion: c.dia_facturacion || 1,
           textoOpcional: c.texto_opcional || "",
-          tipoPeriodo: c.tipo_periodo || "mes_vencido",
           diaVencimientoPago: c.dia_vencimiento_pago != null ? c.dia_vencimiento_pago : 0,
           active: c.activo !== false,
         })));
@@ -1092,7 +1119,7 @@ function Contracts({contracts,setContracts,clients,invoices,currentUser,canEdit}
   const [deleting, setDeleting] = useState(false);
   const isWebmaster = currentUser?.role === "webmaster";
 
-  const empty={clientId:clients[0]?.id||"",descripcion:"",montoNeto:"",fechaInicio:todayStr(),duracionMeses:12,diaFacturacion:1,textoOpcional:"",tipoPeriodo:"mes_vencido",diaVencimientoPago:0,active:true};
+  const empty={clientId:clients[0]?.id||"",descripcion:"",montoNeto:"",fechaInicio:todayStr(),duracionMeses:12,diaFacturacion:1,textoOpcional:"",diaVencimientoPago:0,active:true};
   const filtered=contracts.filter(ct=>!filterClient||ct.clientId===filterClient);
   const save=async(data)=>{
     const neto=parseFloat(data.montoNeto)||0;
@@ -1109,7 +1136,6 @@ function Contracts({contracts,setContracts,clients,invoices,currentUser,canEdit}
       duracion_meses: parseInt(d.duracionMeses),
       dia_facturacion: parseInt(d.diaFacturacion),
       texto_opcional: d.textoOpcional || "",
-      tipo_periodo: d.tipoPeriodo || "mes_vencido",
       dia_vencimiento_pago: parseInt(d.diaVencimientoPago) || 0,
       activo: d.active !== false,
     };
@@ -1275,14 +1301,6 @@ function ContractModal({data,clients,onSave,onClose}){
         <Field label="Día de facturación" value={form.diaFacturacion} onChange={f("diaFacturacion")} type="number"/>
         <Field label="Texto opcional (OC, expediente...)" value={form.textoOpcional} onChange={f("textoOpcional")}/>
         <div>
-          <label className="text-xs font-medium text-gray-600">Tipo de período</label>
-          <select value={form.tipoPeriodo||"mes_vencido"} onChange={f("tipoPeriodo")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
-            <option value="mes_vencido">Mes vencido (servicio del mes anterior)</option>
-            <option value="mes_corriente">Mes corriente (servicio del mes que se factura)</option>
-          </select>
-          <p className="text-xs text-gray-400 mt-1">Define cómo se calculan automáticamente las fechas de servicio en cada factura.</p>
-        </div>
-        <div>
           <label className="text-xs font-medium text-gray-600">Días de vto. de pago</label>
           <input type="number" value={form.diaVencimientoPago||0} onChange={f("diaVencimientoPago")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
           <p className="text-xs text-gray-400 mt-1">Días desde el fin del servicio. 0 = mismo día (al vto). Ej: 10 = vence 10 días después.</p>
@@ -1320,7 +1338,6 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
       duracion_meses: parseInt(d.duracionMeses),
       dia_facturacion: parseInt(d.diaFacturacion),
       texto_opcional: d.textoOpcional || "",
-      tipo_periodo: d.tipoPeriodo || "mes_vencido",
       dia_vencimiento_pago: parseInt(d.diaVencimientoPago) || 0,
       activo: d.active !== false,
     };
@@ -1724,6 +1741,31 @@ function ReviewModal({contracts,clients,billMonth,billYear,onApprove,onClose,onE
     return o;
   });
 
+  // Tipo de período elegido por contrato: "mes_anterior" (default), "mes_actual", "rango", "dia"
+  const [tipoPeriodoSel, setTipoPeriodoSel] = useState(() => {
+    const o = {};
+    contracts.forEach(ct => { o[ct.id] = "mes_anterior"; });
+    return o;
+  });
+
+  // Cambiar tipo de período: aplica el cálculo correspondiente a las fechas
+  const cambiarTipoPeriodo = (ctId, nuevoTipo) => {
+    const ct = contracts.find(c => c.id === ctId);
+    if (!ct) return;
+    const dvp = parseInt(ct.diaVencimientoPago) || 0;
+    setTipoPeriodoSel(prev => ({ ...prev, [ctId]: nuevoTipo }));
+    if (nuevoTipo === "mes_anterior") {
+      setFechas(p => ({ ...p, [ctId]: fechasMesAnteriorCompleto(billMonth, billYear, dvp) }));
+    } else if (nuevoTipo === "mes_actual") {
+      setFechas(p => ({ ...p, [ctId]: fechasMesActualCompleto(billMonth, billYear, dvp) }));
+    } else if (nuevoTipo === "dia") {
+      // Día puntual: usa la fecha "desde" actual o hoy
+      const dia = (fechas[ctId]?.servicioDesde) || toLocalDateStr(new Date());
+      setFechas(p => ({ ...p, [ctId]: { servicioDesde: dia, servicioHasta: dia, vtoPago: sumarDias(dia, dvp) } }));
+    }
+    // Si es "rango", no cambia las fechas: el usuario las ajusta a mano
+  };
+
   // Recalcular fechas cuando cambia la lista de contratos (ej: usuario edita uno desde el modal)
   useEffect(() => {
     setFechas(prev => {
@@ -1739,11 +1781,6 @@ function ReviewModal({contracts,clients,billMonth,billYear,onApprove,onClose,onE
 
   const updateFecha = (ctId, campo, valor) => {
     setFechas(prev => ({ ...prev, [ctId]: { ...prev[ctId], [campo]: valor } }));
-  };
-  const recalcularFechas = (ctId) => {
-    const ct = contracts.find(c => c.id === ctId);
-    if (!ct) return;
-    setFechas(prev => ({ ...prev, [ctId]: calcularFechasServicio(ct, billMonth, billYear) }));
   };
 
   const toggle=id=>setSel(prev=>prev.includes(id)?prev.filter(i=>i!==id):[...prev,id]);
@@ -1809,18 +1846,48 @@ function ReviewModal({contracts,clients,billMonth,billYear,onApprove,onClose,onE
                   <div className="flex gap-3 text-xs text-gray-400 mb-2 flex-wrap">
                     <span>Neto: {fmtMoney(ct.montoNeto)}</span>
                     <span>IVA: {fmtMoney(ct.iva)}</span>
-                    <span className="text-gray-500">{ct.tipoPeriodo==="mes_corriente"?"Mes corriente":"Mes vencido"}{ct.diaVencimientoPago?` · Vto +${ct.diaVencimientoPago}d`:""}</span>
+                    {ct.diaVencimientoPago>0 && <span className="text-gray-500">Vto. pago +{ct.diaVencimientoPago}d</span>}
+                  </div>
+
+                  {/* SELECTOR TIPO DE PERÍODO */}
+                  <div className="mb-1">
+                    <label className="text-[10px] font-medium text-gray-500 block">Tipo de período</label>
+                    <select
+                      value={tipoPeriodoSel[ct.id] || "mes_anterior"}
+                      onChange={e=>cambiarTipoPeriodo(ct.id, e.target.value)}
+                      disabled={submitting}
+                      className="w-full px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 disabled:bg-gray-50"
+                    >
+                      <option value="mes_anterior">📅 Mes anterior completo (mes vencido)</option>
+                      <option value="mes_actual">📅 Mes actual completo (mes corriente)</option>
+                      <option value="rango">📆 Rango de fechas (varios días)</option>
+                      <option value="dia">📌 Día puntual (un solo día)</option>
+                    </select>
                   </div>
 
                   {/* 3 FECHAS EDITABLES */}
                   <div className="bg-white border border-gray-200 rounded-lg p-2 mb-2 grid grid-cols-3 gap-2">
                     <div>
                       <label className="text-[10px] font-medium text-gray-500 block">Servicio desde</label>
-                      <input type="date" value={fch.servicioDesde} onChange={e=>updateFecha(ct.id,"servicioDesde",e.target.value)} disabled={submitting} className="w-full px-2 py-1 border border-gray-200 rounded text-xs"/>
+                      <input type="date" value={fch.servicioDesde}
+                        onChange={e=>{
+                          const nv = e.target.value;
+                          if (tipoPeriodoSel[ct.id] === "dia") {
+                            // Día puntual: sincroniza Hasta también
+                            const dvp = parseInt(ct.diaVencimientoPago)||0;
+                            setFechas(p=>({...p,[ct.id]:{servicioDesde:nv,servicioHasta:nv,vtoPago:sumarDias(nv,dvp)}}));
+                          } else {
+                            updateFecha(ct.id,"servicioDesde",nv);
+                          }
+                        }}
+                        disabled={submitting} className="w-full px-2 py-1 border border-gray-200 rounded text-xs"/>
                     </div>
                     <div>
                       <label className="text-[10px] font-medium text-gray-500 block">Servicio hasta</label>
-                      <input type="date" value={fch.servicioHasta} onChange={e=>updateFecha(ct.id,"servicioHasta",e.target.value)} disabled={submitting} className="w-full px-2 py-1 border border-gray-200 rounded text-xs"/>
+                      <input type="date" value={fch.servicioHasta}
+                        onChange={e=>updateFecha(ct.id,"servicioHasta",e.target.value)}
+                        disabled={submitting||tipoPeriodoSel[ct.id]==="dia"}
+                        className="w-full px-2 py-1 border border-gray-200 rounded text-xs disabled:bg-gray-50"/>
                     </div>
                     <div>
                       <label className="text-[10px] font-medium text-gray-500 block">Vto. de pago</label>
@@ -1836,7 +1903,6 @@ function ReviewModal({contracts,clients,billMonth,billYear,onApprove,onClose,onE
                   {/* BOTONES DE ACCIÓN */}
                   <div className="flex gap-1.5 flex-wrap">
                     <button type="button" onClick={()=>onEditContract && onEditContract(ct)} disabled={submitting} className="text-[11px] px-2 py-1 text-blue-600 hover:bg-blue-50 rounded border border-blue-200 disabled:opacity-50">✏️ Editar contrato</button>
-                    <button type="button" onClick={()=>recalcularFechas(ct.id)} disabled={submitting} className="text-[11px] px-2 py-1 text-gray-500 hover:bg-gray-50 rounded border border-gray-200 disabled:opacity-50">🔄 Recalcular fechas</button>
                     <button type="button" onClick={()=>onToggleActive && onToggleActive(ct)} disabled={submitting} className={`text-[11px] px-2 py-1 rounded border disabled:opacity-50 ${ct.active?"text-amber-600 hover:bg-amber-50 border-amber-200":"text-green-600 hover:bg-green-50 border-green-200"}`}>{ct.active?"⏸️ Desactivar":"▶️ Activar"}</button>
                   </div>
                 </div>
