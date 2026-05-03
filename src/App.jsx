@@ -480,6 +480,10 @@ export default function App() {
             cae: f.cae || "",
             cae_vencimiento: f.cae_vencimiento || "",
             fechaPago: f.fecha_pago || "",
+            // Fechas de servicio (vienen de Supabase como YYYY-MM-DD, las convertimos a YYYYMMDD para el PDF)
+            fch_serv_desde: f.fch_serv_desde ? f.fch_serv_desde.replace(/-/g,"") : "",
+            fch_serv_hasta: f.fch_serv_hasta ? f.fch_serv_hasta.replace(/-/g,"") : "",
+            fch_vto_pago:   f.fch_vto_pago   ? f.fch_vto_pago.replace(/-/g,"")   : "",
             nc_id: f.nc_id || null,
             emailEnviado: false,
             fecha: f.fecha_emision ? f.fecha_emision.replace(/-/g,"") : "",
@@ -544,6 +548,10 @@ export default function App() {
       moneda: "PES",
       cotizacion: 1,
       resultado: "A",
+      // Fechas de servicio (formato date YYYY-MM-DD para Supabase)
+      fch_serv_desde: inv.fch_serv_desde ? `${inv.fch_serv_desde.slice(0,4)}-${inv.fch_serv_desde.slice(4,6)}-${inv.fch_serv_desde.slice(6,8)}` : null,
+      fch_serv_hasta: inv.fch_serv_hasta ? `${inv.fch_serv_hasta.slice(0,4)}-${inv.fch_serv_hasta.slice(4,6)}-${inv.fch_serv_hasta.slice(6,8)}` : null,
+      fch_vto_pago:   inv.fch_vto_pago   ? `${inv.fch_vto_pago.slice(0,4)}-${inv.fch_vto_pago.slice(4,6)}-${inv.fch_vto_pago.slice(6,8)}` : null,
     };
     console.log("Guardando factura en Supabase:", payload);
     const {data, error} = await supabase.from("facturas").insert(payload).select();
@@ -574,6 +582,10 @@ export default function App() {
           empresa: "LA VANGUARDIA NOTICIAS",
           empresaCuit: "30-71644424-0",
           empresaDomicilio: "Gobernador Gregores 1370, Caleta Olivia",
+          // Fechas de servicio para el PDF (en formato YYYYMMDD)
+          fch_serv_desde: inv.fch_serv_desde || "",
+          fch_serv_hasta: inv.fch_serv_hasta || "",
+          fch_vto_pago:   inv.fch_vto_pago   || "",
         }),
       });
       if (!res.ok) throw new Error("Error generando PDF");
@@ -1569,12 +1581,42 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
     link.click();
     URL.revokeObjectURL(url);
   };
-  const buildInvoice=(ct,extraText="")=>{
+  const buildInvoice=(ct,extraText="",fechasArca=null)=>{
     const client=clients.find(c=>c.id===ct.clientId);
     const num=String(invoices.length+1).padStart(8,"0");
-    const periodo=`${MONTHS[billMonth-1]} ${billYear}`;
-    const detail=`${ct.descripcion} — Período: ${periodo}${ct.textoOpcional?" — "+ct.textoOpcional:""}${extraText?" — "+extraText:""}`;
-    return{id:`inv-${Date.now()}-${Math.random()}`,contractId:ct.id,clientId:ct.clientId,clientName:client?.razonSocial,clientEmail:client?.email,tipoFactura:client?.tipoFactura,numero:`${client?.tipoFactura}-0001-${num}`,month:billMonth,year:billYear,periodo,detalle:detail,neto:ct.montoNeto,iva:ct.iva,total:ct.total,estado:"Emitida",cae:"",fechaPago:"",emailEnviado:false,emitida:new Date().toISOString()};
+    // El "periodo" se guarda como rango de fechas (formato legible, para listados/filtros)
+    let periodoTexto;
+    if (fechasArca && fechasArca.fch_serv_desde && fechasArca.fch_serv_hasta) {
+      const f1 = `${fechasArca.fch_serv_desde.slice(6,8)}/${fechasArca.fch_serv_desde.slice(4,6)}/${fechasArca.fch_serv_desde.slice(0,4)}`;
+      const f2 = `${fechasArca.fch_serv_hasta.slice(6,8)}/${fechasArca.fch_serv_hasta.slice(4,6)}/${fechasArca.fch_serv_hasta.slice(0,4)}`;
+      periodoTexto = `${f1} al ${f2}`;
+    } else {
+      periodoTexto = `${MONTHS[billMonth-1]} ${billYear}`;
+    }
+    // El DETALLE no lleva fechas: solo descripción + texto opcional + texto extra del Review.
+    // Las fechas van en su línea aparte del PDF (Período Facturado Desde/Hasta).
+    const partes = [ct.descripcion];
+    if (ct.textoOpcional) partes.push(ct.textoOpcional);
+    if (extraText) partes.push(extraText);
+    const detail = partes.filter(Boolean).join(" — ");
+    return{
+      id:`inv-${Date.now()}-${Math.random()}`,
+      contractId:ct.id,clientId:ct.clientId,
+      clientName:client?.razonSocial,
+      clientEmail:client?.email,
+      tipoFactura:client?.tipoFactura,
+      numero:`${client?.tipoFactura}-0001-${num}`,
+      month:billMonth,year:billYear,
+      periodo:periodoTexto,
+      detalle:detail,
+      neto:ct.montoNeto,iva:ct.iva,total:ct.total,
+      estado:"Emitida",cae:"",fechaPago:"",emailEnviado:false,
+      emitida:new Date().toISOString(),
+      // Guardar las fechas de servicio para que puedan usarse al regenerar PDF
+      fch_serv_desde: fechasArca?.fch_serv_desde || "",
+      fch_serv_hasta: fechasArca?.fch_serv_hasta || "",
+      fch_vto_pago:   fechasArca?.fch_vto_pago   || "",
+    };
   };
   const approveAndEmit = async (contractIds, texts = {}, fechasArca = {}, keepOpen = false) => {
     const results = [];
@@ -1623,7 +1665,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
           data = await res.json();
         }
         await completarOperacionArca(opReg.id, data, !!data.exito);
-        const inv = buildInvoice(ct, texts[ctId] || "");
+        const inv = buildInvoice(ct, texts[ctId] || "", fch);
         if (data.exito) {
           inv.cae = data.datos.cae;
           inv.cae_vencimiento = data.datos.cae_vencimiento;
@@ -1640,7 +1682,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
         results.push(inv);
       } catch (e) {
         await completarOperacionArca(opReg.id, { error: e.message }, false);
-        const inv = buildInvoice(ct, texts[ctId] || "");
+        const inv = buildInvoice(ct, texts[ctId] || "", fch);
         inv.estado = "Borrador";
         results.push(inv);
         alert(`❌ Error de conexión para ${client?.razonSocial}`);
@@ -2270,6 +2312,10 @@ function EmailModal({invoice,config,clients,onClose,onSent}){
           empresa: config.empresa || "LA VANGUARDIA NOTICIAS",
           empresaCuit: config.cuit || "30-71644424-0",
           empresaDomicilio: config.domicilio || "Gobernador Gregores 1370, Caleta Olivia",
+          // Fechas de servicio para el PDF
+          fch_serv_desde: invoice.fch_serv_desde || "",
+          fch_serv_hasta: invoice.fch_serv_hasta || "",
+          fch_vto_pago:   invoice.fch_vto_pago   || "",
           emailDestino: invoice.clientEmail,
           emailAsunto: `Factura ${invoice.numero} — ${invoice.periodo}`,
           emailCuerpo: msg,
