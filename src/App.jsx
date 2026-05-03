@@ -28,6 +28,7 @@ const Icons = {
   pdf: "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M8 13h8M8 17h5",
   report: "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M8 13h8M8 17h5",
   trash: "M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14zM10 11v6M14 11v6",
+  creditNote: "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8",
 };
 
 const BACKEND_URL = "https://radiofact-backend-production.up.railway.app";
@@ -239,6 +240,8 @@ export default function App() {
   const [clients, setClients] = useState([]);
   const [contracts, setContracts] = useState(INIT_CONTRACTS);
   const [invoices, setInvoices] = useState([]);
+  const [creditNotes, setCreditNotes] = useState([]);
+  const [emailNCModal, setEmailNCModal] = useState(null);
   const [expenses, setExpenses] = useState(INIT_EXPENSES);
   const [notifications, setNotifications] = useState([]);
   const [page, setPage] = useState("dashboard");
@@ -347,6 +350,7 @@ export default function App() {
             cae: f.cae || "",
             cae_vencimiento: f.cae_vencimiento || "",
             fechaPago: f.fecha_pago || "",
+            nc_id: f.nc_id || null,
             emailEnviado: false,
             fecha: f.fecha_emision ? f.fecha_emision.replace(/-/g,"") : "",
           };
@@ -354,6 +358,35 @@ export default function App() {
       }
     }
     cargarFacturas();
+  },[]);
+
+  // Cargar notas de crédito desde Supabase
+  useEffect(()=>{
+    async function cargarNotasCredito() {
+      const {data,error} = await supabase.from("notas_credito").select("*").order("created_at",{ascending:false});
+      if(!error && data) {
+        setCreditNotes(data.map(nc=>({
+          id: nc.id,
+          factura_id: nc.factura_id,
+          clientId: nc.cliente_id,
+          clientName: nc.client_name || "",
+          tipoNC: nc.tipo_comprobante,  // 3=NCA, 8=NCB
+          numero: nc.numero_comprobante ? `${nc.tipo_comprobante===3?"NCA":"NCB"}-0003-${String(nc.numero_comprobante).padStart(8,"0")}` : "",
+          numero_comprobante: nc.numero_comprobante,
+          neto: parseFloat(nc.neto)||0,
+          iva: parseFloat(nc.iva)||0,
+          total: parseFloat(nc.total)||0,
+          motivo: nc.motivo || "",
+          factura_original_numero: nc.factura_original_numero || "",
+          factura_original_fecha: nc.factura_original_fecha || "",
+          cae: nc.cae || "",
+          cae_vencimiento: nc.cae_vencimiento || "",
+          fecha_emision: nc.fecha_emision || "",
+          estado: nc.estado || "Emitida",
+        })));
+      }
+    }
+    cargarNotasCredito();
   },[]);
 
   // Guardar factura en Supabase
@@ -428,6 +461,196 @@ export default function App() {
     }
   };
 
+  // ── DESCARGAR PDF DE UNA NOTA DE CRÉDITO ─────────────────────────────────
+  const descargarPDFNotaCredito = async (nc, factura) => {
+    try {
+      const client = clients.find(c => c.id === nc.clientId);
+      const tipoFacturaLetra = nc.tipoNC === 3 ? "A" : "B";
+      const res = await fetch(`${BACKEND_URL}/pdf-nota-credito`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          numero: nc.numero,
+          clientName: nc.clientName,
+          clientCuit: client?.cuit || "-",
+          clientDomicilio: client?.domicilio || "-",
+          periodo: factura?.periodo || "",
+          detalle: "",
+          neto: nc.neto,
+          iva: nc.iva,
+          total: nc.total,
+          cae: nc.cae,
+          cae_vencimiento: nc.cae_vencimiento,
+          fecha: nc.fecha_emision ? nc.fecha_emision.replace(/-/g,"") : "",
+          tipoFactura: tipoFacturaLetra,
+          empresa: "LA VANGUARDIA NOTICIAS",
+          empresaCuit: "30-71644424-0",
+          empresaDomicilio: "Gobernador Gregores 1370, Caleta Olivia",
+          esNotaCredito: true,
+          facturaAsoc: factura ? {
+            numero: factura.numero,
+            fecha: factura.fecha || "",
+            cae: factura.cae,
+          } : null,
+          motivoNC: nc.motivo,
+        }),
+      });
+      if (!res.ok) throw new Error("Error generando PDF de NC");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `NotaCredito-${nc.numero}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch(e) {
+      alert("Error descargando PDF de NC: " + e.message);
+    }
+  };
+
+  // ── GUARDAR NC EN SUPABASE ───────────────────────────────────────────────
+  const guardarNotaCreditoSupabase = async (nc) => {
+    const payload = {
+      factura_id: nc.factura_id || null,
+      cliente_id: nc.clientId || null,
+      client_name: nc.clientName,
+      tipo_comprobante: nc.tipoNC,
+      numero_comprobante: nc.numero_comprobante,
+      neto: nc.neto,
+      iva: nc.iva,
+      total: nc.total,
+      motivo: nc.motivo || "",
+      factura_original_numero: nc.factura_original_numero || "",
+      factura_original_fecha: nc.factura_original_fecha || "",
+      cae: nc.cae,
+      cae_vencimiento: nc.cae_vencimiento || null,
+      fecha_emision: nc.fecha_emision || todayStr(),
+      punto_venta: 3,
+      estado: "Emitida",
+    };
+    const {data, error} = await supabase.from("notas_credito").insert(payload).select().single();
+    if(error) {
+      console.error("Error guardando NC:", error);
+      return null;
+    }
+    return data;
+  };
+
+  // ── MARCAR FACTURA COMO ANULADA EN SUPABASE ──────────────────────────────
+  const marcarFacturaAnulada = async (facturaId, ncId) => {
+    const {error} = await supabase.from("facturas").update({
+      estado: "Anulada",
+      nc_id: ncId,
+    }).eq("id", facturaId);
+    if(error) console.error("Error marcando factura como Anulada:", error);
+  };
+
+  // ── EMITIR NOTA DE CRÉDITO (proceso completo) ────────────────────────────
+  // Esta es la función que se llama desde CreditNotes Y desde el botón "Anular con NC"
+  // del listado de facturas. Devuelve true si todo salió bien, false si falló.
+  const emitirNotaCredito = async (factura, motivo) => {
+    if (!factura || !factura.cae) {
+      alert("La factura debe estar emitida con CAE para poder anularla.");
+      return false;
+    }
+    const cliente = clients.find(c => c.id === factura.clientId);
+    if (!cliente) {
+      alert("No se encontró el cliente de la factura.");
+      return false;
+    }
+
+    // Registrar la operación ANTES de llamar a ARCA (idempotencia + auditoría)
+    const factura_original_tipo = factura.tipoFactura === "A" ? 1 : 6;
+    const factura_original_numero = parseInt(factura.numero.split("-")[2]);
+    const factura_original_fecha = factura.fecha || ""; // YYYYMMDD
+
+    const requestPayload = {
+      cuit_cliente: parseInt(cliente.cuit.replace(/-/g, "")),
+      tipo_doc: 80,
+      punto_venta: 3,
+      monto_neto: factura.neto,
+      monto_iva: factura.iva,
+      monto_total: factura.total,
+      concepto: 1,
+      factura_original_tipo,
+      factura_original_pv: 3,
+      factura_original_numero,
+      factura_original_fecha,
+      // Datos de auditoría / contexto
+      motivo,
+      factura_id: factura.id,
+      cliente_nombre: cliente.razonSocial,
+    };
+
+    const opReg = await registrarOperacionArca("nota_credito", requestPayload);
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/nota-credito`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestPayload),
+      });
+      const data = await res.json();
+      await completarOperacionArca(opReg.id, data, !!data.exito);
+
+      if (!data.exito) {
+        alert(`❌ Error al emitir NC: ${data.error}`);
+        return false;
+      }
+
+      // Guardar la NC en Supabase
+      const ncObj = {
+        factura_id: factura.id,
+        clientId: factura.clientId,
+        clientName: factura.clientName,
+        tipoNC: data.datos.tipo_nc,
+        numero_comprobante: data.datos.numero,
+        neto: factura.neto,
+        iva: factura.iva,
+        total: factura.total,
+        motivo,
+        factura_original_numero: factura.numero,
+        factura_original_fecha: factura.fecha
+          ? `${factura.fecha.slice(0,4)}-${factura.fecha.slice(4,6)}-${factura.fecha.slice(6,8)}`
+          : null,
+        cae: data.datos.cae,
+        cae_vencimiento: data.datos.cae_vencimiento,
+        fecha_emision: data.datos.fecha
+          ? `${data.datos.fecha.slice(0,4)}-${data.datos.fecha.slice(4,6)}-${data.datos.fecha.slice(6,8)}`
+          : todayStr(),
+      };
+      const ncSaved = await guardarNotaCreditoSupabase(ncObj);
+      if (!ncSaved) {
+        alert("⚠️ La NC se emitió en ARCA pero hubo un error al guardarla en el sistema. CAE: " + data.datos.cae);
+        return false;
+      }
+
+      // Marcar la factura original como Anulada
+      await marcarFacturaAnulada(factura.id, ncSaved.id);
+
+      // Actualizar estados locales
+      const ncCompleta = {
+        ...ncObj,
+        id: ncSaved.id,
+        numero: `${data.datos.tipo_nc===3?"NCA":"NCB"}-0003-${String(data.datos.numero).padStart(8,"0")}`,
+      };
+      setCreditNotes(prev => [ncCompleta, ...prev]);
+      setInvoices(prev => prev.map(i =>
+        i.id === factura.id ? { ...i, estado: "Anulada", nc_id: ncSaved.id } : i
+      ));
+
+      alert(`✅ NC emitida correctamente.\nCAE: ${data.datos.cae}\nNúmero: ${ncCompleta.numero}`);
+      return true;
+
+    } catch(e) {
+      await completarOperacionArca(opReg.id, { error: e.message }, false);
+      alert("❌ Error de conexión al emitir NC: " + e.message);
+      return false;
+    }
+  };
+
   const save = useCallback(async(data)=>{
     try{ localStorage.setItem("radiofact-v3", JSON.stringify(data)); }catch(e){}
   },[]);
@@ -473,6 +696,7 @@ export default function App() {
     {id:"contracts",label:"Contratos",icon:Icons.contracts},
     {id:"billing",label:"Facturación",icon:Icons.billing},
     {id:"factura-directa",label:"Factura Directa",icon:Icons.pdf},
+    {id:"notas-credito",label:"Notas de Crédito",icon:Icons.creditNote},
     {id:"expenses",label:"Gastos",icon:Icons.expenses},
     {id:"finance",label:"Finanzas",icon:Icons.finance},
     {id:"reports",label:"Reportes",icon:Icons.download},
@@ -522,13 +746,39 @@ export default function App() {
           {page==="clients"&&<Clients clients={clients} setClients={setClients} contracts={contracts} invoices={invoices} currentUser={currentUser} canEdit={canEdit}/>}
           {page==="contracts"&&<Contracts contracts={contracts} setContracts={setContracts} clients={clients} invoices={invoices} currentUser={currentUser} canEdit={canEdit}/>}
           {/* FIX 1: agregado guardarFacturaSupabase como prop */}
-          {page==="billing"&&<Billing clients={clients} contracts={contracts} invoices={invoices} setInvoices={setInvoices} notifications={notifications} setNotifications={setNotifications} config={config} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase}/>}
+          {page==="billing"&&<Billing clients={clients} contracts={contracts} invoices={invoices} setInvoices={setInvoices} notifications={notifications} setNotifications={setNotifications} config={config} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase} emitirNotaCredito={emitirNotaCredito}/>}
           {page==="factura-directa"&&<FacturaDirecta clients={clients} setClients={setClients} invoices={invoices} setInvoices={setInvoices} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase}/>}
+          {page==="notas-credito"&&<CreditNotes
+            creditNotes={creditNotes}
+            invoices={invoices}
+            clients={clients}
+            canEdit={canEdit}
+            onEmitir={emitirNotaCredito}
+            onDescargarPDF={descargarPDFNotaCredito}
+            onEnviarEmail={(nc, factura) => {
+              const cli = clients.find(c=>c.id===nc.clientId);
+              if (!cli?.email) {
+                alert("El cliente no tiene email cargado en la ficha del cliente.");
+                return;
+              }
+              setEmailNCModal({ nc, factura, cliente: cli });
+            }}
+          />}
           {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} currentUser={currentUser} canEdit={canEdit}/>}
           {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses}/>}
           {page==="reports"&&<Reports clients={clients} contracts={contracts} invoices={invoices} expenses={expenses}/>}
           {page==="users"&&currentUser.role==="webmaster"&&<Users users={users} setUsers={setUsers} currentUser={currentUser}/>}
           {page==="settings"&&<Settings config={config} setConfig={setConfig} canEdit={canEdit}/>}
+          {emailNCModal && (
+            <EmailNCModal
+              nc={emailNCModal.nc}
+              factura={emailNCModal.factura}
+              cliente={emailNCModal.cliente}
+              config={config}
+              onClose={()=>setEmailNCModal(null)}
+              onSent={()=>setEmailNCModal(null)}
+            />
+          )}
         </main>
       </div>
     </div>
@@ -987,12 +1237,13 @@ function ContractModal({data,clients,onSave,onClose}){
 }
 
 // FIX 2: agregado guardarFacturaSupabase a la firma del componente Billing
-function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifications,config,canEdit,descargarPDF,guardarFacturaSupabase}){
+function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifications,config,canEdit,descargarPDF,guardarFacturaSupabase,emitirNotaCredito}){
   const today=new Date();
   const [selMonth,setSelMonth]=useState(today.getMonth()+1);
   const [selYear,setSelYear]=useState(today.getFullYear());
   const [reviewModal,setReviewModal]=useState(null);
   const [emailModal,setEmailModal]=useState(null);
+  const [ncModal,setNcModal]=useState(null);
   const [filtroCliente,setFiltroCliente]=useState("");
   const [filtroEstado,setFiltroEstado]=useState("");
   const [filtroEmail,setFiltroEmail]=useState("");
@@ -1230,11 +1481,11 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>{["Fecha","Número","Cliente","Neto","IVA","Total","Estado","CAE","PDF",""].map(h=><th key={h} className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>)}</tr>
+              <tr>{["Fecha","Número","Cliente","Neto","IVA","Total","Estado","CAE","PDF","","NC"].map(h=><th key={h} className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>)}</tr>
             </thead>
             <tbody>
               {monthInvoices.map(inv=>(
-                <tr key={inv.id} className="border-b border-gray-50 hover:bg-gray-50">
+                <tr key={inv.id} className={`border-b border-gray-50 hover:bg-gray-50 ${inv.estado === "Anulada" ? "opacity-60 line-through" : ""}`}>
                   <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">{inv.fecha ? `${inv.fecha.slice(6,8)}/${inv.fecha.slice(4,6)}/${inv.fecha.slice(0,4)}` : fmtDate(inv.month && inv.year ? `${inv.year}-${String(inv.month).padStart(2,"0")}-01` : "")}</td>
                   <td className="px-3 py-2.5 font-mono text-xs">{inv.numero}</td>
                   <td className="px-3 py-2.5 text-xs">
@@ -1273,6 +1524,18 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
                       <Icon d={Icons.mail} size={14}/>
                     </button>
                   </td>
+                  <td className="px-3 py-2.5">
+                    {canEdit && inv.cae && inv.estado === "Emitida" && !inv.nc_id && (
+                      <button
+                        onClick={()=>setNcModal(inv)}
+                        title="Anular con nota de crédito"
+                        className="text-gray-400 hover:text-red-600"
+                      ><Icon d={Icons.creditNote} size={14}/></button>
+                    )}
+                    {inv.estado === "Anulada" && (
+                      <span className="text-xs text-red-600 font-semibold no-underline" style={{textDecoration:"none"}}>NC</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1282,6 +1545,17 @@ function Billing({clients,contracts,invoices,setInvoices,notifications,setNotifi
       </div>
       {reviewModal&&<ReviewModal contracts={reviewModal} clients={clients} onApprove={approveAndEmit} onClose={()=>setReviewModal(null)}/>}
       {emailModal&&<EmailModal invoice={emailModal} config={config} clients={clients} onClose={()=>setEmailModal(null)} onSent={()=>{updateInvoice(emailModal.id,{emailEnviado:true});setEmailModal(null);}}/>}
+      {ncModal && (
+        <EmitirNCModal
+          factura={ncModal}
+          cliente={clients.find(c=>c.id===ncModal.clientId)}
+          onClose={()=>setNcModal(null)}
+          onConfirm={async (motivo) => {
+            const ok = await emitirNotaCredito(ncModal, motivo);
+            if (ok) setNcModal(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1461,6 +1735,90 @@ function EmailModal({invoice,config,clients,onClose,onSent}){
   );
 }
 
+// ── MODAL DE ENVÍO DE NC POR EMAIL ──────────────────────────────────────────
+function EmailNCModal({ nc, factura, cliente, config, onClose, onSent }) {
+  const tipoLetra = nc.tipoNC === 3 ? "A" : "B";
+  const cuerpoDefault =
+    `Estimado/a ${nc.clientName},\n\n` +
+    `Adjunto encontrará la nota de crédito ${nc.numero}, ` +
+    `que anula la factura ${nc.factura_original_numero}.\n\n` +
+    `Motivo: ${nc.motivo || "—"}\n\n` +
+    `Quedamos a su disposición.\n\n` +
+    `Saludos,\n${config.empresa || "LA VANGUARDIA NOTICIAS"}`;
+  const [msg, setMsg] = useState(cuerpoDefault);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+
+  const send = async () => {
+    if (!cliente?.email) { setError("El cliente no tiene email cargado."); return; }
+    setSending(true);
+    setError("");
+    try {
+      const res = await fetch(`${BACKEND_URL}/enviar-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          numero: nc.numero,
+          clientName: nc.clientName,
+          clientCuit: cliente?.cuit || "-",
+          clientDomicilio: cliente?.domicilio || "-",
+          periodo: factura?.periodo || "",
+          detalle: "",
+          neto: nc.neto,
+          iva: nc.iva,
+          total: nc.total,
+          cae: nc.cae,
+          cae_vencimiento: nc.cae_vencimiento,
+          fecha: nc.fecha_emision ? nc.fecha_emision.replace(/-/g,"") : "",
+          tipoFactura: tipoLetra,
+          empresa: config.empresa || "LA VANGUARDIA NOTICIAS",
+          empresaCuit: config.cuit || "30-71644424-0",
+          empresaDomicilio: config.domicilio || "Gobernador Gregores 1370, Caleta Olivia",
+          esNotaCredito: true,
+          facturaAsoc: factura ? {
+            numero: factura.numero,
+            fecha: factura.fecha || "",
+            cae: factura.cae,
+          } : null,
+          motivoNC: nc.motivo,
+          emailDestino: cliente.email,
+          emailAsunto: `Nota de Crédito ${nc.numero} — Anula factura ${nc.factura_original_numero}`,
+          emailCuerpo: msg,
+        }),
+      });
+      const data = await res.json();
+      if (data.exito) onSent();
+      else setError(data.error || "Error al enviar");
+    } catch(e) {
+      setError("Error de conexión: " + e.message);
+    }
+    setSending(false);
+  };
+
+  return (
+    <Modal title="Enviar nota de crédito por email" onClose={onClose} wide>
+      <div className="space-y-3">
+        <div className="p-3 bg-gray-50 rounded-lg text-xs space-y-1">
+          <p><strong>Para:</strong> {cliente?.email}</p>
+          <p><strong>Asunto:</strong> Nota de Crédito {nc.numero} — Anula factura {nc.factura_original_numero}</p>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600">Cuerpo del mensaje</label>
+          <textarea value={msg} onChange={e=>setMsg(e.target.value)} rows={8} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none resize-none"/>
+        </div>
+        <div className="p-2 bg-blue-50 rounded text-xs text-blue-600">📎 PDF de la NC adjunto automáticamente</div>
+        {error && <p className="text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+      </div>
+      <div className="flex justify-end gap-2 mt-4">
+        <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">Cancelar</button>
+        <button onClick={send} disabled={sending} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2">
+          {sending ? "Enviando..." : <><Icon d={Icons.send} size={14}/>Enviar</>}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function Expenses({expenses,setExpenses,currentUser,canEdit}){
   const [modal,setModal]=useState(null);
   const [fMonth,setFMonth]=useState(String(new Date().getMonth()+1));
@@ -1611,6 +1969,262 @@ function ExpenseModal({data,onSave,onClose}){
       </div>
       <ModalFooter onClose={onClose} onSave={()=>onSave(form)}/>
     </Modal>
+  );
+}
+
+// ── MÓDULO NOTAS DE CRÉDITO ─────────────────────────────────────────────────
+function CreditNotes({creditNotes, invoices, clients, canEdit, onEmitir, onDescargarPDF, onEnviarEmail}) {
+  const [search, setSearch] = useState("");
+  const [emitirModal, setEmitirModal] = useState(null); // factura seleccionada para emitir NC
+
+  // Solo facturas EMITIDAS (no anuladas, no borrador) pueden recibir NC
+  const facturasDisponibles = invoices.filter(i =>
+    i.estado === "Emitida" && i.cae && !i.nc_id &&
+    (!search ||
+      i.numero?.toLowerCase().includes(search.toLowerCase()) ||
+      i.clientName?.toLowerCase().includes(search.toLowerCase()) ||
+      i.cae?.includes(search))
+  );
+
+  // NCs ya emitidas, ordenadas por fecha desc
+  const ncOrdenadas = [...creditNotes].sort((a,b) => (b.fecha_emision||"").localeCompare(a.fecha_emision||""));
+
+  const fmtFechaISO = (iso) => {
+    if (!iso) return "";
+    const partes = iso.split("-");
+    if (partes.length < 3) return iso;
+    return `${partes[2].slice(0,2)}/${partes[1]}/${partes[0]}`;
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <h3 className="font-semibold text-base mb-3 flex items-center gap-2">
+          <Icon d={Icons.creditNote} size={18} className="text-blue-600"/>
+          Emitir nota de crédito
+        </h3>
+        <p className="text-xs text-gray-500 mb-3">
+          Buscá la factura a anular por número, nombre del cliente o CAE. Solo se muestran facturas Emitidas que aún no fueron anuladas.
+        </p>
+        <input
+          type="text"
+          value={search}
+          onChange={e=>setSearch(e.target.value)}
+          placeholder="Ej: B-0003-00000019, El coloso, 86183749..."
+          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-300 mb-3"
+        />
+        {search && facturasDisponibles.length === 0 && (
+          <p className="text-sm text-gray-400 text-center py-4">No se encontraron facturas que coincidan.</p>
+        )}
+        {search && facturasDisponibles.length > 0 && (
+          <div className="border border-gray-200 rounded-lg max-h-72 overflow-y-auto">
+            {facturasDisponibles.slice(0,20).map(f => {
+              const cli = clients.find(c => c.id === f.clientId);
+              return (
+                <div key={f.id} className="flex items-center justify-between px-3 py-2.5 hover:bg-gray-50 border-b border-gray-50 last:border-0">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs">{f.numero}</span>
+                      <span className="text-xs text-gray-400">{f.periodo}</span>
+                    </div>
+                    <div className="text-sm truncate">{f.clientName}{cli?.alias ? ` — ${cli.alias}` : ""}</div>
+                    <div className="text-xs text-gray-400">CAE: {f.cae}</div>
+                  </div>
+                  <div className="text-right ml-3">
+                    <div className="font-bold text-sm">{fmtMoney(f.total)}</div>
+                    {canEdit && (
+                      <button
+                        onClick={()=>setEmitirModal(f)}
+                        className="mt-1 px-3 py-1 bg-red-600 text-white rounded text-xs font-medium hover:bg-red-700"
+                      >
+                        Anular con NC
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            {facturasDisponibles.length > 20 && (
+              <div className="text-xs text-gray-400 text-center py-2">Mostrando primeras 20. Refiná la búsqueda para ver más.</div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+          <h3 className="font-semibold text-sm">Notas de crédito emitidas</h3>
+          <span className="text-xs text-gray-400">{ncOrdenadas.length} NC</span>
+        </div>
+        {ncOrdenadas.length === 0 ? (
+          <div className="text-center py-12 text-gray-400 text-sm">Aún no se emitieron notas de crédito.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  {["Fecha","Número NC","Cliente","Factura anulada","Motivo","Total","CAE","PDF"].map(h=>(
+                    <th key={h} className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {ncOrdenadas.map(nc => {
+                  const facturaOriginal = invoices.find(i => i.id === nc.factura_id);
+                  return (
+                    <tr key={nc.id} className="border-b border-gray-50 hover:bg-gray-50">
+                      <td className="px-3 py-2.5 text-xs text-gray-500">{fmtFechaISO(nc.fecha_emision)}</td>
+                      <td className="px-3 py-2.5 font-mono text-xs">{nc.numero}</td>
+                      <td className="px-3 py-2.5 text-xs font-medium">{nc.clientName}</td>
+                      <td className="px-3 py-2.5 font-mono text-xs text-gray-500">{nc.factura_original_numero || "-"}</td>
+                      <td className="px-3 py-2.5 text-xs text-gray-600 max-w-xs truncate" title={nc.motivo}>{nc.motivo || "-"}</td>
+                      <td className="px-3 py-2.5 text-xs font-bold">{fmtMoney(nc.total)}</td>
+                      <td className="px-3 py-2.5 font-mono text-xs text-gray-400">{nc.cae?.slice(0,10)}...</td>
+                      <td className="px-3 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={()=>onDescargarPDF(nc, facturaOriginal)}
+                            className="text-gray-400 hover:text-red-600"
+                            title="Descargar PDF"
+                          ><Icon d={Icons.pdf} size={14}/></button>
+                          <button
+                            onClick={()=>onEnviarEmail(nc, facturaOriginal)}
+                            className="text-gray-400 hover:text-blue-600"
+                            title="Enviar por email"
+                          ><Icon d={Icons.send} size={14}/></button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {emitirModal && (
+        <EmitirNCModal
+          factura={emitirModal}
+          cliente={clients.find(c=>c.id===emitirModal.clientId)}
+          onClose={()=>setEmitirModal(null)}
+          onConfirm={async (motivo) => {
+            const ok = await onEmitir(emitirModal, motivo);
+            if (ok) {
+              setEmitirModal(null);
+              setSearch("");
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── MODAL DE EMISIÓN DE NC ───────────────────────────────────────────────────
+function EmitirNCModal({ factura, cliente, onClose, onConfirm }) {
+  const [motivo, setMotivo] = useState("Duplicación por error de emisión");
+  const [confirmando, setConfirmando] = useState(false);
+  const submittingRef = useRef(false);
+
+  const motivosFrecuentes = [
+    "Duplicación por error de emisión",
+    "Error en datos del cliente",
+    "Cancelación del servicio a pedido del cliente",
+    "Error en el monto facturado",
+    "Otro (especificar abajo)",
+  ];
+
+  const handleConfirm = async () => {
+    if (submittingRef.current) return;
+    if (!motivo.trim()) {
+      alert("El motivo de la NC es obligatorio.");
+      return;
+    }
+    submittingRef.current = true;
+    setConfirmando(true);
+    try {
+      await onConfirm(motivo.trim());
+    } finally {
+      submittingRef.current = false;
+      setConfirmando(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-5 space-y-4 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+            <Icon d={Icons.creditNote} size={20} className="text-red-600"/>
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-base">Emitir nota de crédito</h3>
+            <p className="text-xs text-gray-500 mt-1">La NC anula totalmente la factura. La acción es irreversible y queda registrada en ARCA.</p>
+          </div>
+        </div>
+
+        <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-1 border border-gray-200">
+          <div className="flex justify-between gap-3">
+            <span className="text-gray-500">Factura a anular:</span>
+            <span className="font-mono font-medium">{factura.numero}</span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-gray-500">Cliente:</span>
+            <span className="font-medium text-right">{factura.clientName}{cliente?.alias ? ` — ${cliente.alias}` : ""}</span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-gray-500">Período:</span>
+            <span>{factura.periodo}</span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-gray-500">Total:</span>
+            <span className="font-bold">{fmtMoney(factura.total)}</span>
+          </div>
+          <div className="flex justify-between gap-3 text-xs text-gray-400">
+            <span>CAE original:</span>
+            <span className="font-mono">{factura.cae}</span>
+          </div>
+        </div>
+
+        <div>
+          <label className="text-xs font-medium text-gray-600 block mb-1">Motivo de la NC *</label>
+          <select
+            value={motivosFrecuentes.includes(motivo) ? motivo : "Otro (especificar abajo)"}
+            onChange={e=>{
+              if (e.target.value === "Otro (especificar abajo)") setMotivo("");
+              else setMotivo(e.target.value);
+            }}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-300 mb-2"
+          >
+            {motivosFrecuentes.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+          <input
+            type="text"
+            value={motivo}
+            onChange={e=>setMotivo(e.target.value)}
+            placeholder="Detalle del motivo..."
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-300"
+          />
+          <p className="text-xs text-gray-400 mt-1">Queda registrado en el sistema y se incluye en el PDF de la NC.</p>
+        </div>
+
+        <div className="flex gap-2 pt-2">
+          <button
+            onClick={onClose}
+            disabled={confirmando}
+            className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+          >Cancelar</button>
+          <button
+            onClick={handleConfirm}
+            disabled={confirmando || !motivo.trim()}
+            className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {confirmando ? "⏳ Emitiendo NC..." : "Confirmar y emitir NC"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
