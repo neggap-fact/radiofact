@@ -703,6 +703,11 @@ export default function App() {
   // Devuelve true si se actualizó correctamente, false si falló (no bloquea el flujo).
   const marcarEmailEnviadoSupabase = async (facturaId) => {
     if (!facturaId) return false;
+    // No intentar updatear si el ID es local (no UUID) — pasa cuando recién se emitió y aún no se hizo refresh
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(facturaId)) {
+      console.warn("ID de factura no es UUID válido, salteando update Supabase:", facturaId);
+      return false;
+    }
     const ahora = new Date().toISOString();
     const { error } = await supabase.from("facturas").update({
       email_enviado: true,
@@ -717,9 +722,13 @@ export default function App() {
 
   // ── REGISTRAR EMAIL ENVIADO EN HISTORIAL ─────────────────────────────────
   // Guarda en tabla emails_enviados para auditoría/trazabilidad.
-  const registrarEmailEnHistorial = async ({ cliente_id, destinatarios, asunto, cuerpo, tipo, exito, error_msg }) => {
+  const registrarEmailEnHistorial = async ({ cliente_id, factura_id, destinatarios, asunto, cuerpo, tipo, exito, error_msg }) => {
+    // Validar que factura_id sea UUID válido (no id local del tipo "inv-12345-...")
+    const facturaIdValida = factura_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(factura_id) ? factura_id : null;
+    const clienteIdValido = cliente_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cliente_id) ? cliente_id : null;
     const { error } = await supabase.from("emails_enviados").insert({
-      cliente_id: cliente_id || null,
+      cliente_id: clienteIdValido,
+      factura_id: facturaIdValida,
       destinatarios: Array.isArray(destinatarios) ? destinatarios : [destinatarios],
       asunto,
       cuerpo,
@@ -949,7 +958,7 @@ export default function App() {
           {page==="clients"&&<Clients clients={clients} setClients={setClients} contracts={contracts} invoices={invoices} currentUser={currentUser} canEdit={canEdit} registrarEmailEnHistorial={registrarEmailEnHistorial}/>}
           {page==="contracts"&&<Contracts contracts={contracts} setContracts={setContracts} clients={clients} invoices={invoices} currentUser={currentUser} canEdit={canEdit}/>}
           {/* FIX 1: agregado guardarFacturaSupabase como prop */}
-          {page==="billing"&&<Billing clients={clients} contracts={contracts} setContracts={setContracts} invoices={invoices} setInvoices={setInvoices} notifications={notifications} setNotifications={setNotifications} config={config} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase} emitirNotaCredito={emitirNotaCredito}/>}
+          {page==="billing"&&<Billing clients={clients} contracts={contracts} setContracts={setContracts} invoices={invoices} setInvoices={setInvoices} notifications={notifications} setNotifications={setNotifications} config={config} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase} emitirNotaCredito={emitirNotaCredito} registrarEmailEnHistorial={registrarEmailEnHistorial} marcarEmailEnviadoSupabase={marcarEmailEnviadoSupabase} actualizarEmailsCliente={actualizarEmailsCliente}/>}
           {page==="factura-directa"&&<FacturaDirecta clients={clients} setClients={setClients} invoices={invoices} setInvoices={setInvoices} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase}/>}
           {page==="notas-credito"&&<CreditNotes
             creditNotes={creditNotes}
@@ -1507,7 +1516,7 @@ function ContractModal({data,clients,onSave,onClose}){
 }
 
 // FIX 2: agregado guardarFacturaSupabase a la firma del componente Billing
-function Billing({clients,contracts,setContracts,invoices,setInvoices,notifications,setNotifications,config,canEdit,descargarPDF,guardarFacturaSupabase,emitirNotaCredito}){
+function Billing({clients,contracts,setContracts,invoices,setInvoices,notifications,setNotifications,config,canEdit,descargarPDF,guardarFacturaSupabase,emitirNotaCredito,registrarEmailEnHistorial,marcarEmailEnviadoSupabase,actualizarEmailsCliente}){
   const today=new Date();
   const [selMonth,setSelMonth]=useState(today.getMonth()+1);
   const [selYear,setSelYear]=useState(today.getFullYear());
@@ -1963,21 +1972,28 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
         />
       )}
       {emailModal&&<EmailModal invoice={emailModal} config={config} clients={clients} onClose={()=>setEmailModal(null)} onGuardarEmailsAdicionales={actualizarEmailsCliente} onSent={async(destinatariosEnviados)=>{
-        // Actualizar state local inmediatamente para feedback visual
-        const ahora = new Date().toISOString();
-        updateInvoice(emailModal.id,{emailEnviado:true,emailEnviadoFecha:ahora});
-        // Persistir en Supabase para que sobreviva recargas
-        await marcarEmailEnviadoSupabase(emailModal.id);
-        // Registrar en historial
-        await registrarEmailEnHistorial({
-          cliente_id: emailModal.clientId,
-          factura_id: emailModal.id,
-          destinatarios: destinatariosEnviados || [emailModal.clientEmail],
-          asunto: `Factura ${emailModal.numero} — ${emailModal.periodo}`,
-          cuerpo: "(envío de factura con PDF adjunto)",
-          tipo: "factura",
-          exito: true,
-        });
+        try {
+          // Actualizar state local inmediatamente para feedback visual
+          const ahora = new Date().toISOString();
+          updateInvoice(emailModal.id,{emailEnviado:true,emailEnviadoFecha:ahora});
+          // Persistir en Supabase para que sobreviva recargas
+          if (marcarEmailEnviadoSupabase) await marcarEmailEnviadoSupabase(emailModal.id);
+          // Registrar en historial (con guard por si la prop no llegó)
+          if (registrarEmailEnHistorial) {
+            await registrarEmailEnHistorial({
+              cliente_id: emailModal.clientId,
+              factura_id: emailModal.id,
+              destinatarios: destinatariosEnviados || [emailModal.clientEmail],
+              asunto: `Factura ${emailModal.numero} — ${emailModal.periodo}`,
+              cuerpo: "(envío de factura con PDF adjunto)",
+              tipo: "factura",
+              exito: true,
+            });
+          }
+        } catch (e) {
+          console.error("Error en post-envío de factura:", e);
+          // No tirar pantalla en blanco: el email se envió OK, esto es solo logging
+        }
         setEmailModal(null);
       }}/>}
       {ncModal && (
