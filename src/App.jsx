@@ -486,6 +486,8 @@ export default function App() {
             fch_serv_hasta: f.fch_serv_hasta ? f.fch_serv_hasta.replace(/-/g,"") : "",
             fch_vto_pago:   f.fch_vto_pago   ? f.fch_vto_pago.replace(/-/g,"")   : "",
             nc_id: f.nc_id || null,
+            origen: f.origen || "radiofact",  // "radiofact" | "manual_arca" | "sync_arca"
+            puntoVenta: f.punto_venta || 3,
             emailEnviado: f.email_enviado === true,
             emailEnviadoFecha: f.email_enviado_fecha || null,
             fecha: f.fecha_emision ? f.fecha_emision.replace(/-/g,"") : "",
@@ -544,7 +546,8 @@ export default function App() {
       cae_vencimiento: inv.cae_vencimiento || null,
       estado: inv.estado || "Emitida",
       fecha_emision: inv.fecha ? `${inv.fecha.slice(0,4)}-${inv.fecha.slice(4,6)}-${inv.fecha.slice(6,8)}` : todayStr(),
-      punto_venta: 3,
+      punto_venta: inv.puntoVenta || 3,  // 3 = RadioFact, 1/2 = ARCA Web manual
+      origen: inv.origen || "radiofact",  // "radiofact" | "manual_arca" | "sync_arca"
       tipo_doc_cliente: 80,
       cuit_cliente: inv.clientCuit || "",
       moneda: "PES",
@@ -1516,6 +1519,454 @@ function ContractModal({data,clients,onSave,onClose}){
 }
 
 // FIX 2: agregado guardarFacturaSupabase a la firma del componente Billing
+// ── SINCRONIZACIÓN AUTOMÁTICA CON ARCA ─────────────────────────────────────
+// Consulta el último número autorizado por ARCA en un PV+Tipo y compara con
+// lo que tenemos guardado. Trae los faltantes uno por uno.
+function SyncArcaModal({ clients, invoices, onClose, onImportar }) {
+  const [puntoVenta, setPuntoVenta] = useState(1);
+  const [tipoFactura, setTipoFactura] = useState("A");
+  const [estado, setEstado] = useState("idle"); // idle | consultando | listo | importando | done
+  const [info, setInfo] = useState(null); // { ultimoArca, ultimoLocal, faltantes: [] }
+  const [error, setError] = useState("");
+  const [trayendo, setTrayendo] = useState(null); // numero actual que se está trayendo
+  const [importadas, setImportadas] = useState([]);
+
+  // Mapeo tipo factura A/B/C -> código ARCA 1/6/11
+  const tipoCmpCode = (t) => t === "A" ? 1 : (t === "B" ? 6 : 11);
+
+  const consultarFaltantes = async () => {
+    setEstado("consultando");
+    setError("");
+    setInfo(null);
+    try {
+      // Último número en ARCA
+      const res = await fetch(`${BACKEND_URL}/arca-ultimo-numero`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ punto_venta: puntoVenta, tipo_factura: tipoCmpCode(tipoFactura) }),
+      });
+      const data = await res.json();
+      if (!data.exito) {
+        setError(data.error || "Error consultando ARCA");
+        setEstado("idle");
+        return;
+      }
+      const ultimoArca = data.ultimo_numero;
+
+      // Último que tenemos guardado para ese PV + tipo
+      const localPVTipo = invoices.filter(i =>
+        i.puntoVenta === puntoVenta &&
+        i.tipoFactura === tipoFactura &&
+        i.estado !== "Anulada"
+      );
+      const numerosLocales = new Set(localPVTipo.map(i => parseInt((i.numero || "").split("-")[2]) || 0));
+      const ultimoLocal = numerosLocales.size > 0 ? Math.max(...numerosLocales) : 0;
+
+      // Calcular faltantes (todos los números entre 1 y ultimoArca que NO están en local)
+      const faltantes = [];
+      for (let n = 1; n <= ultimoArca; n++) {
+        if (!numerosLocales.has(n)) faltantes.push(n);
+      }
+
+      setInfo({ ultimoArca, ultimoLocal, faltantes });
+      setEstado("listo");
+    } catch (e) {
+      setError("Error de conexión: " + e.message);
+      setEstado("idle");
+    }
+  };
+
+  const importarFaltantes = async () => {
+    if (!info || info.faltantes.length === 0) return;
+    setEstado("importando");
+    setImportadas([]);
+    const importadasOk = [];
+    for (const num of info.faltantes) {
+      setTrayendo(num);
+      try {
+        const res = await fetch(`${BACKEND_URL}/arca-traer-factura`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            punto_venta: puntoVenta,
+            tipo_factura: tipoCmpCode(tipoFactura),
+            numero: num,
+          }),
+        });
+        const data = await res.json();
+        if (data.exito) {
+          // Buscar cliente por CUIT
+          const cuitArca = String(data.datos.cuit_cliente);
+          const cuitConGuiones = cuitArca.length === 11
+            ? `${cuitArca.slice(0,2)}-${cuitArca.slice(2,10)}-${cuitArca.slice(10)}`
+            : cuitArca;
+          const cliente = clients.find(c => (c.cuit || "").replace(/-/g, "") === cuitArca);
+
+          const numFmt = String(num).padStart(8, "0");
+          const numeroCompleto = `${tipoFactura}-${String(puntoVenta).padStart(4, "0")}-${numFmt}`;
+          const fecha = data.datos.fecha;  // YYYYMMDD
+          const mes = parseInt(fecha.slice(4, 6));
+          const anio = parseInt(fecha.slice(0, 4));
+
+          const inv = {
+            id: `inv-sync-${Date.now()}-${num}`,
+            contractId: null,
+            clientId: cliente?.id || null,
+            clientName: cliente?.razonSocial || `(CUIT ${cuitConGuiones})`,
+            clientEmail: cliente?.email || "",
+            clientCuit: cliente?.cuit || cuitConGuiones,
+            tipoFactura,
+            numero: numeroCompleto,
+            puntoVenta,
+            month: mes,
+            year: anio,
+            periodo: data.datos.fch_serv_desde && data.datos.fch_serv_hasta
+              ? `${data.datos.fch_serv_desde.slice(6,8)}/${data.datos.fch_serv_desde.slice(4,6)}/${data.datos.fch_serv_desde.slice(0,4)} al ${data.datos.fch_serv_hasta.slice(6,8)}/${data.datos.fch_serv_hasta.slice(4,6)}/${data.datos.fch_serv_hasta.slice(0,4)}`
+              : `${["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"][mes-1]} ${anio}`,
+            detalle: "Importado desde ARCA Web",
+            neto: data.datos.importe_neto,
+            iva: data.datos.importe_iva,
+            total: data.datos.importe_total,
+            estado: "Emitida",
+            cae: data.datos.cae,
+            cae_vencimiento: data.datos.cae_vencimiento || "",
+            fecha,
+            fechaPago: "",
+            emailEnviado: false,
+            origen: "sync_arca",
+            fch_serv_desde: data.datos.fch_serv_desde || "",
+            fch_serv_hasta: data.datos.fch_serv_hasta || "",
+            fch_vto_pago: data.datos.fch_vto_pago || "",
+            emitida: new Date().toISOString(),
+          };
+          await onImportar(inv);
+          importadasOk.push({ num, cliente: inv.clientName, total: inv.total, ok: true });
+        } else {
+          importadasOk.push({ num, ok: false, error: data.error });
+        }
+      } catch (e) {
+        importadasOk.push({ num, ok: false, error: e.message });
+      }
+      setImportadas([...importadasOk]);
+      // Pequeña pausa entre cada llamada para no saturar ARCA
+      await new Promise(r => setTimeout(r, 200));
+    }
+    setTrayendo(null);
+    setEstado("done");
+  };
+
+  return (
+    <Modal title="Sincronizar facturas con ARCA" onClose={estado === "importando" ? () => {} : onClose} wide>
+      <div className="space-y-3">
+        <div className="p-2 bg-blue-50 rounded text-xs text-blue-700">
+          ℹ️ Consulta a ARCA y trae las facturas emitidas que aún no están en RadioFact (PV 1, 2 o 3).
+        </div>
+
+        {estado === "idle" || estado === "consultando" ? (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-gray-600">Punto de venta</label>
+                <select value={puntoVenta} onChange={e=>setPuntoVenta(Number(e.target.value))} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+                  <option value="1">0001</option>
+                  <option value="2">0002</option>
+                  <option value="3">0003 (RadioFact)</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">Tipo factura</label>
+                <select value={tipoFactura} onChange={e=>setTipoFactura(e.target.value)} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+                  <option value="A">A (cód. 01)</option>
+                  <option value="B">B (cód. 06)</option>
+                  <option value="C">C (cód. 11)</option>
+                </select>
+              </div>
+            </div>
+            <button
+              onClick={consultarFaltantes}
+              disabled={estado === "consultando"}
+              className="w-full px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
+            >
+              {estado === "consultando" ? "⏳ Consultando ARCA..." : "🔍 Consultar últimos comprobantes"}
+            </button>
+          </>
+        ) : null}
+
+        {estado === "listo" && info && (
+          <div className="space-y-2">
+            <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs space-y-1">
+              <p>📊 <strong>Último número en ARCA</strong> (PV {puntoVenta}, tipo {tipoFactura}): <span className="font-mono font-bold">{info.ultimoArca}</span></p>
+              <p>💾 <strong>Último guardado en RadioFact</strong>: <span className="font-mono font-bold">{info.ultimoLocal}</span></p>
+              <p className={info.faltantes.length > 0 ? "text-amber-700 font-semibold" : "text-green-700 font-semibold"}>
+                {info.faltantes.length > 0
+                  ? `⚠️ Faltan ${info.faltantes.length} comprobante(s): ${info.faltantes.slice(0, 10).join(", ")}${info.faltantes.length > 10 ? "..." : ""}`
+                  : "✅ Todo sincronizado"}
+              </p>
+            </div>
+            {info.faltantes.length > 0 && (
+              <button
+                onClick={importarFaltantes}
+                className="w-full px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-700"
+              >
+                📥 Importar {info.faltantes.length} comprobante(s) de ARCA
+              </button>
+            )}
+            <button
+              onClick={() => { setEstado("idle"); setInfo(null); }}
+              className="w-full px-4 py-2 bg-gray-100 text-gray-700 text-sm rounded-lg hover:bg-gray-200"
+            >
+              Volver
+            </button>
+          </div>
+        )}
+
+        {estado === "importando" && (
+          <div className="space-y-2">
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs">
+              <p>⏳ Importando comprobantes... {trayendo && <strong>(trayendo Nº {trayendo})</strong>}</p>
+              <p className="text-gray-500 mt-1">Procesados: {importadas.length} de {info.faltantes.length}</p>
+            </div>
+          </div>
+        )}
+
+        {estado === "done" && (
+          <div className="space-y-2">
+            <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-xs">
+              <p className="font-bold text-green-700">✅ Sincronización completa</p>
+              <p>Importadas con éxito: {importadas.filter(i=>i.ok).length}</p>
+              {importadas.filter(i=>!i.ok).length > 0 && (
+                <p className="text-red-700">Errores: {importadas.filter(i=>!i.ok).length}</p>
+              )}
+            </div>
+            <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-2 text-xs">
+              {importadas.map((r, i) => (
+                <div key={i} className={`flex justify-between py-1 border-b border-gray-100 ${r.ok ? "" : "text-red-600"}`}>
+                  <span className="font-mono">N°{r.num}</span>
+                  {r.ok ? (
+                    <>
+                      <span>{r.cliente}</span>
+                      <span className="font-bold">{fmtMoney(r.total)}</span>
+                    </>
+                  ) : (
+                    <span>❌ {r.error}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={onClose}
+              className="w-full px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700"
+            >
+              Cerrar
+            </button>
+          </div>
+        )}
+
+        {error && <p className="text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+      </div>
+    </Modal>
+  );
+}
+
+// ── CARGA MANUAL DE FACTURA EXTERNA (emitida en ARCA Web) ─────────────────
+// Para facturas que se emiten directamente en arca.gob.ar (PV 1, 2, etc.)
+// y necesitamos sumarlas a los totales de RadioFact sin re-emitir.
+function FacturaManualModal({ clients, onClose, onSave }) {
+  const hoy = new Date().toISOString().slice(0, 10);
+  const [form, setForm] = useState({
+    clientId: "",
+    puntoVenta: 1,
+    numero: "",
+    tipoFactura: "A",
+    fecha: hoy,
+    fch_serv_desde: "",
+    fch_serv_hasta: "",
+    fch_vto_pago: "",
+    descripcion: "",
+    neto: "",
+    iva: "",
+    cae: "",
+    cae_vencimiento: "",
+  });
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const f = (k) => (e) => setForm((p) => ({ ...p, [k]: e.target.value }));
+  const neto = parseFloat(form.neto) || 0;
+  const iva = parseFloat(form.iva) || 0;
+  const total = neto + iva;
+  // IVA sugerido = 10.5% del neto
+  const ivaSugerido = Math.round(neto * 0.105 * 100) / 100;
+
+  const handleSave = async () => {
+    if (!form.clientId) { setError("Elegí el cliente"); return; }
+    if (!form.numero) { setError("Falta el número de factura"); return; }
+    if (!form.cae) { setError("Falta el CAE"); return; }
+    if (!form.fecha) { setError("Falta la fecha de emisión"); return; }
+    if (neto <= 0) { setError("El neto debe ser mayor a 0"); return; }
+
+    const cliente = clients.find(c => c.id === form.clientId);
+    if (!cliente) { setError("Cliente no encontrado"); return; }
+
+    setSaving(true);
+    setError("");
+    try {
+      const numFmt = String(form.numero).padStart(8, "0");
+      const numeroCompleto = `${form.tipoFactura}-${String(form.puntoVenta).padStart(4, "0")}-${numFmt}`;
+      const fechaArca = form.fecha.replace(/-/g, "");
+      const mes = parseInt(form.fecha.slice(5, 7));
+      const anio = parseInt(form.fecha.slice(0, 4));
+
+      // Construir periodo legible para el listado
+      let periodoTexto;
+      if (form.fch_serv_desde && form.fch_serv_hasta) {
+        const f1 = form.fch_serv_desde.split("-").reverse().join("/");
+        const f2 = form.fch_serv_hasta.split("-").reverse().join("/");
+        periodoTexto = `${f1} al ${f2}`;
+      } else {
+        periodoTexto = `${["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"][mes-1]} ${anio}`;
+      }
+
+      const inv = {
+        id: `inv-manual-${Date.now()}`,
+        contractId: null,
+        clientId: form.clientId,
+        clientName: cliente.razonSocial,
+        clientEmail: cliente.email,
+        clientCuit: cliente.cuit,
+        tipoFactura: form.tipoFactura,
+        numero: numeroCompleto,
+        puntoVenta: parseInt(form.puntoVenta),
+        month: mes,
+        year: anio,
+        periodo: periodoTexto,
+        detalle: form.descripcion || "Factura emitida manualmente desde ARCA Web",
+        neto,
+        iva,
+        total,
+        estado: "Emitida",
+        cae: form.cae,
+        cae_vencimiento: form.cae_vencimiento ? form.cae_vencimiento.replace(/-/g, "") : "",
+        fecha: fechaArca,
+        fechaPago: "",
+        emailEnviado: false,
+        origen: "manual_arca",
+        fch_serv_desde: form.fch_serv_desde ? form.fch_serv_desde.replace(/-/g, "") : "",
+        fch_serv_hasta: form.fch_serv_hasta ? form.fch_serv_hasta.replace(/-/g, "") : "",
+        fch_vto_pago: form.fch_vto_pago ? form.fch_vto_pago.replace(/-/g, "") : "",
+        emitida: new Date().toISOString(),
+      };
+
+      const ok = await onSave(inv);
+      if (ok) onClose();
+      else setError("Error al guardar. Revisá la consola.");
+    } catch (e) {
+      setError("Error: " + e.message);
+    }
+    setSaving(false);
+  };
+
+  return (
+    <Modal title="Cargar factura manual (ARCA Web)" onClose={onClose} wide>
+      <div className="space-y-3">
+        <div className="p-2 bg-blue-50 rounded text-xs text-blue-700">
+          ℹ️ Usá esto para sumar a los totales una factura que ya emitiste en arca.gob.ar (no se vuelve a enviar a ARCA).
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2">
+            <label className="text-xs font-medium text-gray-600">Cliente *</label>
+            <select value={form.clientId} onChange={f("clientId")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+              <option value="">— elegir cliente —</option>
+              {clients.filter(c => c.active).map(c => (
+                <option key={c.id} value={c.id}>{c.razonSocial}{c.alias ? ` (${c.alias})` : ""}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-gray-600">Tipo factura *</label>
+            <select value={form.tipoFactura} onChange={f("tipoFactura")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+              <option value="A">A</option>
+              <option value="B">B</option>
+              <option value="C">C</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-600">Punto de venta *</label>
+            <select value={form.puntoVenta} onChange={f("puntoVenta")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+              <option value="1">0001</option>
+              <option value="2">0002</option>
+              <option value="3">0003 (RadioFact)</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-gray-600">Número *</label>
+            <input type="number" value={form.numero} onChange={f("numero")} placeholder="ej: 25" className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-600">Fecha emisión *</label>
+            <input type="date" value={form.fecha} onChange={f("fecha")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+          </div>
+
+          <div className="col-span-2">
+            <label className="text-xs font-medium text-gray-600">Descripción / detalle</label>
+            <input type="text" value={form.descripcion} onChange={f("descripcion")} placeholder="Servicios de publicidad..." className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-gray-600">Servicio desde</label>
+            <input type="date" value={form.fch_serv_desde} onChange={f("fch_serv_desde")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-600">Servicio hasta</label>
+            <input type="date" value={form.fch_serv_hasta} onChange={f("fch_serv_hasta")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-600">Vto. de pago</label>
+            <input type="date" value={form.fch_vto_pago} onChange={f("fch_vto_pago")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-gray-600">Neto *</label>
+            <input type="number" step="0.01" value={form.neto} onChange={f("neto")} placeholder="0.00" className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-600">
+              IVA <button type="button" onClick={() => setForm(p => ({ ...p, iva: ivaSugerido }))} className="text-blue-600 hover:underline ml-1 text-xs">(usar 10.5%)</button>
+            </label>
+            <input type="number" step="0.01" value={form.iva} onChange={f("iva")} placeholder="0.00" className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+          </div>
+
+          <div className="col-span-2 bg-blue-50 border border-blue-200 rounded-lg p-2">
+            <p className="text-xs text-gray-600">Total calculado:</p>
+            <p className="font-bold text-blue-700 text-base">{fmtMoney(total)}</p>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-gray-600">CAE *</label>
+            <input type="text" value={form.cae} onChange={f("cae")} placeholder="86184011..." className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none font-mono"/>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-600">Vto. CAE</label>
+            <input type="date" value={form.cae_vencimiento} onChange={f("cae_vencimiento")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+          </div>
+        </div>
+
+        {error && <p className="text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+      </div>
+
+      <div className="flex justify-end gap-2 mt-4">
+        <button onClick={onClose} disabled={saving} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg disabled:opacity-50">Cancelar</button>
+        <button onClick={handleSave} disabled={saving} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+          {saving ? "Guardando..." : "Guardar factura"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function Billing({clients,contracts,setContracts,invoices,setInvoices,notifications,setNotifications,config,canEdit,descargarPDF,guardarFacturaSupabase,emitirNotaCredito,registrarEmailEnHistorial,marcarEmailEnviadoSupabase,actualizarEmailsCliente}){
   const today=new Date();
   const [selMonth,setSelMonth]=useState(today.getMonth()+1);
@@ -1523,6 +1974,8 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
   const [reviewModal,setReviewModal]=useState(null);
   const [emailModal,setEmailModal]=useState(null);
   const [ncModal,setNcModal]=useState(null);
+  const [manualModal,setManualModal]=useState(false);
+  const [syncModal,setSyncModal]=useState(false);
   const [editContractModal,setEditContractModal]=useState(null);
 
   // Guardar cambios en contrato (replica la lógica de Contracts.save)
@@ -1809,15 +2262,35 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
           {[2024,2025,2026].map(y=><option key={y}>{y}</option>)}
         </select>
         <span className="text-xs text-gray-500">Período: <strong>{MONTHS[billMonth-1]} {billYear}</strong></span>
-        {monthInvoices.length>0&&(
-          <button
-            onClick={descargarReporteCSV}
-            className="ml-auto flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700"
-            title="Descargar reporte mensual en CSV (se abre con Excel)"
-          >
-            <Icon d={Icons.download} size={14}/>Descargar reporte
-          </button>
-        )}
+        <div className="ml-auto flex gap-2">
+          {canEdit && (
+            <button
+              onClick={()=>setSyncModal(true)}
+              className="flex items-center gap-2 bg-white border border-purple-300 text-purple-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-purple-50"
+              title="Consultar a ARCA y traer facturas emitidas que no estén en RadioFact"
+            >
+              <Icon d={Icons.refresh || Icons.download} size={14}/>Sincronizar ARCA
+            </button>
+          )}
+          {canEdit && (
+            <button
+              onClick={()=>setManualModal(true)}
+              className="flex items-center gap-2 bg-white border border-blue-300 text-blue-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-50"
+              title="Cargar manualmente una factura emitida en arca.gob.ar (PV 0001 / 0002)"
+            >
+              <Icon d={Icons.add} size={14}/>Cargar factura manual
+            </button>
+          )}
+          {monthInvoices.length>0&&(
+            <button
+              onClick={descargarReporteCSV}
+              className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700"
+              title="Descargar reporte mensual en CSV (se abre con Excel)"
+            >
+              <Icon d={Icons.download} size={14}/>Descargar reporte
+            </button>
+          )}
+        </div>
       </div>
       {monthInvoices.length>0&&(
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -1892,7 +2365,17 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
               {monthInvoices.map(inv=>(
                 <tr key={inv.id} className={`border-b border-gray-50 hover:bg-gray-50 ${inv.estado === "Anulada" ? "opacity-60 line-through" : ""}`}>
                   <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">{inv.fecha ? `${inv.fecha.slice(6,8)}/${inv.fecha.slice(4,6)}/${inv.fecha.slice(0,4)}` : fmtDate(inv.month && inv.year ? `${inv.year}-${String(inv.month).padStart(2,"0")}-01` : "")}</td>
-                  <td className="px-3 py-2.5 font-mono text-xs">{inv.numero}</td>
+                  <td className="px-3 py-2.5 font-mono text-xs">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span>{inv.numero}</span>
+                      {inv.origen === "manual_arca" && (
+                        <span className="bg-purple-100 text-purple-700 text-[9px] font-sans font-semibold px-1.5 py-0.5 rounded uppercase" title="Cargada manualmente desde ARCA Web">Manual ARCA</span>
+                      )}
+                      {inv.origen === "sync_arca" && (
+                        <span className="bg-indigo-100 text-indigo-700 text-[9px] font-sans font-semibold px-1.5 py-0.5 rounded uppercase" title="Sincronizada desde ARCA">Sync ARCA</span>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-3 py-2.5 text-xs">
                     <div className="font-medium">{inv.clientName}</div>
                     {(() => {
@@ -2004,6 +2487,41 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
           onConfirm={async (motivo) => {
             const ok = await emitirNotaCredito(ncModal, motivo);
             if (ok) setNcModal(null);
+          }}
+        />
+      )}
+      {manualModal && (
+        <FacturaManualModal
+          clients={clients}
+          onClose={()=>setManualModal(false)}
+          onSave={async (inv) => {
+            try {
+              const uuid = await guardarFacturaSupabase(inv, inv.clientId);
+              if (uuid) inv.id = uuid;
+              setInvoices(prev => [inv, ...prev]);
+              return true;
+            } catch (e) {
+              console.error("Error guardando factura manual:", e);
+              return false;
+            }
+          }}
+        />
+      )}
+      {syncModal && (
+        <SyncArcaModal
+          clients={clients}
+          invoices={invoices}
+          onClose={()=>setSyncModal(false)}
+          onImportar={async (inv) => {
+            try {
+              const uuid = await guardarFacturaSupabase(inv, inv.clientId);
+              if (uuid) inv.id = uuid;
+              setInvoices(prev => [inv, ...prev]);
+              return true;
+            } catch (e) {
+              console.error("Error importando factura desde ARCA:", e);
+              return false;
+            }
           }}
         />
       )}
