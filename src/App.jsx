@@ -1525,11 +1525,15 @@ function ContractModal({data,clients,onSave,onClose}){
 function SyncArcaModal({ clients, invoices, onClose, onImportar }) {
   const [puntoVenta, setPuntoVenta] = useState(1);
   const [tipoFactura, setTipoFactura] = useState("A");
-  const [estado, setEstado] = useState("idle"); // idle | consultando | listo | importando | done
+  const [fechaDesde, setFechaDesde] = useState("");  // opcional, vacío = sin filtro
+  const [estado, setEstado] = useState("idle"); // idle | consultando | listo | preview | importando | done
   const [info, setInfo] = useState(null); // { ultimoArca, ultimoLocal, faltantes: [] }
   const [error, setError] = useState("");
-  const [trayendo, setTrayendo] = useState(null); // numero actual que se está trayendo
+  const [trayendo, setTrayendo] = useState(null);
   const [importadas, setImportadas] = useState([]);
+  const [previewDatos, setPreviewDatos] = useState([]);  // datos pre-cargados de cada faltante
+  const [cargandoPreview, setCargandoPreview] = useState(false);
+  const [seleccionados, setSeleccionados] = useState(new Set());  // qué importar
 
   // Mapeo tipo factura A/B/C -> código ARCA 1/6/11
   const tipoCmpCode = (t) => t === "A" ? 1 : (t === "B" ? 6 : 11);
@@ -1553,11 +1557,12 @@ function SyncArcaModal({ clients, invoices, onClose, onImportar }) {
       }
       const ultimoArca = data.ultimo_numero;
 
-      // Último que tenemos guardado para ese PV + tipo
+      // IMPORTANTE: consideramos TODAS las facturas guardadas, incluso las anuladas.
+      // En ARCA, una factura anulada con NC sigue ocupando su número en la secuencia.
+      // Si vos tenés guardada A-3-7 (aunque esté anulada con NC), no es "faltante".
       const localPVTipo = invoices.filter(i =>
         i.puntoVenta === puntoVenta &&
-        i.tipoFactura === tipoFactura &&
-        i.estado !== "Anulada"
+        i.tipoFactura === tipoFactura
       );
       const numerosLocales = new Set(localPVTipo.map(i => parseInt((i.numero || "").split("-")[2]) || 0));
       const ultimoLocal = numerosLocales.size > 0 ? Math.max(...numerosLocales) : 0;
@@ -1576,13 +1581,13 @@ function SyncArcaModal({ clients, invoices, onClose, onImportar }) {
     }
   };
 
-  const importarFaltantes = async () => {
+  // Trae los datos de cada faltante para que el usuario pueda revisar antes de importar
+  const cargarPreview = async () => {
     if (!info || info.faltantes.length === 0) return;
-    setEstado("importando");
-    setImportadas([]);
-    const importadasOk = [];
+    setCargandoPreview(true);
+    setEstado("preview");
+    const datos = [];
     for (const num of info.faltantes) {
-      setTrayendo(num);
       try {
         const res = await fetch(`${BACKEND_URL}/arca-traer-factura`, {
           method: "POST",
@@ -1597,74 +1602,120 @@ function SyncArcaModal({ clients, invoices, onClose, onImportar }) {
         if (data.exito) {
           // Buscar cliente por CUIT
           const cuitArca = String(data.datos.cuit_cliente);
-          const cuitConGuiones = cuitArca.length === 11
-            ? `${cuitArca.slice(0,2)}-${cuitArca.slice(2,10)}-${cuitArca.slice(10)}`
-            : cuitArca;
           const cliente = clients.find(c => (c.cuit || "").replace(/-/g, "") === cuitArca);
-
-          const numFmt = String(num).padStart(8, "0");
-          const numeroCompleto = `${tipoFactura}-${String(puntoVenta).padStart(4, "0")}-${numFmt}`;
-          const fecha = data.datos.fecha;  // YYYYMMDD
-          const mes = parseInt(fecha.slice(4, 6));
-          const anio = parseInt(fecha.slice(0, 4));
-
-          const inv = {
-            id: `inv-sync-${Date.now()}-${num}`,
-            contractId: null,
-            clientId: cliente?.id || null,
-            clientName: cliente?.razonSocial || `(CUIT ${cuitConGuiones})`,
-            clientEmail: cliente?.email || "",
-            clientCuit: cliente?.cuit || cuitConGuiones,
-            tipoFactura,
-            numero: numeroCompleto,
-            puntoVenta,
-            month: mes,
-            year: anio,
-            periodo: data.datos.fch_serv_desde && data.datos.fch_serv_hasta
-              ? `${data.datos.fch_serv_desde.slice(6,8)}/${data.datos.fch_serv_desde.slice(4,6)}/${data.datos.fch_serv_desde.slice(0,4)} al ${data.datos.fch_serv_hasta.slice(6,8)}/${data.datos.fch_serv_hasta.slice(4,6)}/${data.datos.fch_serv_hasta.slice(0,4)}`
-              : `${["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"][mes-1]} ${anio}`,
-            detalle: "Importado desde ARCA Web",
-            neto: data.datos.importe_neto,
-            iva: data.datos.importe_iva,
-            total: data.datos.importe_total,
-            estado: "Emitida",
-            cae: data.datos.cae,
-            cae_vencimiento: data.datos.cae_vencimiento || "",
-            fecha,
-            fechaPago: "",
-            emailEnviado: false,
-            origen: "sync_arca",
-            fch_serv_desde: data.datos.fch_serv_desde || "",
-            fch_serv_hasta: data.datos.fch_serv_hasta || "",
-            fch_vto_pago: data.datos.fch_vto_pago || "",
-            emitida: new Date().toISOString(),
-          };
-          await onImportar(inv);
-          importadasOk.push({ num, cliente: inv.clientName, total: inv.total, ok: true });
+          datos.push({
+            numero: num,
+            datos: data.datos,
+            cliente,
+            seleccionado: false, // por defecto NADA seleccionado, vos decidís qué importar
+          });
         } else {
-          importadasOk.push({ num, ok: false, error: data.error });
+          datos.push({ numero: num, error: data.error, seleccionado: false });
         }
       } catch (e) {
-        importadasOk.push({ num, ok: false, error: e.message });
+        datos.push({ numero: num, error: e.message, seleccionado: false });
+      }
+      setPreviewDatos([...datos]);  // actualizar progresivamente
+      await new Promise(r => setTimeout(r, 150));
+    }
+    setCargandoPreview(false);
+    // Filtrar por rango de fecha si se especificó
+    if (fechaDesde) {
+      const fechaDesdeArca = fechaDesde.replace(/-/g, "");
+      const filtrados = datos.filter(d => !d.error && d.datos.fecha >= fechaDesdeArca);
+      setSeleccionados(new Set(filtrados.map(d => d.numero)));
+    }
+  };
+
+  const toggleSeleccion = (num) => {
+    setSeleccionados(prev => {
+      const nuevo = new Set(prev);
+      if (nuevo.has(num)) nuevo.delete(num);
+      else nuevo.add(num);
+      return nuevo;
+    });
+  };
+
+  const seleccionarTodo = () => {
+    setSeleccionados(new Set(previewDatos.filter(d => !d.error).map(d => d.numero)));
+  };
+  const deseleccionarTodo = () => setSeleccionados(new Set());
+
+  const importarSeleccionadas = async () => {
+    if (seleccionados.size === 0) return;
+    setEstado("importando");
+    setImportadas([]);
+    const importadasOk = [];
+    for (const item of previewDatos) {
+      if (!seleccionados.has(item.numero) || item.error) continue;
+      setTrayendo(item.numero);
+      try {
+        const cuitArca = String(item.datos.cuit_cliente);
+        const cuitConGuiones = cuitArca.length === 11
+          ? `${cuitArca.slice(0,2)}-${cuitArca.slice(2,10)}-${cuitArca.slice(10)}`
+          : cuitArca;
+
+        const numFmt = String(item.numero).padStart(8, "0");
+        const numeroCompleto = `${tipoFactura}-${String(puntoVenta).padStart(4, "0")}-${numFmt}`;
+        const fecha = item.datos.fecha;
+        const mes = parseInt(fecha.slice(4, 6));
+        const anio = parseInt(fecha.slice(0, 4));
+
+        const inv = {
+          id: `inv-sync-${Date.now()}-${item.numero}`,
+          contractId: null,
+          clientId: item.cliente?.id || null,
+          clientName: item.cliente?.razonSocial || `(CUIT ${cuitConGuiones})`,
+          clientEmail: item.cliente?.email || "",
+          clientCuit: item.cliente?.cuit || cuitConGuiones,
+          tipoFactura,
+          numero: numeroCompleto,
+          puntoVenta,
+          month: mes,
+          year: anio,
+          periodo: item.datos.fch_serv_desde && item.datos.fch_serv_hasta
+            ? `${item.datos.fch_serv_desde.slice(6,8)}/${item.datos.fch_serv_desde.slice(4,6)}/${item.datos.fch_serv_desde.slice(0,4)} al ${item.datos.fch_serv_hasta.slice(6,8)}/${item.datos.fch_serv_hasta.slice(4,6)}/${item.datos.fch_serv_hasta.slice(0,4)}`
+            : `${["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"][mes-1]} ${anio}`,
+          detalle: "Importado desde ARCA Web",
+          neto: item.datos.importe_neto,
+          iva: item.datos.importe_iva,
+          total: item.datos.importe_total,
+          estado: "Emitida",
+          cae: item.datos.cae,
+          cae_vencimiento: item.datos.cae_vencimiento || "",
+          fecha,
+          fechaPago: "",
+          emailEnviado: false,
+          origen: "sync_arca",
+          fch_serv_desde: item.datos.fch_serv_desde || "",
+          fch_serv_hasta: item.datos.fch_serv_hasta || "",
+          fch_vto_pago: item.datos.fch_vto_pago || "",
+          emitida: new Date().toISOString(),
+        };
+        const ok = await onImportar(inv);
+        importadasOk.push({ num: item.numero, cliente: inv.clientName, total: inv.total, ok });
+      } catch (e) {
+        importadasOk.push({ num: item.numero, ok: false, error: e.message });
       }
       setImportadas([...importadasOk]);
-      // Pequeña pausa entre cada llamada para no saturar ARCA
       await new Promise(r => setTimeout(r, 200));
     }
     setTrayendo(null);
     setEstado("done");
   };
 
+  const fmtFechaArca = (f) => f && f.length === 8 ? `${f.slice(6,8)}/${f.slice(4,6)}/${f.slice(0,4)}` : "—";
+
   return (
-    <Modal title="Sincronizar facturas con ARCA" onClose={estado === "importando" ? () => {} : onClose} wide>
+    <Modal title="Sincronizar facturas con ARCA" onClose={estado === "importando" || cargandoPreview ? () => {} : onClose} wide>
       <div className="space-y-3">
         <div className="p-2 bg-blue-50 rounded text-xs text-blue-700">
-          ℹ️ Consulta a ARCA y trae las facturas emitidas que aún no están en RadioFact (PV 1, 2 o 3).
+          ℹ️ Consulta a ARCA y trae las facturas emitidas que aún no están en RadioFact. <strong>Vas a poder revisar cada factura antes de importarla.</strong>
         </div>
 
-        {estado === "idle" || estado === "consultando" ? (
+        {(estado === "idle" || estado === "consultando") && (
           <>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <div>
                 <label className="text-xs font-medium text-gray-600">Punto de venta</label>
                 <select value={puntoVenta} onChange={e=>setPuntoVenta(Number(e.target.value))} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
@@ -1681,7 +1732,12 @@ function SyncArcaModal({ clients, invoices, onClose, onImportar }) {
                   <option value="C">C (cód. 11)</option>
                 </select>
               </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">Desde fecha (opcional)</label>
+                <input type="date" value={fechaDesde} onChange={e=>setFechaDesde(e.target.value)} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+              </div>
             </div>
+            <p className="text-xs text-gray-500">Si poné fecha "desde", al cargar el preview pre-selecciona solo facturas posteriores a esa fecha.</p>
             <button
               onClick={consultarFaltantes}
               disabled={estado === "consultando"}
@@ -1690,7 +1746,7 @@ function SyncArcaModal({ clients, invoices, onClose, onImportar }) {
               {estado === "consultando" ? "⏳ Consultando ARCA..." : "🔍 Consultar últimos comprobantes"}
             </button>
           </>
-        ) : null}
+        )}
 
         {estado === "listo" && info && (
           <div className="space-y-2">
@@ -1699,20 +1755,20 @@ function SyncArcaModal({ clients, invoices, onClose, onImportar }) {
               <p>💾 <strong>Último guardado en RadioFact</strong>: <span className="font-mono font-bold">{info.ultimoLocal}</span></p>
               <p className={info.faltantes.length > 0 ? "text-amber-700 font-semibold" : "text-green-700 font-semibold"}>
                 {info.faltantes.length > 0
-                  ? `⚠️ Faltan ${info.faltantes.length} comprobante(s): ${info.faltantes.slice(0, 10).join(", ")}${info.faltantes.length > 10 ? "..." : ""}`
+                  ? `⚠️ Faltan ${info.faltantes.length} comprobante(s) en RadioFact: ${info.faltantes.slice(0, 10).join(", ")}${info.faltantes.length > 10 ? "..." : ""}`
                   : "✅ Todo sincronizado"}
               </p>
             </div>
             {info.faltantes.length > 0 && (
               <button
-                onClick={importarFaltantes}
+                onClick={cargarPreview}
                 className="w-full px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-700"
               >
-                📥 Importar {info.faltantes.length} comprobante(s) de ARCA
+                👁️ Ver preview detallado de los {info.faltantes.length} comprobante(s)
               </button>
             )}
             <button
-              onClick={() => { setEstado("idle"); setInfo(null); }}
+              onClick={() => { setEstado("idle"); setInfo(null); setPreviewDatos([]); setSeleccionados(new Set()); }}
               className="w-full px-4 py-2 bg-gray-100 text-gray-700 text-sm rounded-lg hover:bg-gray-200"
             >
               Volver
@@ -1720,11 +1776,92 @@ function SyncArcaModal({ clients, invoices, onClose, onImportar }) {
           </div>
         )}
 
+        {estado === "preview" && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold">
+                {cargandoPreview ? `⏳ Cargando preview... (${previewDatos.length}/${info.faltantes.length})` : `✅ Revisá y elegí qué importar (${seleccionados.size} seleccionada/s de ${previewDatos.filter(d=>!d.error).length})`}
+              </span>
+              {!cargandoPreview && (
+                <div className="flex gap-2">
+                  <button onClick={seleccionarTodo} className="text-blue-600 hover:underline">Seleccionar todo</button>
+                  <span className="text-gray-300">|</span>
+                  <button onClick={deseleccionarTodo} className="text-gray-600 hover:underline">Ninguna</button>
+                </div>
+              )}
+            </div>
+
+            <div className="max-h-96 overflow-y-auto border border-gray-200 rounded-lg">
+              <table className="w-full text-xs">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th className="px-2 py-1.5 text-left">✓</th>
+                    <th className="px-2 py-1.5 text-left">Nº</th>
+                    <th className="px-2 py-1.5 text-left">Fecha</th>
+                    <th className="px-2 py-1.5 text-left">Cliente</th>
+                    <th className="px-2 py-1.5 text-right">Total</th>
+                    <th className="px-2 py-1.5 text-left">CAE</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {previewDatos.map(item => (
+                    <tr key={item.numero} className={`border-b border-gray-100 ${item.error ? "bg-red-50" : seleccionados.has(item.numero) ? "bg-blue-50" : ""}`}>
+                      <td className="px-2 py-1.5">
+                        {item.error ? (
+                          <span className="text-red-500">❌</span>
+                        ) : (
+                          <input
+                            type="checkbox"
+                            checked={seleccionados.has(item.numero)}
+                            onChange={() => toggleSeleccion(item.numero)}
+                          />
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5 font-mono">{item.numero}</td>
+                      <td className="px-2 py-1.5">
+                        {item.error ? "—" : fmtFechaArca(item.datos.fecha)}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        {item.error ? (
+                          <span className="text-red-600 text-[10px]">{item.error}</span>
+                        ) : item.cliente ? (
+                          item.cliente.razonSocial
+                        ) : (
+                          <span className="text-amber-600">CUIT no registrado</span>
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-medium">{!item.error ? fmtMoney(item.datos.importe_total) : "—"}</td>
+                      <td className="px-2 py-1.5 font-mono text-[10px]">{!item.error ? (item.datos.cae || "").slice(0, 12) + "..." : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setEstado("listo"); setPreviewDatos([]); setSeleccionados(new Set()); }}
+                disabled={cargandoPreview}
+                className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 text-sm rounded-lg hover:bg-gray-200 disabled:opacity-50"
+              >
+                Volver
+              </button>
+              <button
+                onClick={importarSeleccionadas}
+                disabled={cargandoPreview || seleccionados.size === 0}
+                className="flex-1 px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50"
+              >
+                📥 Importar {seleccionados.size} seleccionada(s)
+              </button>
+            </div>
+          </div>
+        )}
+
         {estado === "importando" && (
           <div className="space-y-2">
             <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs">
               <p>⏳ Importando comprobantes... {trayendo && <strong>(trayendo Nº {trayendo})</strong>}</p>
-              <p className="text-gray-500 mt-1">Procesados: {importadas.length} de {info.faltantes.length}</p>
+              <p className="text-gray-500 mt-1">Procesados: {importadas.length} de {seleccionados.size}</p>
             </div>
           </div>
         )}
