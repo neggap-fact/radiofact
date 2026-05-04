@@ -870,6 +870,7 @@ export default function App() {
     try{ localStorage.setItem("radiofact-v3", JSON.stringify(data)); }catch(e){}
   },[]);
 
+  // Carga inicial: users/contracts/config desde localStorage, gastos desde Supabase
   useEffect(()=>{
     try{
       const raw = localStorage.getItem("radiofact-v3");
@@ -877,18 +878,35 @@ export default function App() {
         const d = JSON.parse(raw);
         if(d.users) setUsers(d.users);
         if(d.contracts) setContracts(d.contracts);
-        if(d.expenses) setExpenses(d.expenses);
+        // d.expenses ya no se restaura — ahora vienen de Supabase
         if(d.config) setConfig(d.config);
       }
       const savedUser = localStorage.getItem("radiofact-session");
       if(savedUser) setCurrentUser(JSON.parse(savedUser));
     }catch(e){}
+
+    // Cargar gastos desde Supabase
+    supabase.from("gastos").select("*").order("fecha", { ascending: false }).then(({ data, error }) => {
+      if(error){ console.error("Error cargando gastos:", error); return; }
+      if(data) setExpenses(data.map(g => ({
+        id:              g.id,
+        descripcion:     g.descripcion || "",
+        categoria:       g.categoria || "Otros",
+        monto:           parseFloat(g.monto) || 0,
+        fecha:           g.fecha || "",
+        proveedor:       g.proveedor || "",
+        comprobante:     g.comprobante || "",
+        url_comprobante: g.url_comprobante || "",
+        pagado:          g.pagado !== false,
+        notas:           g.notas || "",
+      })));
+    });
   },[]);
 
   useEffect(()=>{
     if(!currentUser) return;
-    save({users,contracts,expenses,config});
-  },[users,contracts,expenses,config]);
+    save({users,contracts,config}); // expenses ya no va a localStorage
+  },[users,contracts,config]);
 
   const handleLogin = ()=>{
     const u = users.find(u=>u.email===loginForm.email&&u.password===loginForm.password&&u.active);
@@ -1232,9 +1250,48 @@ function Clients({clients,setClients,contracts,invoices,currentUser,canEdit,regi
   );
 }
 
+// Mapea la descripción de condición IVA que devuelve ARCA al valor que usa el sistema
+function mapCondicionIVA(desc) {
+  const d = (desc || "").toLowerCase();
+  if (d.includes("responsable inscripto") || d.includes("resp. inscripto")) return "Responsable Inscripto";
+  if (d.includes("monotribut")) return "Monotributista";
+  if (d.includes("exento") || d.includes("exenta")) return "Exento";
+  if (d.includes("consumidor")) return "Consumidor Final";
+  return desc; // devolver tal cual si no matchea
+}
+
 function ClientModal({data,onSave,onClose}){
   const [form,setForm]=useState(data);
+  const [padronLoading,setPadronLoading]=useState(false);
+  const [padronError,setPadronError]=useState("");
   const f=k=>e=>setForm(p=>({...p,[k]:e.target.value}));
+
+  const consultarPadron = async () => {
+    const cuitLimpio = (form.cuit||"").replace(/[-\s]/g,"");
+    if(cuitLimpio.length < 10){ setPadronError("CUIT inválido"); return; }
+    setPadronLoading(true); setPadronError("");
+    try {
+      const res = await fetch(`${BACKEND_URL}/padron-a5`, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({cuit: cuitLimpio})
+      });
+      const data = await res.json();
+      if(data.exito){
+        setForm(p=>({
+          ...p,
+          razonSocial: data.razon_social || p.razonSocial,
+          domicilio:   data.domicilio   || p.domicilio,
+          condicionIVA: data.condicion_iva && data.condicion_iva !== "No determinada"
+            ? mapCondicionIVA(data.condicion_iva)
+            : p.condicionIVA,
+        }));
+      } else {
+        setPadronError(data.error || "Error consultando ARCA");
+      }
+    } catch(e){ setPadronError("Error de conexión con el backend"); }
+    finally{ setPadronLoading(false); }
+  };
+
   return(
     <Modal title={form.id?"Editar cliente":"Nuevo cliente"} onClose={onClose}>
       <div className="grid grid-cols-2 gap-3">
@@ -1243,7 +1300,19 @@ function ClientModal({data,onSave,onClose}){
           <Field label="Alias / Nombre comercial (opcional)" value={form.alias||""} onChange={f("alias")}/>
           <p className="text-xs text-gray-400 mt-1">Solo para uso interno. No aparece en la factura ni se envía a ARCA. Útil cuando el cliente tiene un nombre comercial distinto al fiscal.</p>
         </div>
-        <Field label="CUIT" value={form.cuit} onChange={f("cuit")} placeholder="30-12345678-9"/>
+        <div>
+          <label className="text-xs font-medium text-gray-600">CUIT</label>
+          <div className="flex gap-2 mt-1">
+            <input value={form.cuit} onChange={f("cuit")} placeholder="30-12345678-9"
+              className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+            <button type="button" onClick={consultarPadron} disabled={padronLoading}
+              className="px-3 py-2 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
+              title="Autocompletar razón social, domicilio y condición IVA desde el padrón de ARCA">
+              {padronLoading ? "⏳" : "🔍 ARCA"}
+            </button>
+          </div>
+          {padronError && <p className="text-xs text-red-500 mt-1">{padronError}</p>}
+        </div>
         <Field label="Teléfono" value={form.telefono} onChange={f("telefono")}/>
         <div className="col-span-2"><Field label="Domicilio" value={form.domicilio} onChange={f("domicilio")}/></div>
         <div>
@@ -2400,15 +2469,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
         </select>
         <span className="text-xs text-gray-500">Período: <strong>{MONTHS[billMonth-1]} {billYear}</strong></span>
         <div className="ml-auto flex gap-2">
-          {canEdit && (
-            <button
-              onClick={()=>setSyncModal(true)}
-              className="flex items-center gap-2 bg-white border border-purple-300 text-purple-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-purple-50"
-              title="Consultar a ARCA y traer facturas emitidas que no estén en RadioFact"
-            >
-              <Icon d={Icons.refresh || Icons.download} size={14}/>Sincronizar ARCA
-            </button>
-          )}
+
           {canEdit && (
             <button
               onClick={()=>setManualModal(true)}
@@ -3400,13 +3461,35 @@ function Expenses({expenses,setExpenses,currentUser,canEdit}){
   const [confirmDelete, setConfirmDelete] = useState(null);
   const isWebmaster = currentUser?.role === "webmaster";
 
-  const empty={descripcion:"",categoria:"Proveedores",monto:"",fecha:todayStr(),proveedor:"",comprobante:"",pagado:true,notas:""};
+  const empty={descripcion:"",categoria:"Proveedores",monto:"",fecha:todayStr(),proveedor:"",comprobante:"",url_comprobante:"",pagado:true,notas:""};
   const filtered=expenses.filter(e=>{const d=new Date(e.fecha);return(!fMonth||d.getMonth()+1===Number(fMonth))&&(!fYear||d.getFullYear()===Number(fYear))&&(!fCat||e.categoria===fCat);});
-  const save=(data)=>{
-    const d={...data,monto:parseFloat(data.monto)||0};
-    if(d.id) setExpenses(prev=>prev.map(e=>e.id===d.id?d:e));
-    else setExpenses(prev=>[...prev,{...d,id:`ex-${Date.now()}`}]);
+  const [saving, setSaving] = useState(false);
+  const save = async (data) => {
+    setSaving(true);
+    const d = { ...data, monto: parseFloat(data.monto) || 0 };
+    const payload = {
+      descripcion:      d.descripcion,
+      categoria:        d.categoria,
+      monto:            d.monto,
+      fecha:            d.fecha,
+      proveedor:        d.proveedor || null,
+      comprobante:      d.comprobante || null,
+      url_comprobante:  d.url_comprobante || null,
+      pagado:           d.pagado !== false,
+      notas:            d.notas || null,
+    };
+    const esUUID = d.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(d.id);
+    if (esUUID) {
+      const { error } = await supabase.from("gastos").update(payload).eq("id", d.id);
+      if (error) { alert("Error guardando gasto: " + error.message); setSaving(false); return; }
+      setExpenses(prev => prev.map(e => e.id === d.id ? { ...d, ...payload } : e));
+    } else {
+      const { data: inserted, error } = await supabase.from("gastos").insert([payload]).select().single();
+      if (error) { alert("Error guardando gasto: " + error.message); setSaving(false); return; }
+      setExpenses(prev => [...prev, { ...payload, id: inserted.id }]);
+    }
     setModal(null);
+    setSaving(false);
   };
 
   // Borrar gasto individual
@@ -3415,7 +3498,12 @@ function Expenses({expenses,setExpenses,currentUser,canEdit}){
       tipo: "uno",
       titulo: "¿Borrar este gasto?",
       mensaje: `Vas a borrar el gasto: "${gasto.descripcion}" por ${fmtMoney(gasto.monto)}.`,
-      action: () => {
+      action: async () => {
+        const esUUID = gasto.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(gasto.id);
+        if (esUUID) {
+          const { error } = await supabase.from("gastos").delete().eq("id", gasto.id);
+          if (error) { alert("Error borrando gasto: " + error.message); return; }
+        }
         setExpenses(prev => prev.filter(e => e.id !== gasto.id));
         setConfirmDelete(null);
       },
@@ -3434,7 +3522,14 @@ function Expenses({expenses,setExpenses,currentUser,canEdit}){
       titulo: `¿Borrar TODOS los gastos de ${periodo}?`,
       mensaje: `Vas a borrar ${filtered.length} gasto(s) por un total de ${fmtMoney(totFiltered)}.`,
       advertencia: "Esta acción es irreversible. No queda copia en ningún lado.",
-      action: () => {
+      action: async () => {
+        const idsUUID = filtered.map(e => e.id).filter(id =>
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+        );
+        if (idsUUID.length > 0) {
+          const { error } = await supabase.from("gastos").delete().in("id", idsUUID);
+          if (error) { alert("Error borrando gastos: " + error.message); return; }
+        }
         const idsABorrar = new Set(filtered.map(e => e.id));
         setExpenses(prev => prev.filter(e => !idsABorrar.has(e.id)));
         setConfirmDelete(null);
@@ -3487,7 +3582,17 @@ function Expenses({expenses,setExpenses,currentUser,canEdit}){
                 <td className="px-3 py-2.5 text-xs font-medium">{e.descripcion}</td>
                 <td className="px-3 py-2.5"><span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-xs">{e.categoria}</span></td>
                 <td className="px-3 py-2.5 text-xs text-gray-500">{e.proveedor||"—"}</td>
-                <td className="px-3 py-2.5 text-xs font-mono text-gray-400">{e.comprobante||"—"}</td>
+                <td className="px-3 py-2.5 text-xs font-mono text-gray-400">
+                  <div className="flex items-center gap-1">
+                    <span>{e.comprobante||"—"}</span>
+                    {e.url_comprobante && (
+                      <a href={e.url_comprobante} target="_blank" rel="noopener noreferrer"
+                        className="text-blue-500 hover:text-blue-700" title="Ver comprobante">
+                        🔗
+                      </a>
+                    )}
+                  </div>
+                </td>
                 <td className="px-3 py-2.5 text-xs font-semibold text-red-600">{fmtMoney(e.monto)}</td>
                 <td className="px-3 py-2.5"><span className={`text-xs px-2 py-0.5 rounded-full ${e.pagado?"bg-green-50 text-green-700":"bg-amber-50 text-amber-700"}`}>{e.pagado?"Pagado":"Pendiente"}</span></td>
                 <td className="px-3 py-2.5">
@@ -3534,6 +3639,25 @@ function ExpenseModal({data,onSave,onClose}){
         <Field label="Fecha" value={form.fecha} onChange={f("fecha")} type="date"/>
         <Field label="Proveedor / Beneficiario" value={form.proveedor} onChange={f("proveedor")}/>
         <Field label="N° Comprobante" value={form.comprobante} onChange={f("comprobante")}/>
+        <div className="col-span-2">
+          <label className="text-xs font-medium text-gray-600">Link al comprobante (Drive, foto, etc.)</label>
+          <div className="flex gap-2 mt-1">
+            <input
+              type="url"
+              value={form.url_comprobante || ""}
+              onChange={f("url_comprobante")}
+              placeholder="https://drive.google.com/..."
+              className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"
+            />
+            {form.url_comprobante && (
+              <a href={form.url_comprobante} target="_blank" rel="noopener noreferrer"
+                className="px-3 py-2 bg-blue-50 border border-blue-200 text-blue-700 rounded-lg text-sm hover:bg-blue-100"
+                title="Abrir link">
+                🔗 Ver
+              </a>
+            )}
+          </div>
+        </div>
         <div className="col-span-2"><Field label="Notas" value={form.notas} onChange={f("notas")}/></div>
         <div className="col-span-2 flex items-center gap-2">
           <input type="checkbox" checked={form.pagado} onChange={e=>setForm(p=>({...p,pagado:e.target.checked}))} id="ex-pag"/>
@@ -3984,7 +4108,17 @@ function Reports({clients,contracts,invoices,expenses}){
                       <td className="px-3 py-2.5 text-xs font-medium">{e.descripcion}</td>
                       <td className="px-3 py-2.5"><span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-xs">{e.categoria}</span></td>
                       <td className="px-3 py-2.5 text-xs text-gray-500">{e.proveedor||"—"}</td>
-                      <td className="px-3 py-2.5 text-xs font-mono text-gray-400">{e.comprobante||"—"}</td>
+                      <td className="px-3 py-2.5 text-xs font-mono text-gray-400">
+                  <div className="flex items-center gap-1">
+                    <span>{e.comprobante||"—"}</span>
+                    {e.url_comprobante && (
+                      <a href={e.url_comprobante} target="_blank" rel="noopener noreferrer"
+                        className="text-blue-500 hover:text-blue-700" title="Ver comprobante">
+                        🔗
+                      </a>
+                    )}
+                  </div>
+                </td>
                       <td className="px-3 py-2.5 text-xs font-semibold text-red-600">{fmtMoney(e.monto)}</td>
                       <td className="px-3 py-2.5"><span className={`text-xs px-2 py-0.5 rounded-full ${e.pagado?"bg-green-50 text-green-700":"bg-amber-50 text-amber-700"}`}>{e.pagado?"Pagado":"Pendiente"}</span></td>
                     </tr>
