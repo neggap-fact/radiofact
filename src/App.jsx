@@ -485,7 +485,8 @@ export default function App() {
             fch_serv_hasta: f.fch_serv_hasta ? f.fch_serv_hasta.replace(/-/g,"") : "",
             fch_vto_pago:   f.fch_vto_pago   ? f.fch_vto_pago.replace(/-/g,"")   : "",
             nc_id: f.nc_id || null,
-            emailEnviado: false,
+            emailEnviado: f.email_enviado === true,
+            emailEnviadoFecha: f.email_enviado_fecha || null,
             fecha: f.fecha_emision ? f.fecha_emision.replace(/-/g,"") : "",
           };
         }));
@@ -555,8 +556,13 @@ export default function App() {
     };
     console.log("Guardando factura en Supabase:", payload);
     const {data, error} = await supabase.from("facturas").insert(payload).select();
-    if(error) console.error("Error Supabase al guardar factura:", error);
-    else console.log("Factura guardada OK:", data);
+    if(error) {
+      console.error("Error Supabase al guardar factura:", error);
+      return null;
+    }
+    console.log("Factura guardada OK:", data);
+    // Devolver el UUID real generado por Supabase para reemplazar el id local
+    return data && data[0] ? data[0].id : null;
   };
 
   const descargarPDF = async (inv) => {
@@ -689,6 +695,23 @@ export default function App() {
       nc_id: ncId,
     }).eq("id", facturaId);
     if(error) console.error("Error marcando factura como Anulada:", error);
+  };
+
+  // ── MARCAR EMAIL COMO ENVIADO EN SUPABASE ─────────────────────────────────
+  // Persiste el flag email_enviado = true + timestamp para que sobreviva recargas.
+  // Devuelve true si se actualizó correctamente, false si falló (no bloquea el flujo).
+  const marcarEmailEnviadoSupabase = async (facturaId) => {
+    if (!facturaId) return false;
+    const ahora = new Date().toISOString();
+    const { error } = await supabase.from("facturas").update({
+      email_enviado: true,
+      email_enviado_fecha: ahora,
+    }).eq("id", facturaId);
+    if (error) {
+      console.error("Error marcando email_enviado en Supabase:", error);
+      return false;
+    }
+    return true;
   };
 
   // ── EMITIR NOTA DE CRÉDITO (proceso completo) ────────────────────────────
@@ -1675,7 +1698,9 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
           inv.estado = "Emitida";
           inv.fecha = data.datos.fecha;
           inv.clientCuit = client.cuit;
-          await guardarFacturaSupabase(inv, ct.clientId);
+          await guardarFacturaSupabase(inv, ct.clientId).then(uuid => {
+            if (uuid) inv.id = uuid;
+          });
         } else {
           inv.estado = "Borrador";
           inv.error = data.error;
@@ -1833,7 +1858,11 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
                     )}
                   </td>
                   <td className="px-3 py-2.5">
-                    <button onClick={()=>setEmailModal(inv)} className={`${inv.emailEnviado?"text-green-500":"text-gray-400 hover:text-blue-600"}`}>
+                    <button
+                      onClick={()=>setEmailModal(inv)}
+                      title={inv.emailEnviado ? `Email enviado${inv.emailEnviadoFecha?` el ${new Date(inv.emailEnviadoFecha).toLocaleDateString("es-AR")} ${new Date(inv.emailEnviadoFecha).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"})}`:""}. Click para reenviar.` : "Enviar por email"}
+                      className={`${inv.emailEnviado?"text-green-500":"text-gray-400 hover:text-blue-600"}`}
+                    >
                       <Icon d={Icons.mail} size={14}/>
                     </button>
                   </td>
@@ -1875,7 +1904,14 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
           onClose={()=>setEditContractModal(null)}
         />
       )}
-      {emailModal&&<EmailModal invoice={emailModal} config={config} clients={clients} onClose={()=>setEmailModal(null)} onSent={()=>{updateInvoice(emailModal.id,{emailEnviado:true});setEmailModal(null);}}/>}
+      {emailModal&&<EmailModal invoice={emailModal} config={config} clients={clients} onClose={()=>setEmailModal(null)} onSent={async()=>{
+        // Actualizar state local inmediatamente para feedback visual
+        const ahora = new Date().toISOString();
+        updateInvoice(emailModal.id,{emailEnviado:true,emailEnviadoFecha:ahora});
+        // Persistir en Supabase para que sobreviva recargas
+        await marcarEmailEnviadoSupabase(emailModal.id);
+        setEmailModal(null);
+      }}/>}
       {ncModal && (
         <EmitirNCModal
           factura={ncModal}
@@ -3503,7 +3539,9 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
           emailEnviado: false,
         };
 
-        await guardarFacturaSupabase(inv, clientId);
+        await guardarFacturaSupabase(inv, clientId).then(uuid => {
+          if (uuid) inv.id = uuid;
+        });
         setInvoices(prev=>[inv,...prev]);
         // Guardamos email y cuit ANTES de limpiar el form
         const clientEmail = form.email;
