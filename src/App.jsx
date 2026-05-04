@@ -396,6 +396,7 @@ export default function App() {
           condicionIVA: c.condicion_iva,
           tipoFactura: c.tipo_factura,
           email: c.email,
+          emailsAdicionales: c.emails_adicionales || "",
           telefono: c.telefono || "",
           active: c.activo !== false,
         })));
@@ -714,6 +715,41 @@ export default function App() {
     return true;
   };
 
+  // ── REGISTRAR EMAIL ENVIADO EN HISTORIAL ─────────────────────────────────
+  // Guarda en tabla emails_enviados para auditoría/trazabilidad.
+  const registrarEmailEnHistorial = async ({ cliente_id, destinatarios, asunto, cuerpo, tipo, exito, error_msg }) => {
+    const { error } = await supabase.from("emails_enviados").insert({
+      cliente_id: cliente_id || null,
+      destinatarios: Array.isArray(destinatarios) ? destinatarios : [destinatarios],
+      asunto,
+      cuerpo,
+      tipo: tipo || "libre",
+      exito: exito !== false,
+      error_msg: error_msg || null,
+    });
+    if (error) {
+      console.error("Error registrando email en historial:", error);
+      return false;
+    }
+    return true;
+  };
+
+  // ── ACTUALIZAR EMAILS DEL CLIENTE ─────────────────────────────────────────
+  // Actualiza email principal y/o emails adicionales en Supabase + state local.
+  const actualizarEmailsCliente = async (clienteId, emailPrincipal, emailsAdicionales) => {
+    if (!clienteId) return false;
+    const { error } = await supabase.from("clientes").update({
+      email: emailPrincipal,
+      emails_adicionales: emailsAdicionales || null,
+    }).eq("id", clienteId);
+    if (error) {
+      console.error("Error actualizando emails del cliente:", error);
+      return false;
+    }
+    setClients(prev => prev.map(c => c.id === clienteId ? { ...c, email: emailPrincipal, emailsAdicionales: emailsAdicionales || "" } : c));
+    return true;
+  };
+
   // ── EMITIR NOTA DE CRÉDITO (proceso completo) ────────────────────────────
   // Esta es la función que se llama desde CreditNotes Y desde el botón "Anular con NC"
   // del listado de facturas. Devuelve true si todo salió bien, false si falló.
@@ -910,7 +946,7 @@ export default function App() {
         </header>
         <main className="flex-1 overflow-y-auto p-5">
           {page==="dashboard"&&<Dashboard clients={clients} contracts={contracts} invoices={invoices} expenses={expenses} notifications={notifications} setPage={setPage}/>}
-          {page==="clients"&&<Clients clients={clients} setClients={setClients} contracts={contracts} invoices={invoices} currentUser={currentUser} canEdit={canEdit}/>}
+          {page==="clients"&&<Clients clients={clients} setClients={setClients} contracts={contracts} invoices={invoices} currentUser={currentUser} canEdit={canEdit} registrarEmailEnHistorial={registrarEmailEnHistorial}/>}
           {page==="contracts"&&<Contracts contracts={contracts} setContracts={setContracts} clients={clients} invoices={invoices} currentUser={currentUser} canEdit={canEdit}/>}
           {/* FIX 1: agregado guardarFacturaSupabase como prop */}
           {page==="billing"&&<Billing clients={clients} contracts={contracts} setContracts={setContracts} invoices={invoices} setInvoices={setInvoices} notifications={notifications} setNotifications={setNotifications} config={config} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase} emitirNotaCredito={emitirNotaCredito}/>}
@@ -1049,14 +1085,15 @@ function Dashboard({clients,contracts,invoices,expenses,notifications,setPage}){
   );
 }
 
-function Clients({clients,setClients,contracts,invoices,currentUser,canEdit}){
+function Clients({clients,setClients,contracts,invoices,currentUser,canEdit,registrarEmailEnHistorial}){
   const [modal,setModal]=useState(null);
   const [search,setSearch]=useState("");
   const [confirmDelete, setConfirmDelete] = useState(null); // { cliente, deps, blocked }
   const [deleting, setDeleting] = useState(false);
+  const [emailLibreModal, setEmailLibreModal] = useState(null);
   const isWebmaster = currentUser?.role === "webmaster";
 
-  const empty={razonSocial:"",alias:"",cuit:"",domicilio:"",condicionIVA:"Responsable Inscripto",tipoFactura:"A",email:"",telefono:"",active:true};
+  const empty={razonSocial:"",alias:"",cuit:"",domicilio:"",condicionIVA:"Responsable Inscripto",tipoFactura:"A",email:"",emailsAdicionales:"",telefono:"",active:true};
   const filtered=clients.filter(c=>
     c.razonSocial.toLowerCase().includes(search.toLowerCase()) ||
     (c.alias||"").toLowerCase().includes(search.toLowerCase()) ||
@@ -1071,6 +1108,7 @@ function Clients({clients,setClients,contracts,invoices,currentUser,canEdit}){
       condicion_iva: data.condicionIVA,
       tipo_factura: data.tipoFactura,
       email: data.email,
+      emails_adicionales: data.emailsAdicionales || null,
       telefono: data.telefono || "",
       activo: data.active !== false,
     };
@@ -1143,6 +1181,7 @@ function Clients({clients,setClients,contracts,invoices,currentUser,canEdit}){
                 <td className="px-3 py-2.5"><span className={`px-2 py-0.5 rounded-full text-xs ${c.active?"bg-green-50 text-green-700":"bg-gray-100 text-gray-400"}`}>{c.active?"Activo":"Inactivo"}</span></td>
                 <td className="px-3 py-2.5">
                   <div className="flex items-center gap-2">
+                    {c.email && canEdit && <button onClick={()=>setEmailLibreModal(c)} className="text-gray-400 hover:text-blue-600" title={`Enviar email a ${c.razonSocial}`}><Icon d={Icons.mail} size={14}/></button>}
                     {canEdit&&<button onClick={()=>setModal(c)} className="text-gray-400 hover:text-blue-600" title="Editar"><Icon d={Icons.edit} size={14}/></button>}
                     {isWebmaster&&<button onClick={()=>askDelete(c)} className="text-gray-400 hover:text-red-600" title="Borrar"><Icon d={Icons.trash} size={14}/></button>}
                   </div>
@@ -1154,6 +1193,14 @@ function Clients({clients,setClients,contracts,invoices,currentUser,canEdit}){
         {filtered.length===0&&<div className="text-center py-8 text-gray-400 text-sm">Sin clientes</div>}
       </div>
       {modal&&<ClientModal data={modal} onSave={save} onClose={()=>setModal(null)}/>}
+      {emailLibreModal && (
+        <EmailLibreModal
+          cliente={emailLibreModal}
+          onClose={() => setEmailLibreModal(null)}
+          registrarEnHistorial={registrarEmailEnHistorial}
+          onEnviado={() => alert("✅ Email enviado correctamente")}
+        />
+      )}
       {confirmDelete && (
         <ConfirmDeleteModal
           titulo={confirmDelete.blocked ? "No se puede borrar" : "¿Borrar cliente?"}
@@ -1199,7 +1246,18 @@ function ClientModal({data,onSave,onClose}){
             <option>A</option><option>B</option>
           </select>
         </div>
-        <div className="col-span-2"><Field label="Email" value={form.email} onChange={f("email")} type="email"/></div>
+        <div className="col-span-2"><Field label="Email principal" value={form.email} onChange={f("email")} type="email"/></div>
+        <div className="col-span-2">
+          <label className="text-xs font-medium text-gray-600">Emails adicionales (opcional)</label>
+          <input
+            type="text"
+            value={form.emailsAdicionales || ""}
+            onChange={f("emailsAdicionales")}
+            placeholder="contador@empresa.com, administracion@empresa.com"
+            className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"
+          />
+          <p className="text-xs text-gray-400 mt-1">Separá con coma o punto y coma. Se enviarán las facturas a todos estos emails además del principal.</p>
+        </div>
         <div className="col-span-2 flex items-center gap-2">
           <input type="checkbox" checked={form.active} onChange={e=>setForm(p=>({...p,active:e.target.checked}))} id="cl-act"/>
           <label htmlFor="cl-act" className="text-sm text-gray-600">Cliente activo</label>
@@ -1904,12 +1962,22 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
           onClose={()=>setEditContractModal(null)}
         />
       )}
-      {emailModal&&<EmailModal invoice={emailModal} config={config} clients={clients} onClose={()=>setEmailModal(null)} onSent={async()=>{
+      {emailModal&&<EmailModal invoice={emailModal} config={config} clients={clients} onClose={()=>setEmailModal(null)} onGuardarEmailsAdicionales={actualizarEmailsCliente} onSent={async(destinatariosEnviados)=>{
         // Actualizar state local inmediatamente para feedback visual
         const ahora = new Date().toISOString();
         updateInvoice(emailModal.id,{emailEnviado:true,emailEnviadoFecha:ahora});
         // Persistir en Supabase para que sobreviva recargas
         await marcarEmailEnviadoSupabase(emailModal.id);
+        // Registrar en historial
+        await registrarEmailEnHistorial({
+          cliente_id: emailModal.clientId,
+          factura_id: emailModal.id,
+          destinatarios: destinatariosEnviados || [emailModal.clientEmail],
+          asunto: `Factura ${emailModal.numero} — ${emailModal.periodo}`,
+          cuerpo: "(envío de factura con PDF adjunto)",
+          tipo: "factura",
+          exito: true,
+        });
         setEmailModal(null);
       }}/>}
       {ncModal && (
@@ -2318,15 +2386,170 @@ function ReviewModal({contracts,clients,billMonth,billYear,onApprove,onClose,onE
   );
 }
 
-function EmailModal({invoice,config,clients,onClose,onSent}){
+// ── ENVÍO DE EMAIL LIBRE (sin PDF) ────────────────────────────────────────
+// Para comunicaciones generales: avisos, cambios de cuenta, aumentos, etc.
+// El destinatario y los emails adicionales se autocompletan desde la ficha del cliente.
+function EmailLibreModal({ cliente, onClose, onEnviado, registrarEnHistorial }) {
+  const destinatariosIniciales = (() => {
+    const lista = [];
+    if (cliente?.email) lista.push(cliente.email);
+    if (cliente?.emailsAdicionales) {
+      cliente.emailsAdicionales.split(/[,;]/).map(s=>s.trim()).filter(Boolean).forEach(e => {
+        if (!lista.includes(e)) lista.push(e);
+      });
+    }
+    return lista.join(", ");
+  })();
+  const [destinatarios,setDestinatarios] = useState(destinatariosIniciales);
+  const [asunto,setAsunto] = useState("");
+  const [cuerpo,setCuerpo] = useState("");
+  const [sending,setSending] = useState(false);
+  const [error,setError] = useState("");
+
+  const send = async () => {
+    const dests = destinatarios.split(/[,;]/).map(s=>s.trim()).filter(Boolean);
+    if (dests.length === 0) { setError("Ingresá al menos un email"); return; }
+    const invalidos = dests.filter(e => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+    if (invalidos.length > 0) { setError("Email inválido: " + invalidos.join(", ")); return; }
+    if (!asunto.trim()) { setError("Falta el asunto"); return; }
+    if (!cuerpo.trim()) { setError("Falta el cuerpo del mensaje"); return; }
+
+    setSending(true);
+    setError("");
+    try {
+      const res = await fetch(`${BACKEND_URL}/enviar-email-libre`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          destinatarios: dests,
+          asunto,
+          cuerpo,
+          fromName: "LA VANGUARDIA NOTICIAS",
+        }),
+      });
+      const data = await res.json();
+      if (data.exito) {
+        // Registrar en historial
+        if (registrarEnHistorial) {
+          await registrarEnHistorial({
+            cliente_id: cliente?.id || null,
+            destinatarios: dests,
+            asunto,
+            cuerpo,
+            tipo: "libre",
+            exito: true,
+          });
+        }
+        onEnviado && onEnviado();
+        onClose();
+      } else {
+        setError(data.error || "Error al enviar");
+        if (registrarEnHistorial) {
+          await registrarEnHistorial({
+            cliente_id: cliente?.id || null,
+            destinatarios: dests,
+            asunto,
+            cuerpo,
+            tipo: "libre",
+            exito: false,
+            error_msg: data.error || "Error desconocido",
+          });
+        }
+      }
+    } catch (e) {
+      setError("Error de conexión: " + e.message);
+    }
+    setSending(false);
+  };
+
+  return (
+    <Modal title={`Enviar email a ${cliente?.razonSocial || "cliente"}`} onClose={onClose} wide>
+      <div className="space-y-3">
+        <div className="p-2 bg-blue-50 rounded text-xs text-blue-700">
+          ℹ️ Email general sin PDF adjunto (para avisos, cambios de cuenta, etc).
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600 block mb-1">
+            Para: <span className="font-normal text-gray-400">(separar con coma o punto y coma)</span>
+          </label>
+          <input
+            type="text"
+            value={destinatarios}
+            onChange={e => setDestinatarios(e.target.value)}
+            placeholder="cliente@empresa.com, contador@empresa.com"
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-300"
+          />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600 block mb-1">Asunto</label>
+          <input
+            type="text"
+            value={asunto}
+            onChange={e => setAsunto(e.target.value)}
+            placeholder="Ej: Aviso de cambio de cuenta bancaria"
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-300"
+          />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600 block mb-1">Mensaje</label>
+          <textarea
+            value={cuerpo}
+            onChange={e => setCuerpo(e.target.value)}
+            rows={9}
+            placeholder="Estimado/a,&#10;&#10;Le informamos que..."
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-300 resize-none"
+          />
+        </div>
+        {error && <p className="text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+      </div>
+      <div className="flex justify-end gap-2 mt-4">
+        <button onClick={onClose} disabled={sending} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg disabled:opacity-50">Cancelar</button>
+        <button onClick={send} disabled={sending} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2">
+          {sending ? "⏳ Enviando..." : <><Icon d={Icons.send} size={14}/>Enviar</>}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function EmailModal({invoice,config,clients,onClose,onSent,onGuardarEmailsAdicionales}){
   const body=config.emailTemplate.replace("{cliente}",invoice.clientName).replace("{numero}",invoice.numero).replace("{periodo}",invoice.periodo).replace("{total}",fmtMoney(invoice.total)).replace("{empresa}",config.empresa);
+  const client = clients?.find(c=>c.id===invoice.clientId);
+  // Construir destinatarios iniciales: email principal + emails adicionales del cliente
+  const destinatariosIniciales = (() => {
+    const lista = [];
+    if (client?.email) lista.push(client.email);
+    if (client?.emailsAdicionales) {
+      client.emailsAdicionales.split(/[,;]/).map(s=>s.trim()).filter(Boolean).forEach(e => {
+        if (!lista.includes(e)) lista.push(e);
+      });
+    }
+    if (lista.length === 0 && invoice.clientEmail) lista.push(invoice.clientEmail);
+    return lista.join(", ");
+  })();
+  const [destinatarios,setDestinatarios]=useState(destinatariosIniciales);
   const [msg,setMsg]=useState(body);
   const [sending,setSending]=useState(false);
   const [error,setError]=useState("");
-  const client = clients?.find(c=>c.id===invoice.clientId);
+
+  // Detectar si los emails actuales son distintos de los guardados en el cliente
+  const emailsCambiados = (() => {
+    const actuales = destinatarios.split(/[,;]/).map(s=>s.trim()).filter(Boolean).sort().join("|");
+    const guardados = (() => {
+      const lista = [];
+      if (client?.email) lista.push(client.email);
+      if (client?.emailsAdicionales) lista.push(...client.emailsAdicionales.split(/[,;]/).map(s=>s.trim()).filter(Boolean));
+      return lista.sort().join("|");
+    })();
+    return actuales !== guardados && actuales.length > 0;
+  })();
 
   const send=async()=>{
-    if(!invoice.clientEmail){ setError("Esta factura no tiene email del cliente"); return; }
+    const dests = destinatarios.split(/[,;]/).map(s=>s.trim()).filter(Boolean);
+    if (dests.length === 0) { setError("Ingresá al menos un email"); return; }
+    // Validación básica de formato
+    const invalidos = dests.filter(e => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+    if (invalidos.length > 0) { setError("Email inválido: " + invalidos.join(", ")); return; }
     setSending(true);
     setError("");
     try {
@@ -2351,17 +2574,29 @@ function EmailModal({invoice,config,clients,onClose,onSent}){
           empresa: config.empresa || "LA VANGUARDIA NOTICIAS",
           empresaCuit: config.cuit || "30-71644424-0",
           empresaDomicilio: config.domicilio || "Gobernador Gregores 1370, Caleta Olivia",
-          // Fechas de servicio para el PDF
           fch_serv_desde: invoice.fch_serv_desde || "",
           fch_serv_hasta: invoice.fch_serv_hasta || "",
           fch_vto_pago:   invoice.fch_vto_pago   || "",
-          emailDestino: invoice.clientEmail,
+          emailDestino: dests,
           emailAsunto: `Factura ${invoice.numero} — ${invoice.periodo}`,
           emailCuerpo: msg,
         }),
       });
       const data = await res.json();
-      if(data.exito){ onSent(); }
+      if(data.exito){
+        // Si los emails cambiaron, ofrecer guardarlos en la ficha del cliente
+        if (emailsCambiados && client && onGuardarEmailsAdicionales) {
+          const guardar = window.confirm(
+            `¿Querés guardar estos emails en la ficha de ${client.razonSocial} para usarlos automáticamente la próxima vez?\n\n` +
+            dests.join("\n")
+          );
+          if (guardar) {
+            // El primer email se guarda como principal; los demás como adicionales
+            await onGuardarEmailsAdicionales(client.id, dests[0], dests.slice(1).join(", "));
+          }
+        }
+        onSent(dests);
+      }
       else { setError(data.error || "Error al enviar"); }
     } catch(e) {
       setError("Error de conexión: " + e.message);
@@ -2371,8 +2606,17 @@ function EmailModal({invoice,config,clients,onClose,onSent}){
   return(
     <Modal title="Enviar factura por email" onClose={onClose} wide>
       <div className="space-y-3">
-        <div className="p-3 bg-gray-50 rounded-lg text-xs space-y-1">
-          <p><strong>Para:</strong> {invoice.clientEmail}</p>
+        <div className="p-3 bg-gray-50 rounded-lg text-xs space-y-2">
+          <div>
+            <label className="font-bold text-gray-700 block mb-1">Para: <span className="font-normal text-gray-400">(separar con coma o punto y coma para múltiples)</span></label>
+            <input
+              type="text"
+              value={destinatarios}
+              onChange={e=>setDestinatarios(e.target.value)}
+              placeholder="cliente@empresa.com, contador@empresa.com"
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-300"
+            />
+          </div>
           <p><strong>Asunto:</strong> Factura {invoice.numero} — {invoice.periodo}</p>
         </div>
         <div>
