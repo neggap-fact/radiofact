@@ -1301,15 +1301,15 @@ function ClientModal({data,onSave,onClose}){
           <Field label="Alias / Nombre comercial (opcional)" value={form.alias||""} onChange={f("alias")}/>
           <p className="text-xs text-gray-400 mt-1">Solo para uso interno. No aparece en la factura ni se envía a ARCA. Útil cuando el cliente tiene un nombre comercial distinto al fiscal.</p>
         </div>
-        <div>
+        <div className="col-span-2">
           <label className="text-xs font-medium text-gray-600">CUIT</label>
           <div className="flex gap-2 mt-1">
             <input value={form.cuit} onChange={f("cuit")} placeholder="30-12345678-9"
-              className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+              className="w-64 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
             <button type="button" onClick={consultarPadron} disabled={padronLoading}
-              className="px-3 py-2 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
               title="Autocompletar razón social, domicilio y condición IVA desde el padrón de ARCA">
-              {padronLoading ? "⏳" : "🔍 ARCA"}
+              {padronLoading ? "⏳ Consultando..." : "🔍 Validar en ARCA"}
             </button>
           </div>
           {padronError && <p className="text-xs text-red-500 mt-1">{padronError}</p>}
