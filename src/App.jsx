@@ -36,7 +36,7 @@ const BACKEND_URL = "https://radiofact-backend-production.up.railway.app";
 const DEBUG_MODE = false; // Cambiar a false para emitir facturas reales a ARCA
 
 const MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
-const EXPENSE_CATS = ["Sueldos","Gastos Fijos","Gastos Variables","Proveedores","Servicios","Impuestos","Alquiler","Otros"];
+const EXPENSE_CATS = ["Sueldos","Gastos Fijos","Gastos Variables","Gastos Externos","Proveedores","Servicios","Impuestos","Alquiler","Otros"];
 
 function fmtMoney(n) {
   return new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:0}).format(n||0);
@@ -1084,13 +1084,11 @@ function Dashboard({clients,contracts,invoices,expenses,notifications,setPage}){
           </div>
         ))}
       </div>
-      <div className={`rounded-xl border p-4 ${resultado>=0?"bg-green-50 border-green-200":"bg-red-50 border-red-200"}`}>
-        <p className="text-xs font-semibold text-gray-500 mb-2">Resultado {MONTHS[m-1]} {y}</p>
-        <div className="flex gap-6">
-          <div><p className="text-xs text-gray-400">Cobrado</p><p className="font-bold text-green-700">{fmtMoney(cobrado)}</p></div>
-          <div><p className="text-xs text-gray-400">Gastos</p><p className="font-bold text-red-600">{fmtMoney(totalGastos)}</p></div>
-          <div><p className="text-xs text-gray-400">Resultado neto</p><p className={`font-bold text-lg ${resultado>=0?"text-green-700":"text-red-600"}`}>{fmtMoney(resultado)}</p></div>
-        </div>
+      <div className="bg-white rounded-xl border border-gray-200 p-3 flex items-center gap-4 flex-wrap">
+        <span className="text-xs font-semibold text-gray-500">Gastos {MONTHS[m-1]} {y}:</span>
+        <span className="text-sm font-bold text-red-600">{fmtMoney(totalGastos)} pagados</span>
+        {gastosPendientes>0&&<span className="text-xs text-amber-600 font-medium">+ {fmtMoney(gastosPendientes)} pendientes</span>}
+        <span className="text-xs text-gray-400 ml-auto">Ver detalle completo en Reportes</span>
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div className="bg-white rounded-xl border border-gray-200 p-4">
@@ -3986,8 +3984,11 @@ function Reports({clients,contracts,invoices,expenses}){
     csv+=row("Total facturado",totFact)+nl;
     csv+=row("Total cobrado",totCob)+nl;
     csv+=row("Total adeudado",totAd)+nl;
-    csv+=row("Total gastos",totGastos)+nl;
-    csv+=row("RESULTADO NETO",resultado)+nl+nl;
+    csv+=row("Total gastos registrados",totGastos)+nl;
+    csv+=row("  del cual Gastos Externos",gastosExternos)+nl;
+    csv+=row("Ajuste adicional manual",(parseFloat(otrosGastosExtra)||0))+nl;
+    csv+=row("RESULTADO ESTIMADO",resultadoFinal)+nl;
+    csv+=row("(*) Solo orientativo","")+nl+nl;
     csv+=row("DETALLE DE FACTURAS")+nl;
     csv+=row("Número","Cliente","Alias","CUIT","Tipo","Período","Neto","IVA 10.5%","Total","Estado","CAE","Fecha Pago")+nl;
     filtInv.forEach(inv=>{const client=clients.find(c=>c.id===inv.clientId);csv+=row(inv.numero,inv.clientName,client?.alias||"",client?.cuit||"",inv.tipoFactura,inv.periodo,inv.neto,inv.iva,inv.total,inv.estado,inv.cae||"",inv.fechaPago||"")+nl;});
@@ -3998,7 +3999,9 @@ function Reports({clients,contracts,invoices,expenses}){
     csv+=nl+row("DETALLE DE GASTOS")+nl;
     csv+=row("Fecha","Descripción","Categoría","Proveedor","Comprobante","Monto","Estado")+nl;
     filtExp.forEach(e=>{csv+=row(e.fecha,e.descripcion,e.categoria,e.proveedor||"",e.comprobante||"",e.monto,e.pagado?"Pagado":"Pendiente")+nl;});
-    csv+=row("","","","","TOTAL GASTOS",totGastos)+nl;
+    csv+=row("","","","","TOTAL GASTOS REGISTRADOS",totGastos)+nl;
+    csv+=row("","","","","OTROS GASTOS",(parseFloat(otrosGastos)||0))+nl;
+    csv+=row("","","","","TOTAL GASTOS",totGastos+(parseFloat(otrosGastos)||0))+nl;
     const base64=btoa(unescape(encodeURIComponent(csv)));
     const a=document.createElement("a");
     a.href=`data:text/csv;charset=utf-8;base64,${base64}`;
@@ -4006,6 +4009,10 @@ function Reports({clients,contracts,invoices,expenses}){
     document.body.appendChild(a);a.click();document.body.removeChild(a);
   };
 
+  const [otrosGastosExtra, setOtrosGastosExtra] = useState(0); // ajuste manual adicional
+  const gastosExternos = filtExp.filter(e=>e.categoria==="Gastos Externos"&&e.pagado).reduce((s,e)=>s+e.monto,0);
+  const totalGastosReporte = totGastos + (parseFloat(otrosGastosExtra)||0);
+  const resultadoFinal = totCob - totalGastosReporte;
   const tabs=[{id:"facturas",label:"Facturas"},{id:"clientes",label:"Por cliente"},{id:"gastos",label:"Gastos"},{id:"iva",label:"Resumen IVA"}];
   return(
     <div className="space-y-4">
@@ -4027,13 +4034,48 @@ function Reports({clients,contracts,invoices,expenses}){
           {label:"Total facturado",value:fmtMoney(totFact),color:"blue"},
           {label:"Total cobrado",value:fmtMoney(totCob),color:"green"},
           {label:"IVA débito fiscal",value:fmtMoney(totIva),color:"orange"},
-          {label:"Resultado neto",value:fmtMoney(resultado),color:resultado>=0?"green":"red"},
+          {label:"Gastos registrados",value:fmtMoney(totGastos),color:"red"},
         ].map(s=>(
           <div key={s.label} className="bg-white rounded-xl border border-gray-200 p-3">
             <p className="text-xs text-gray-400">{s.label}</p>
             <p className={`font-bold text-base mt-0.5 ${s.color==="blue"?"text-blue-700":s.color==="orange"?"text-orange-600":s.color==="green"?"text-green-700":"text-red-600"}`}>{s.value}</p>
           </div>
         ))}
+      </div>
+      <div className="bg-gray-50 rounded-xl border border-gray-200 p-4">
+        <p className="text-xs font-semibold text-gray-500 mb-3">📊 Resultado orientativo del período</p>
+        <div className="flex items-end gap-6 flex-wrap">
+          <div><p className="text-xs text-gray-400">Cobrado</p><p className="font-bold text-green-700">{fmtMoney(totCob)}</p></div>
+          <div><p className="text-xs text-gray-400">Gastos registrados</p><p className="font-bold text-red-600">{fmtMoney(totGastos)}</p></div>
+          {gastosExternos>0&&(
+            <div>
+              <p className="text-xs text-gray-400">Gastos Externos</p>
+              <p className="font-bold text-red-500">{fmtMoney(gastosExternos)}</p>
+              <p className="text-xs text-gray-400">incluidos arriba</p>
+            </div>
+          )}
+          <div>
+            <p className="text-xs text-gray-400 mb-1">Ajuste adicional (opcional)</p>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-500">$</span>
+              <input
+                type="number"
+                value={otrosGastosExtra||""}
+                onChange={e=>setOtrosGastosExtra(e.target.value)}
+                placeholder="0"
+                className="w-32 px-2 py-1 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-blue-400"
+              />
+            </div>
+          </div>
+          <div className={`rounded-xl px-4 py-2 ${resultadoFinal>=0?"bg-green-50 border border-green-200":"bg-red-50 border border-red-200"}`}>
+            <p className="text-xs text-gray-500">Resultado estimado</p>
+            <p className={`font-bold text-lg ${resultadoFinal>=0?"text-green-700":"text-red-600"}`}>{fmtMoney(resultadoFinal)}</p>
+            <p className="text-xs text-gray-400 mt-0.5">Solo orientativo</p>
+          </div>
+        </div>
+        {gastosExternos===0&&(
+          <p className="text-xs text-gray-400 mt-3">💡 Cargá gastos de categoría <strong>Gastos Externos</strong> para registrar compras de equipos, impuestos bancarios, sellados, etc. Se suman automáticamente acá.</p>
+        )}
       </div>
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div className="flex border-b border-gray-200">
