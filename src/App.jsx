@@ -36,7 +36,7 @@ const BACKEND_URL = "https://radiofact-backend-production.up.railway.app";
 const DEBUG_MODE = false; // Cambiar a false para emitir facturas reales a ARCA
 
 const MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
-const EXPENSE_CATS = ["Proveedores","Personal","Servicios","Impuestos","Alquiler","Otros"];
+const EXPENSE_CATS = ["Sueldos","Gastos Fijos","Gastos Variables","Proveedores","Servicios","Impuestos","Alquiler","Otros"];
 
 function fmtMoney(n) {
   return new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:0}).format(n||0);
@@ -1051,7 +1051,8 @@ function Dashboard({clients,contracts,invoices,expenses,notifications,setPage}){
   const iibbDelMes = tot.iibb;
   const cobrado = mi.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+i.total,0);
   const adeudado = facturado - cobrado;
-  const totalGastos=me.reduce((s,e)=>s+e.monto,0);
+  const totalGastos=me.filter(e=>e.pagado).reduce((s,e)=>s+e.monto,0);
+  const gastosPendientes=me.filter(e=>!e.pagado).reduce((s,e)=>s+e.monto,0);
   const resultado=cobrado-totalGastos;
   const pendingNotifs=notifications.filter(n=>!n.read);
   return(
@@ -3462,7 +3463,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit}){
   const [confirmDelete, setConfirmDelete] = useState(null);
   const isWebmaster = currentUser?.role === "webmaster";
 
-  const empty={descripcion:"",categoria:"Proveedores",monto:"",fecha:todayStr(),proveedor:"",comprobante:"",url_comprobante:"",pagado:true,notas:""};
+  const empty={descripcion:"",categoria:"Gastos Fijos",monto:"",fecha:todayStr(),proveedor:"",comprobante:"",url_comprobante:"",pagado:true,notas:""};
   const filtered=expenses.filter(e=>{const d=new Date(e.fecha);return(!fMonth||d.getMonth()+1===Number(fMonth))&&(!fYear||d.getFullYear()===Number(fYear))&&(!fCat||e.categoria===fCat);});
   const [saving, setSaving] = useState(false);
   const save = async (data) => {
@@ -3538,7 +3539,20 @@ function Expenses({expenses,setExpenses,currentUser,canEdit}){
     });
   };
 
+  // Marcar/desmarcar pagado sin abrir el modal
+  const togglePagado = async (gasto) => {
+    const nuevoPagado = !gasto.pagado;
+    const esUUID = gasto.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(gasto.id);
+    if (esUUID) {
+      const { error } = await supabase.from("gastos").update({ pagado: nuevoPagado }).eq("id", gasto.id);
+      if (error) { alert("Error actualizando gasto: " + error.message); return; }
+    }
+    setExpenses(prev => prev.map(e => e.id === gasto.id ? { ...e, pagado: nuevoPagado } : e));
+  };
+
   const totFiltered=filtered.reduce((s,e)=>s+e.monto,0);
+  const totPagado=filtered.filter(e=>e.pagado).reduce((s,e)=>s+e.monto,0);
+  const totPendiente=filtered.filter(e=>!e.pagado).reduce((s,e)=>s+e.monto,0);
   const byCat=EXPENSE_CATS.map(cat=>({cat,total:filtered.filter(e=>e.categoria===cat).reduce((s,e)=>s+e.monto,0)})).filter(x=>x.total>0).sort((a,b)=>b.total-a.total);
   return(
     <div className="space-y-4">
@@ -3565,12 +3579,11 @@ function Expenses({expenses,setExpenses,currentUser,canEdit}){
           </button>
         )}
       </div>
-      {byCat.length>0&&(
-        <div className="grid grid-cols-4 gap-3">
-          {byCat.map(x=>(<div key={x.cat} className="bg-white rounded-xl border border-gray-200 p-3"><p className="text-xs text-gray-400">{x.cat}</p><p className="font-bold text-sm text-red-600">{fmtMoney(x.total)}</p></div>))}
-          <div className="bg-red-50 border border-red-200 rounded-xl p-3"><p className="text-xs text-red-500 font-medium">TOTAL</p><p className="font-bold text-sm text-red-700">{fmtMoney(totFiltered)}</p></div>
-        </div>
-      )}
+      <div className="grid grid-cols-4 gap-3">
+        {byCat.map(x=>(<div key={x.cat} className="bg-white rounded-xl border border-gray-200 p-3"><p className="text-xs text-gray-400">{x.cat}</p><p className="font-bold text-sm text-red-600">{fmtMoney(x.total)}</p></div>))}
+        <div className="bg-red-50 border border-red-200 rounded-xl p-3"><p className="text-xs text-red-500 font-medium">✓ Pagado</p><p className="font-bold text-sm text-red-700">{fmtMoney(totPagado)}</p></div>
+        {totPendiente>0&&<div className="bg-amber-50 border border-amber-200 rounded-xl p-3"><p className="text-xs text-amber-600 font-medium">⏳ Pendiente</p><p className="font-bold text-sm text-amber-700">{fmtMoney(totPendiente)}</p></div>}
+      </div>
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-200">
@@ -3595,7 +3608,14 @@ function Expenses({expenses,setExpenses,currentUser,canEdit}){
                   </div>
                 </td>
                 <td className="px-3 py-2.5 text-xs font-semibold text-red-600">{fmtMoney(e.monto)}</td>
-                <td className="px-3 py-2.5"><span className={`text-xs px-2 py-0.5 rounded-full ${e.pagado?"bg-green-50 text-green-700":"bg-amber-50 text-amber-700"}`}>{e.pagado?"Pagado":"Pendiente"}</span></td>
+                <td className="px-3 py-2.5">
+                  {e.pagado
+                    ? <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">✓ Pagado</span>
+                    : canEdit
+                      ? <button onClick={()=>togglePagado(e)} className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 font-medium" title="Marcar como pagado">⏳ Pendiente</button>
+                      : <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">⏳ Pendiente</span>
+                  }
+                </td>
                 <td className="px-3 py-2.5">
                   <div className="flex items-center gap-2">
                     {canEdit&&<button onClick={()=>setModal(e)} className="text-gray-400 hover:text-blue-600" title="Editar"><Icon d={Icons.edit} size={14}/></button>}
@@ -3943,7 +3963,8 @@ function Reports({clients,contracts,invoices,expenses}){
   const totIibb = totRep.iibb;
   const totCob=filtInv.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+i.total,0);
   const totAd=totFact-totCob;
-  const totGastos=filtExp.reduce((s,e)=>s+e.monto,0);
+  const totGastos=filtExp.filter(e=>e.pagado).reduce((s,e)=>s+e.monto,0);
+  const gastosPendFin=filtExp.filter(e=>!e.pagado).reduce((s,e)=>s+e.monto,0);
   const resultado=totCob-totGastos;
   const byClient=clients.map(c=>{
     const ci=filtInv.filter(i=>i.clientId===c.id);
@@ -4121,7 +4142,14 @@ function Reports({clients,contracts,invoices,expenses}){
                   </div>
                 </td>
                       <td className="px-3 py-2.5 text-xs font-semibold text-red-600">{fmtMoney(e.monto)}</td>
-                      <td className="px-3 py-2.5"><span className={`text-xs px-2 py-0.5 rounded-full ${e.pagado?"bg-green-50 text-green-700":"bg-amber-50 text-amber-700"}`}>{e.pagado?"Pagado":"Pendiente"}</span></td>
+                      <td className="px-3 py-2.5">
+                  {e.pagado
+                    ? <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">✓ Pagado</span>
+                    : canEdit
+                      ? <button onClick={()=>togglePagado(e)} className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 font-medium" title="Marcar como pagado">⏳ Pendiente</button>
+                      : <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">⏳ Pendiente</span>
+                  }
+                </td>
                     </tr>
                   ))}
               </tbody>
