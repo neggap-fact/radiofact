@@ -373,6 +373,7 @@ export default function App() {
   const [emailNCModal, setEmailNCModal] = useState(null);
   const [expenses, setExpenses] = useState(INIT_EXPENSES);
   const [plantillasGastos, setPlantillasGastos] = useState([]);
+  const [proveedores, setProveedores] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [page, setPage] = useState("dashboard");
   const [config, setConfig] = useState({
@@ -887,6 +888,11 @@ export default function App() {
       if(savedUser) setCurrentUser(JSON.parse(savedUser));
     }catch(e){}
 
+    // Cargar proveedores
+    supabase.from("proveedores").select("*").order("nombre").then(({ data }) => {
+      if (data) setProveedores(data);
+    });
+
     // Cargar plantillas de gastos
     supabase.from("plantillas_gastos").select("*").order("nombre").then(({ data }) => {
       if (data) setPlantillasGastos(data);
@@ -1004,7 +1010,7 @@ export default function App() {
               setEmailNCModal({ nc, factura, cliente: cli });
             }}
           />}
-          {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} currentUser={currentUser} canEdit={canEdit} plantillas={plantillasGastos} setPlantillas={setPlantillasGastos}/>}
+          {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} currentUser={currentUser} canEdit={canEdit} plantillas={plantillasGastos} setPlantillas={setPlantillasGastos} proveedores={proveedores} setProveedores={setProveedores}/>}
           {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses}/>}
           {page==="reports"&&<Reports clients={clients} contracts={contracts} invoices={invoices} expenses={expenses}/>}
           {page==="users"&&currentUser.role==="webmaster"&&<Users users={users} setUsers={setUsers} currentUser={currentUser}/>}
@@ -3472,9 +3478,10 @@ function EmailNCModal({ nc, factura, cliente, config, onClose, onSent }) {
   );
 }
 
-function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlantillas}){
+function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlantillas,proveedores,setProveedores}){
   const [modal,setModal]=useState(null);
   const [modalPlantillas,setModalPlantillas]=useState(false);
+  const [modalProveedores,setModalProveedores]=useState(false);
   const [fMonth,setFMonth]=useState(String(new Date().getMonth()+1));
   const [fYear,setFYear]=useState(String(new Date().getFullYear()));
   const [fCat,setFCat]=useState("");
@@ -3606,7 +3613,8 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
           <button onClick={()=>{setFSearch("");setFCat("");}} className="text-xs text-gray-400 hover:text-gray-600 underline">Limpiar filtros</button>
         )}
         {canEdit&&<>
-          <button onClick={()=>setModalPlantillas(true)} className="flex items-center gap-2 bg-white border border-gray-300 text-gray-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 ml-auto"><Icon d={Icons.settings} size={14}/>Plantillas</button>
+          <button onClick={()=>setModalProveedores(true)} className="flex items-center gap-2 bg-white border border-gray-300 text-gray-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 ml-auto"><Icon d={Icons.users} size={14}/>Proveedores</button>
+          <button onClick={()=>setModalPlantillas(true)} className="flex items-center gap-2 bg-white border border-gray-300 text-gray-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50"><Icon d={Icons.settings} size={14}/>Plantillas</button>
           <button onClick={()=>setModal(empty)} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"><Icon d={Icons.plus} size={14}/>Nuevo gasto</button>
         </>}
         {isWebmaster&&filtered.length>0&&(
@@ -3668,8 +3676,9 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
         </table>
         {filtered.length===0&&<div className="text-center py-8 text-gray-400 text-sm">Sin gastos</div>}
       </div>
+      {modalProveedores&&<ProveedoresModal proveedores={proveedores} setProveedores={setProveedores} onClose={()=>setModalProveedores(false)}/>}
       {modalPlantillas&&<PlantillasGastosModal plantillas={plantillas} setPlantillas={setPlantillas} onClose={()=>setModalPlantillas(false)}/>}
-      {modal&&<ExpenseModal data={modal} onSave={save} onClose={()=>setModal(null)} plantillas={plantillas}/>}
+      {modal&&<ExpenseModal data={modal} onSave={save} onClose={()=>setModal(null)} plantillas={plantillas} proveedores={proveedores}/>}
       {confirmDelete && (
         <ConfirmDeleteModal
           titulo={confirmDelete.titulo}
@@ -3684,7 +3693,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
   );
 }
 
-function ExpenseModal({data,onSave,onClose,plantillas=[]}){
+function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[]}){
   const [form,setForm]=useState(data);
   const f=k=>e=>setForm(p=>({...p,[k]:e.target.value}));
 
@@ -3725,7 +3734,21 @@ function ExpenseModal({data,onSave,onClose,plantillas=[]}){
         </div>
         <Field label="Monto ($)" value={form.monto} onChange={f("monto")} type="number"/>
         <Field label="Fecha" value={form.fecha} onChange={f("fecha")} type="date"/>
-        <Field label="Proveedor / Beneficiario" value={form.proveedor} onChange={f("proveedor")}/>
+        <div>
+          <label className="text-xs font-medium text-gray-600">Proveedor / Beneficiario</label>
+          {proveedores.length>0
+            ? <select value={form.proveedor||""} onChange={f("proveedor")}
+                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+                <option value="">— Sin proveedor —</option>
+                {proveedores.filter(p=>p.activo!==false).map(p=>(
+                  <option key={p.id} value={p.nombre}>{p.nombre}{p.cuit?" — "+p.cuit:""}</option>
+                ))}
+              </select>
+            : <input type="text" value={form.proveedor||""} onChange={f("proveedor")}
+                placeholder="Nombre del proveedor"
+                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+          }
+        </div>
         <Field label="N° Comprobante" value={form.comprobante} onChange={f("comprobante")}/>
         <div className="col-span-2">
           <label className="text-xs font-medium text-gray-600">Link al comprobante (Drive, foto, etc.)</label>
@@ -3746,6 +3769,81 @@ function ExpenseModal({data,onSave,onClose,plantillas=[]}){
         </div>
       </div>
       <ModalFooter onClose={onClose} onSave={()=>onSave(form)}/>
+    </Modal>
+  );
+}
+
+// ── MODAL GESTIÓN DE PROVEEDORES ────────────────────────────────────────────
+function ProveedoresModal({proveedores,setProveedores,onClose}){
+  const emptyP={nombre:"",cuit:"",categoria:"Gastos Fijos",telefono:"",email:"",notas:""};
+  const [form,setForm]=useState(emptyP);
+  const [editId,setEditId]=useState(null);
+  const [loading,setLoading]=useState(false);
+  const f=k=>e=>setForm(p=>({...p,[k]:e.target.value}));
+
+  const guardar = async () => {
+    if(!form.nombre.trim()){ alert("El nombre es obligatorio"); return; }
+    setLoading(true);
+    const payload={nombre:form.nombre.trim(),cuit:form.cuit||"",categoria:form.categoria,telefono:form.telefono||"",email:form.email||"",notas:form.notas||"",activo:true};
+    if(editId){
+      const {error}=await supabase.from("proveedores").update(payload).eq("id",editId);
+      if(error){alert("Error: "+error.message);setLoading(false);return;}
+      setProveedores(prev=>prev.map(p=>p.id===editId?{...p,...payload}:p));
+    } else {
+      const {data,error}=await supabase.from("proveedores").insert([payload]).select().single();
+      if(error){alert("Error: "+error.message);setLoading(false);return;}
+      setProveedores(prev=>[...prev,data]);
+    }
+    setForm(emptyP);setEditId(null);setLoading(false);
+  };
+
+  const editar=(p)=>{setForm({nombre:p.nombre,cuit:p.cuit||"",categoria:p.categoria||"Gastos Fijos",telefono:p.telefono||"",email:p.email||"",notas:p.notas||""});setEditId(p.id);};
+
+  const toggleActivo=async(p)=>{
+    await supabase.from("proveedores").update({activo:!p.activo}).eq("id",p.id);
+    setProveedores(prev=>prev.map(x=>x.id===p.id?{...x,activo:!x.activo}:x));
+  };
+
+  return(
+    <Modal title="🏢 Proveedores" onClose={onClose} wide>
+      <p className="text-xs text-gray-500 mb-4">Registrá tus proveedores para elegirlos rápidamente al cargar un gasto.</p>
+      <div className="grid grid-cols-2 gap-3 mb-4 p-3 bg-gray-50 rounded-xl border border-gray-200">
+        <p className="col-span-2 text-xs font-semibold text-gray-600">{editId?"✏️ Editando proveedor":"➕ Nuevo proveedor"}</p>
+        <div className="col-span-2"><Field label="Nombre / Razón Social" value={form.nombre} onChange={f("nombre")} placeholder="Ej: YPF, Administrador edificio, etc."/></div>
+        <Field label="CUIT (opcional)" value={form.cuit} onChange={f("cuit")} placeholder="20-12345678-9"/>
+        <div>
+          <label className="text-xs font-medium text-gray-600">Categoría habitual</label>
+          <select value={form.categoria} onChange={f("categoria")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+            {EXPENSE_CATS.map(c=><option key={c}>{c}</option>)}
+          </select>
+        </div>
+        <Field label="Teléfono (opcional)" value={form.telefono} onChange={f("telefono")}/>
+        <Field label="Email (opcional)" value={form.email} onChange={f("email")}/>
+        <div className="col-span-2"><Field label="Notas (opcional)" value={form.notas} onChange={f("notas")} placeholder="Cuenta bancaria, horario de atención, etc."/></div>
+        <div className="col-span-2 flex gap-2 justify-end">
+          {editId&&<button onClick={()=>{setForm(emptyP);setEditId(null);}} className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-100">Cancelar</button>}
+          <button onClick={guardar} disabled={loading} className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+            {loading?"Guardando...":(editId?"Actualizar":"Agregar proveedor")}
+          </button>
+        </div>
+      </div>
+      {proveedores.length===0
+        ? <p className="text-sm text-gray-400 text-center py-4">No hay proveedores todavía</p>
+        : <div className="space-y-2">
+            {proveedores.map(p=>(
+              <div key={p.id} className={`flex items-center gap-3 rounded-lg px-3 py-2 border ${p.activo!==false?"bg-white border-gray-200":"bg-gray-50 border-gray-100 opacity-60"}`}>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800">{p.nombre}</p>
+                  <p className="text-xs text-gray-400">{p.categoria}{p.cuit?" · "+p.cuit:""}{p.telefono?" · "+p.telefono:""}</p>
+                </div>
+                <button onClick={()=>toggleActivo(p)} className={`text-xs px-2 py-0.5 rounded-full border ${p.activo!==false?"bg-green-50 text-green-700 border-green-200":"bg-gray-100 text-gray-500 border-gray-200"}`}>
+                  {p.activo!==false?"Activo":"Inactivo"}
+                </button>
+                <button onClick={()=>editar(p)} className="text-gray-400 hover:text-blue-600 p-1"><Icon d={Icons.edit} size={15}/></button>
+              </div>
+            ))}
+          </div>
+      }
     </Modal>
   );
 }
