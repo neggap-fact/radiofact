@@ -1272,48 +1272,24 @@ function ClientModal({data,onSave,onClose}){
     if(cuitLimpio.length < 10){ setPadronError("CUIT inválido"); return; }
     setPadronLoading(true); setPadronError("");
     try {
-      // Llamada directa a la API pública de ARCA desde el navegador (evita bloqueo geográfico de Railway)
-      const res = await fetch(`https://soa.afip.gob.ar/sr-padron/v2/persona/${cuitLimpio}`, {
-        headers: { "Accept": "application/json" }
+      const res = await fetch(`${BACKEND_URL}/padron-a5`, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({cuit: cuitLimpio})
       });
-      if(res.status === 404){
-        setPadronError("CUIT no encontrado en el padrón de ARCA");
-        return;
-      }
-      if(!res.ok){ setPadronError("Error consultando ARCA (estado " + res.status + ")"); return; }
       const data = await res.json();
-      const persona = data?.data;
-      if(!persona){ setPadronError("CUIT no encontrado en el padrón"); return; }
-
-      // Razón social
-      const razonSocial = persona.razonSocial ||
-        [persona.apellido, persona.nombre].filter(Boolean).join(", ") || "";
-
-      // Domicilio fiscal
-      let domicilio = "";
-      if(persona.domicilio && persona.domicilio.length > 0){
-        const dom = persona.domicilio.find(d=>d.tipoDomicilio==="FISCAL") || persona.domicilio[0];
-        domicilio = [dom.direccion, dom.localidad, dom.descripcionProvincia].filter(Boolean).join(", ");
+      if(data.exito){
+        setForm(p=>({
+          ...p,
+          razonSocial: data.razon_social || p.razonSocial,
+          domicilio:   data.domicilio    || p.domicilio,
+          condicionIVA: data.condicion_iva && data.condicion_iva !== "No determinada"
+            ? mapCondicionIVA(data.condicion_iva)
+            : p.condicionIVA,
+        }));
+      } else {
+        setPadronError(data.error || "Error consultando ARCA");
       }
-
-      // Condición IVA
-      let condicionIVA = "";
-      if(persona.impuesto && persona.impuesto.length > 0){
-        const iva  = persona.impuesto.find(i=>i.idImpuesto===30);
-        const mono = persona.impuesto.find(i=>i.idImpuesto===20);
-        if(iva)       condicionIVA = "Responsable Inscripto";
-        else if(mono) condicionIVA = "Monotributista";
-      }
-
-      setForm(p=>({
-        ...p,
-        razonSocial: razonSocial || p.razonSocial,
-        domicilio:   domicilio   || p.domicilio,
-        condicionIVA: condicionIVA ? mapCondicionIVA(condicionIVA) : p.condicionIVA,
-      }));
-    } catch(e){
-      setPadronError("Error consultando ARCA. Verificá tu conexión a internet.");
-    }
+    } catch(e){ setPadronError("Error de conexión con el backend"); }
     finally{ setPadronLoading(false); }
   };
 
