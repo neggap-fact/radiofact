@@ -1,3 +1,4 @@
+// RadioFact v2.2 — Padrón A5 ARCA + sin botón Sincronizar
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./supabase";
 
