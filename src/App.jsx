@@ -374,6 +374,7 @@ export default function App() {
   const [expenses, setExpenses] = useState(INIT_EXPENSES);
   const [plantillasGastos, setPlantillasGastos] = useState([]);
   const [proveedores, setProveedores] = useState([]);
+  const [proveedores, setProveedores] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [page, setPage] = useState("dashboard");
   const [config, setConfig] = useState({
@@ -893,6 +894,11 @@ export default function App() {
       if (data) setProveedores(data);
     });
 
+    // Cargar proveedores
+    supabase.from("proveedores").select("*").order("nombre").then(({ data }) => {
+      if (data) setProveedores(data.filter(p => p.activo !== false));
+    });
+
     // Cargar plantillas de gastos
     supabase.from("plantillas_gastos").select("*").order("nombre").then(({ data }) => {
       if (data) setPlantillasGastos(data);
@@ -1223,22 +1229,42 @@ function Clients({clients,setClients,contracts,invoices,currentUser,canEdit,regi
           </thead>
           <tbody>
             {filtered.map(c=>(
-              <tr key={c.id} className="border-b border-gray-50 hover:bg-gray-50">
-                <td className="px-3 py-2.5 text-sm">
-                  <div className="font-medium">{c.razonSocial}</div>
-                  {c.alias && <div className="text-xs text-gray-400 truncate">{c.alias}</div>}
+              <tr key={c.id}
+                className="border-b border-gray-50 hover:bg-blue-50 cursor-pointer transition-colors group"
+                onClick={()=>canEdit&&setModal(c)}>
+                <td className="px-3 py-3 text-sm">
+                  <div className="font-semibold text-gray-800 group-hover:text-blue-700">{c.razonSocial}</div>
+                  {c.alias && <div className="text-xs text-gray-400">{c.alias}</div>}
                 </td>
-                <td className="px-3 py-2.5 text-gray-500 font-mono text-xs">{c.cuit}</td>
-                <td className="px-3 py-2.5 text-gray-500 text-xs">{c.condicionIVA}</td>
-                <td className="px-3 py-2.5"><span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-xs font-bold">Fac.{c.tipoFactura}</span></td>
-                <td className="px-3 py-2.5 text-gray-500 text-xs">{c.email}</td>
-                <td className="px-3 py-2.5 text-center"><span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs">{contracts.filter(ct=>ct.clientId===c.id&&ct.active).length}</span></td>
-                <td className="px-3 py-2.5"><span className={`px-2 py-0.5 rounded-full text-xs ${c.active?"bg-green-50 text-green-700":"bg-gray-100 text-gray-400"}`}>{c.active?"Activo":"Inactivo"}</span></td>
-                <td className="px-3 py-2.5">
-                  <div className="flex items-center gap-2">
-                    {c.email && canEdit && <button onClick={()=>setEmailLibreModal(c)} className="text-gray-400 hover:text-blue-600" title={`Enviar email a ${c.razonSocial}`}><Icon d={Icons.mail} size={14}/></button>}
-                    {canEdit&&<button onClick={()=>setModal(c)} className="text-gray-400 hover:text-blue-600" title="Editar"><Icon d={Icons.edit} size={14}/></button>}
-                    {isWebmaster&&<button onClick={()=>askDelete(c)} className="text-gray-400 hover:text-red-600" title="Borrar"><Icon d={Icons.trash} size={14}/></button>}
+                <td className="px-3 py-3 text-gray-500 font-mono text-xs">{c.cuit}</td>
+                <td className="px-3 py-3 text-gray-500 text-xs">{c.condicionIVA}</td>
+                <td className="px-3 py-3"><span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-xs font-bold">Fac.{c.tipoFactura}</span></td>
+                <td className="px-3 py-3 text-gray-500 text-xs">{c.email}</td>
+                <td className="px-3 py-3 text-center"><span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs">{contracts.filter(ct=>ct.clientId===c.id&&ct.active).length}</span></td>
+                <td className="px-3 py-3"><span className={`px-2 py-0.5 rounded-full text-xs ${c.active?"bg-green-50 text-green-700":"bg-gray-100 text-gray-400"}`}>{c.active?"Activo":"Inactivo"}</span></td>
+                <td className="px-3 py-3" onClick={e=>e.stopPropagation()}>
+                  <div className="flex items-center gap-3">
+                    {c.email && canEdit && (
+                      <button onClick={()=>setEmailLibreModal(c)}
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-100 transition-colors"
+                        title={`Enviar email a ${c.razonSocial}`}>
+                        <Icon d={Icons.mail} size={16}/>
+                      </button>
+                    )}
+                    {canEdit && (
+                      <button onClick={()=>setModal(c)}
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-100 transition-colors"
+                        title="Editar">
+                        <Icon d={Icons.edit} size={16}/>
+                      </button>
+                    )}
+                    {isWebmaster && (
+                      <button onClick={()=>askDelete(c)}
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                        title="Borrar">
+                        <Icon d={Icons.trash} size={16}/>
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -3481,6 +3507,7 @@ function EmailNCModal({ nc, factura, cliente, config, onClose, onSent }) {
 function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlantillas,proveedores,setProveedores}){
   const [modal,setModal]=useState(null);
   const [modalPlantillas,setModalPlantillas]=useState(false);
+  const [modalProveedores,setModalProveedores]=useState(false);
   const [modalProveedores,setModalProveedores]=useState(false);
   const [fMonth,setFMonth]=useState(String(new Date().getMonth()+1));
   const [fYear,setFYear]=useState(String(new Date().getFullYear()));
