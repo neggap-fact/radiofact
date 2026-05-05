@@ -3673,12 +3673,10 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
 
 function ExpenseModal({data,onSave,onClose,plantillas=[]}){
   const [form,setForm]=useState(data);
+  const [showPlantillas,setShowPlantillas]=useState(false);
   const f=k=>e=>setForm(p=>({...p,[k]:e.target.value}));
 
-  const aplicarPlantilla = (id) => {
-    if(!id) return;
-    const p = plantillas.find(p=>p.id===id);
-    if(!p) return;
+  const aplicarPlantilla = (p) => {
     setForm(prev=>({
       ...prev,
       descripcion: p.descripcion || p.nombre,
@@ -3686,24 +3684,52 @@ function ExpenseModal({data,onSave,onClose,plantillas=[]}){
       monto:       p.monto      || prev.monto,
       proveedor:   p.proveedor  || prev.proveedor,
     }));
+    setShowPlantillas(false);
   };
 
   return(
     <Modal title={form.id?"Editar gasto":"Nuevo gasto"} onClose={onClose} wide>
       <div className="grid grid-cols-2 gap-3">
-        {!form.id && plantillas.length>0 && (
-          <div className="col-span-2">
-            <label className="text-xs font-medium text-gray-600">Cargar desde plantilla</label>
-            <select onChange={e=>aplicarPlantilla(e.target.value)} defaultValue=""
-              className="w-full mt-1 px-3 py-2 border border-blue-200 bg-blue-50 rounded-lg text-sm focus:outline-none text-blue-800">
-              <option value="">— Elegir plantilla (opcional) —</option>
-              {plantillas.map(p=>(
-                <option key={p.id} value={p.id}>{p.nombre} {p.monto?`— $${Number(p.monto).toLocaleString("es-AR")}`:""}</option>
-              ))}
-            </select>
+        <div className="col-span-2">
+          <label className="text-xs font-medium text-gray-600">Descripción</label>
+          <div className="relative mt-1">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={form.descripcion}
+                onChange={f("descripcion")}
+                placeholder={plantillas.length>0?"Escribí o elegí una plantilla ▼":"Descripción del gasto"}
+                className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"
+                onFocus={()=>plantillas.length>0&&setShowPlantillas(true)}
+              />
+              {plantillas.length>0&&(
+                <button type="button" onClick={()=>setShowPlantillas(v=>!v)}
+                  className="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-500 hover:bg-gray-50 whitespace-nowrap">
+                  📋 Plantillas
+                </button>
+              )}
+            </div>
+            {showPlantillas&&plantillas.length>0&&(
+              <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-60 overflow-y-auto">
+                {plantillas.map(p=>(
+                  <button key={p.id} type="button"
+                    onClick={()=>aplicarPlantilla(p)}
+                    className="w-full text-left px-3 py-2.5 hover:bg-blue-50 border-b border-gray-100 last:border-0">
+                    <p className="text-sm font-medium text-gray-800">{p.nombre}</p>
+                    <p className="text-xs text-gray-400">
+                      {p.categoria}{p.proveedor?" · "+p.proveedor:""}
+                      {p.monto?" · $"+Number(p.monto).toLocaleString("es-AR"):""}
+                    </p>
+                  </button>
+                ))}
+                <button type="button" onClick={()=>setShowPlantillas(false)}
+                  className="w-full text-center text-xs text-gray-400 py-2 hover:bg-gray-50">
+                  Cerrar
+                </button>
+              </div>
+            )}
           </div>
-        )}
-        <div className="col-span-2"><Field label="Descripción" value={form.descripcion} onChange={f("descripcion")}/></div>
+        </div>
         <div>
           <label className="text-xs font-medium text-gray-600">Categoría</label>
           <select value={form.categoria} onChange={f("categoria")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
