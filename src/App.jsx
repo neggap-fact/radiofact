@@ -372,6 +372,7 @@ export default function App() {
   const [creditNotes, setCreditNotes] = useState([]);
   const [emailNCModal, setEmailNCModal] = useState(null);
   const [expenses, setExpenses] = useState(INIT_EXPENSES);
+  const [plantillasGastos, setPlantillasGastos] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [page, setPage] = useState("dashboard");
   const [config, setConfig] = useState({
@@ -886,6 +887,11 @@ export default function App() {
       if(savedUser) setCurrentUser(JSON.parse(savedUser));
     }catch(e){}
 
+    // Cargar plantillas de gastos
+    supabase.from("plantillas_gastos").select("*").order("nombre").then(({ data }) => {
+      if (data) setPlantillasGastos(data);
+    });
+
     // Cargar gastos desde Supabase
     supabase.from("gastos").select("*").order("fecha", { ascending: false }).then(({ data, error }) => {
       if(error){ console.error("Error cargando gastos:", error); return; }
@@ -998,7 +1004,7 @@ export default function App() {
               setEmailNCModal({ nc, factura, cliente: cli });
             }}
           />}
-          {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} currentUser={currentUser} canEdit={canEdit}/>}
+          {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} currentUser={currentUser} canEdit={canEdit} plantillas={plantillasGastos} setPlantillas={setPlantillasGastos}/>}
           {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses}/>}
           {page==="reports"&&<Reports clients={clients} contracts={contracts} invoices={invoices} expenses={expenses}/>}
           {page==="users"&&currentUser.role==="webmaster"&&<Users users={users} setUsers={setUsers} currentUser={currentUser}/>}
@@ -3453,16 +3459,26 @@ function EmailNCModal({ nc, factura, cliente, config, onClose, onSent }) {
   );
 }
 
-function Expenses({expenses,setExpenses,currentUser,canEdit}){
+function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlantillas}){
   const [modal,setModal]=useState(null);
+  const [modalPlantillas,setModalPlantillas]=useState(false);
   const [fMonth,setFMonth]=useState(String(new Date().getMonth()+1));
   const [fYear,setFYear]=useState(String(new Date().getFullYear()));
   const [fCat,setFCat]=useState("");
+  const [fSearch,setFSearch]=useState("");
   const [confirmDelete, setConfirmDelete] = useState(null);
   const isWebmaster = currentUser?.role === "webmaster";
 
   const empty={descripcion:"",categoria:"Gastos Fijos",monto:"",fecha:todayStr(),proveedor:"",comprobante:"",url_comprobante:"",pagado:true,notas:""};
-  const filtered=expenses.filter(e=>{const d=new Date(e.fecha);return(!fMonth||d.getMonth()+1===Number(fMonth))&&(!fYear||d.getFullYear()===Number(fYear))&&(!fCat||e.categoria===fCat);});
+  const filtered=expenses.filter(e=>{
+    const d=new Date(e.fecha);
+    const matchMes=!fMonth||d.getMonth()+1===Number(fMonth);
+    const matchAnio=!fYear||d.getFullYear()===Number(fYear);
+    const matchCat=!fCat||e.categoria===fCat;
+    const q=fSearch.toLowerCase();
+    const matchSearch=!fSearch||(e.descripcion||"").toLowerCase().includes(q)||(e.proveedor||"").toLowerCase().includes(q)||(e.categoria||"").toLowerCase().includes(q);
+    return matchMes&&matchAnio&&matchCat&&matchSearch;
+  });
   const [saving, setSaving] = useState(false);
   const save = async (data) => {
     setSaving(true);
@@ -3566,7 +3582,20 @@ function Expenses({expenses,setExpenses,currentUser,canEdit}){
           <option value="">Todas las categorías</option>
           {EXPENSE_CATS.map(c=><option key={c}>{c}</option>)}
         </select>
-        {canEdit&&<button onClick={()=>setModal(empty)} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 ml-auto"><Icon d={Icons.plus} size={14}/>Nuevo gasto</button>}
+        <input
+          type="text"
+          value={fSearch}
+          onChange={e=>setFSearch(e.target.value)}
+          placeholder="Buscar por descripción o proveedor..."
+          className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none w-56"
+        />
+        {(fSearch||fCat)&&(
+          <button onClick={()=>{setFSearch("");setFCat("");}} className="text-xs text-gray-400 hover:text-gray-600 underline">Limpiar filtros</button>
+        )}
+        {canEdit&&<>
+          <button onClick={()=>setModalPlantillas(true)} className="flex items-center gap-2 bg-white border border-gray-300 text-gray-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 ml-auto"><Icon d={Icons.settings} size={14}/>Plantillas</button>
+          <button onClick={()=>setModal(empty)} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"><Icon d={Icons.plus} size={14}/>Nuevo gasto</button>
+        </>}
         {isWebmaster&&filtered.length>0&&(
           <button
             onClick={askDeleteAll}
@@ -3626,7 +3655,8 @@ function Expenses({expenses,setExpenses,currentUser,canEdit}){
         </table>
         {filtered.length===0&&<div className="text-center py-8 text-gray-400 text-sm">Sin gastos</div>}
       </div>
-      {modal&&<ExpenseModal data={modal} onSave={save} onClose={()=>setModal(null)}/>}
+      {modalPlantillas&&<PlantillasGastosModal plantillas={plantillas} setPlantillas={setPlantillas} onClose={()=>setModalPlantillas(false)}/>}
+      {modal&&<ExpenseModal data={modal} onSave={save} onClose={()=>setModal(null)} plantillas={plantillas}/>}
       {confirmDelete && (
         <ConfirmDeleteModal
           titulo={confirmDelete.titulo}
@@ -3641,12 +3671,38 @@ function Expenses({expenses,setExpenses,currentUser,canEdit}){
   );
 }
 
-function ExpenseModal({data,onSave,onClose}){
+function ExpenseModal({data,onSave,onClose,plantillas=[]}){
   const [form,setForm]=useState(data);
   const f=k=>e=>setForm(p=>({...p,[k]:e.target.value}));
+
+  const aplicarPlantilla = (id) => {
+    if(!id) return;
+    const p = plantillas.find(p=>p.id===id);
+    if(!p) return;
+    setForm(prev=>({
+      ...prev,
+      descripcion: p.descripcion || p.nombre,
+      categoria:   p.categoria  || prev.categoria,
+      monto:       p.monto      || prev.monto,
+      proveedor:   p.proveedor  || prev.proveedor,
+    }));
+  };
+
   return(
     <Modal title={form.id?"Editar gasto":"Nuevo gasto"} onClose={onClose} wide>
       <div className="grid grid-cols-2 gap-3">
+        {!form.id && plantillas.length>0 && (
+          <div className="col-span-2">
+            <label className="text-xs font-medium text-gray-600">Cargar desde plantilla</label>
+            <select onChange={e=>aplicarPlantilla(e.target.value)} defaultValue=""
+              className="w-full mt-1 px-3 py-2 border border-blue-200 bg-blue-50 rounded-lg text-sm focus:outline-none text-blue-800">
+              <option value="">— Elegir plantilla (opcional) —</option>
+              {plantillas.map(p=>(
+                <option key={p.id} value={p.id}>{p.nombre} {p.monto?`— $${Number(p.monto).toLocaleString("es-AR")}`:""}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <div className="col-span-2"><Field label="Descripción" value={form.descripcion} onChange={f("descripcion")}/></div>
         <div>
           <label className="text-xs font-medium text-gray-600">Categoría</label>
@@ -3661,19 +3717,12 @@ function ExpenseModal({data,onSave,onClose}){
         <div className="col-span-2">
           <label className="text-xs font-medium text-gray-600">Link al comprobante (Drive, foto, etc.)</label>
           <div className="flex gap-2 mt-1">
-            <input
-              type="url"
-              value={form.url_comprobante || ""}
-              onChange={f("url_comprobante")}
+            <input type="url" value={form.url_comprobante||""} onChange={f("url_comprobante")}
               placeholder="https://drive.google.com/..."
-              className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"
-            />
-            {form.url_comprobante && (
+              className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+            {form.url_comprobante&&(
               <a href={form.url_comprobante} target="_blank" rel="noopener noreferrer"
-                className="px-3 py-2 bg-blue-50 border border-blue-200 text-blue-700 rounded-lg text-sm hover:bg-blue-100"
-                title="Abrir link">
-                🔗 Ver
-              </a>
+                className="px-3 py-2 bg-blue-50 border border-blue-200 text-blue-700 rounded-lg text-sm hover:bg-blue-100">🔗 Ver</a>
             )}
           </div>
         </div>
@@ -3684,6 +3733,85 @@ function ExpenseModal({data,onSave,onClose}){
         </div>
       </div>
       <ModalFooter onClose={onClose} onSave={()=>onSave(form)}/>
+    </Modal>
+  );
+}
+
+// ── MODAL GESTIÓN DE PLANTILLAS DE GASTOS ────────────────────────────────────
+function PlantillasGastosModal({plantillas,setPlantillas,onClose}){
+  const emptyP = {nombre:"",categoria:"Gastos Fijos",monto:"",proveedor:"",descripcion:""};
+  const [form,setForm]=useState(emptyP);
+  const [editId,setEditId]=useState(null);
+  const [loading,setLoading]=useState(false);
+  const f=k=>e=>setForm(p=>({...p,[k]:e.target.value}));
+
+  const guardar = async () => {
+    if(!form.nombre.trim()){ alert("El nombre es obligatorio"); return; }
+    setLoading(true);
+    const payload = {
+      nombre:      form.nombre.trim(),
+      categoria:   form.categoria,
+      monto:       parseFloat(form.monto)||0,
+      proveedor:   form.proveedor||"",
+      descripcion: form.descripcion||"",
+    };
+    if(editId){
+      const {error} = await supabase.from("plantillas_gastos").update(payload).eq("id",editId);
+      if(error){ alert("Error: "+error.message); setLoading(false); return; }
+      setPlantillas(prev=>prev.map(p=>p.id===editId?{...p,...payload}:p));
+    } else {
+      const {data,error} = await supabase.from("plantillas_gastos").insert([payload]).select().single();
+      if(error){ alert("Error: "+error.message); setLoading(false); return; }
+      setPlantillas(prev=>[...prev,data]);
+    }
+    setForm(emptyP); setEditId(null); setLoading(false);
+  };
+
+  const editar = (p) => { setForm({nombre:p.nombre,categoria:p.categoria,monto:p.monto||"",proveedor:p.proveedor||"",descripcion:p.descripcion||""}); setEditId(p.id); };
+
+  const eliminar = async (id) => {
+    if(!confirm("¿Eliminar esta plantilla?")) return;
+    await supabase.from("plantillas_gastos").delete().eq("id",id);
+    setPlantillas(prev=>prev.filter(p=>p.id!==id));
+  };
+
+  return(
+    <Modal title="📋 Plantillas de gastos" onClose={onClose} wide>
+      <p className="text-xs text-gray-500 mb-4">Las plantillas autocompletan el formulario al cargar un nuevo gasto. Útil para sueldos, alquiler, servicios recurrentes, etc.</p>
+      <div className="grid grid-cols-2 gap-3 mb-4 p-3 bg-gray-50 rounded-xl border border-gray-200">
+        <p className="col-span-2 text-xs font-semibold text-gray-600">{editId?"✏️ Editando plantilla":"➕ Nueva plantilla"}</p>
+        <div className="col-span-2"><Field label="Nombre de la plantilla" value={form.nombre} onChange={f("nombre")} placeholder="Ej: Sueldo Andrea Mercado"/></div>
+        <div>
+          <label className="text-xs font-medium text-gray-600">Categoría</label>
+          <select value={form.categoria} onChange={f("categoria")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+            {EXPENSE_CATS.map(c=><option key={c}>{c}</option>)}
+          </select>
+        </div>
+        <Field label="Monto habitual ($)" value={form.monto} onChange={f("monto")} type="number" placeholder="0 si varía"/>
+        <Field label="Proveedor / Beneficiario" value={form.proveedor} onChange={f("proveedor")} placeholder="Ej: Andrea Mercado"/>
+        <Field label="Descripción (opcional)" value={form.descripcion} onChange={f("descripcion")} placeholder="Se copia al campo Descripción"/>
+        <div className="col-span-2 flex gap-2 justify-end">
+          {editId&&<button onClick={()=>{setForm(emptyP);setEditId(null);}} className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-100">Cancelar</button>}
+          <button onClick={guardar} disabled={loading} className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+            {loading?"Guardando...":(editId?"Actualizar plantilla":"Agregar plantilla")}
+          </button>
+        </div>
+      </div>
+      {plantillas.length===0
+        ? <p className="text-sm text-gray-400 text-center py-4">No hay plantillas todavía</p>
+        : <div className="space-y-2">
+            {plantillas.map(p=>(
+              <div key={p.id} className="flex items-center gap-3 bg-white border border-gray-200 rounded-lg px-3 py-2">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800">{p.nombre}</p>
+                  <p className="text-xs text-gray-400">{p.categoria}{p.proveedor?" · "+p.proveedor:""}{p.monto?" · $"+Number(p.monto).toLocaleString("es-AR"):""}</p>
+                </div>
+                <button onClick={()=>editar(p)} className="text-gray-400 hover:text-blue-600 p-1"><Icon d={Icons.edit} size={15}/></button>
+                <button onClick={()=>eliminar(p.id)} className="text-gray-400 hover:text-red-500 p-1"><Icon d={Icons.trash} size={15}/></button>
+              </div>
+            ))}
+          </div>
+      }
     </Modal>
   );
 }
