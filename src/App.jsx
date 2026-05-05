@@ -1075,44 +1075,57 @@ function Dashboard({clients,contracts,invoices,expenses,notifications,setPage}){
       )}
       <div className="grid grid-cols-3 gap-3 lg:grid-cols-7">
         {[
-          {label:"Clientes",value:clients.filter(c=>c.active).length,sub:"activos"},
-          {label:"Contratos",value:contracts.filter(c=>c.active).length,sub:"vigentes"},
-          {label:"Facturado",value:fmtMoney(facturado),sub:MONTHS[m-1]},
-          {label:"Cobrado",value:fmtMoney(cobrado),sub:"este mes"},
-          {label:"Adeudado",value:fmtMoney(adeudado),sub:"pendiente"},
-          {label:"IVA del mes",value:fmtMoney(ivaDelMes),sub:"débito fiscal"},
-          {label:"IIBB 3%",value:fmtMoney(iibbDelMes),sub:"a pagar (informativo)"},
+          {label:"Clientes",value:clients.filter(c=>c.active).length,sub:"activos",page:"clients",color:"bg-blue-50 border-blue-200 hover:bg-blue-100",labelColor:"text-blue-500",valueColor:"text-blue-800"},
+          {label:"Contratos",value:contracts.filter(c=>c.active).length,sub:"vigentes",page:"contracts",color:"bg-indigo-50 border-indigo-200 hover:bg-indigo-100",labelColor:"text-indigo-500",valueColor:"text-indigo-800"},
+          {label:"Facturado",value:fmtMoney(facturado),sub:MONTHS[m-1],page:"billing",color:"bg-emerald-50 border-emerald-200 hover:bg-emerald-100",labelColor:"text-emerald-500",valueColor:"text-emerald-800"},
+          {label:"Cobrado",value:fmtMoney(cobrado),sub:"este mes",page:"billing",color:"bg-green-50 border-green-200 hover:bg-green-100",labelColor:"text-green-500",valueColor:"text-green-800"},
+          {label:"Adeudado",value:fmtMoney(adeudado),sub:"pendiente",page:"billing",color:"bg-amber-50 border-amber-200 hover:bg-amber-100",labelColor:"text-amber-500",valueColor:"text-amber-800"},
+          {label:"IVA del mes",value:fmtMoney(ivaDelMes),sub:"débito fiscal",page:"reports",color:"bg-orange-50 border-orange-200 hover:bg-orange-100",labelColor:"text-orange-500",valueColor:"text-orange-800"},
+          {label:"IIBB 3%",value:fmtMoney(iibbDelMes),sub:"informativo",page:"reports",color:"bg-purple-50 border-purple-200 hover:bg-purple-100",labelColor:"text-purple-500",valueColor:"text-purple-800"},
         ].map((s,i)=>(
-          <div key={i} className="bg-white rounded-xl border border-gray-200 p-3">
-            <p className="text-xs text-gray-400">{s.label}</p>
-            <p className="font-bold text-gray-800 text-sm mt-0.5 leading-tight">{s.value}</p>
-            <p className="text-xs text-gray-400">{s.sub}</p>
-          </div>
+          <button key={i} onClick={()=>setPage(s.page)}
+            className={`rounded-xl border p-3 text-left transition-colors ${s.color}`}>
+            <p className={`text-xs font-medium ${s.labelColor}`}>{s.label}</p>
+            <p className={`font-bold text-sm mt-0.5 leading-tight ${s.valueColor}`}>{s.value}</p>
+            <p className={`text-xs ${s.labelColor} opacity-70`}>{s.sub}</p>
+          </button>
         ))}
       </div>
-      <div className="bg-white rounded-xl border border-gray-200 p-3 flex items-center gap-4 flex-wrap">
+      <button onClick={()=>setPage("expenses")} className="w-full bg-white rounded-xl border border-gray-200 p-3 flex items-center gap-4 flex-wrap hover:bg-red-50 hover:border-red-200 transition-colors text-left">
         <span className="text-xs font-semibold text-gray-500">Gastos {MONTHS[m-1]} {y}:</span>
         <span className="text-sm font-bold text-red-600">{fmtMoney(totalGastos)} pagados</span>
         {gastosPendientes>0&&<span className="text-xs text-amber-600 font-medium">+ {fmtMoney(gastosPendientes)} pendientes</span>}
-        <span className="text-xs text-gray-400 ml-auto">Ver detalle completo en Reportes</span>
-      </div>
+        <span className="text-xs text-gray-400 ml-auto">Ver detalle →</span>
+      </button>
       <div className="grid grid-cols-2 gap-4">
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <h3 className="font-semibold text-sm mb-3">Últimas facturas</h3>
-          {[...invoices].reverse().slice(0,5).map(inv=>(
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold text-sm">Últimas facturas</h3>
+            <button onClick={()=>setPage("billing")} className="text-xs text-blue-600 hover:underline">Ver todas →</button>
+          </div>
+          {[...invoices].filter(i=>i.total>100).reverse().slice(0,5).map(inv=>(
             <div key={inv.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
-              <div><p className="text-xs font-medium truncate max-w-28">{inv.clientName}</p><p className="text-xs text-gray-400">{MONTHS[(inv.month||1)-1]} {inv.year}</p></div>
+              <div><p className="text-xs font-medium truncate max-w-36">{inv.clientName}</p><p className="text-xs text-gray-400">{MONTHS[(inv.month||1)-1]} {inv.year}</p></div>
               <div className="text-right"><p className="text-xs font-semibold">{fmtMoney(inv.total)}</p><EstadoBadge estado={inv.estado}/></div>
             </div>
           ))}
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <h3 className="font-semibold text-sm mb-3">Últimos gastos</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold text-sm">Últimos gastos</h3>
+            <button onClick={()=>setPage("expenses")} className="text-xs text-blue-600 hover:underline">Ver todos →</button>
+          </div>
           {expenses.length===0?<p className="text-xs text-gray-400 py-4 text-center">Sin gastos</p>:
             [...expenses].reverse().slice(0,5).map(ex=>(
               <div key={ex.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
-                <div><p className="text-xs font-medium">{ex.descripcion}</p><p className="text-xs text-gray-400">{ex.categoria}</p></div>
-                <p className="text-xs font-semibold text-red-600">{fmtMoney(ex.monto)}</p>
+                <div>
+                  <p className="text-xs font-medium">{ex.proveedor||ex.descripcion}</p>
+                  <p className="text-xs text-gray-400">{ex.descripcion!==ex.proveedor&&ex.proveedor?ex.descripcion+" · ":""}{ex.categoria}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs font-semibold text-red-600">{fmtMoney(ex.monto)}</p>
+                  {!ex.pagado&&<span className="text-xs text-amber-500">Pendiente</span>}
+                </div>
               </div>
             ))}
         </div>
