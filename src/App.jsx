@@ -375,7 +375,6 @@ export default function App() {
   const [plantillasGastos, setPlantillasGastos] = useState([]);
   const [proveedores, setProveedores] = useState([]);
   const [ingresosBancarios, setIngresosBancarios] = useState([]);
-  const [proveedores, setProveedores] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [page, setPage] = useState("dashboard");
   const [config, setConfig] = useState({
@@ -2639,7 +2638,6 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
     return results && results.length > 0 && results[0].estado === "Emitida";
   };
 
-  const [modalCobro,setModalCobro]=useState(null); // factura a cobrar
   const updateInvoice = async (id, data) => {
     setInvoices(prev => prev.map(i => i.id === id ? {...i, ...data} : i));
     const isUUID = id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
