@@ -374,6 +374,7 @@ export default function App() {
   const [expenses, setExpenses] = useState(INIT_EXPENSES);
   const [plantillasGastos, setPlantillasGastos] = useState([]);
   const [proveedores, setProveedores] = useState([]);
+  const [ingresosBancarios, setIngresosBancarios] = useState([]);
   const [proveedores, setProveedores] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [page, setPage] = useState("dashboard");
@@ -485,6 +486,18 @@ export default function App() {
             cae: f.cae || "",
             cae_vencimiento: f.cae_vencimiento || "",
             fechaPago: f.fecha_pago || "",
+            montoCobrado: f.monto_cobrado || 0,
+            retenciones: f.retenciones || 0,
+            retencionesDetalle: f.retenciones_detalle || "",
+            montoCobrado: parseFloat(f.monto_cobrado) || 0,
+            retenciones: parseFloat(f.retenciones) || 0,
+            retencionesDetalle: f.retenciones_detalle || "",
+            montoCobrado: parseFloat(f.monto_cobrado) || 0,
+            retenciones: parseFloat(f.retenciones) || 0,
+            retencionesDetalle: f.retenciones_detalle || "",
+            montoCobrado: f.monto_cobrado || 0,
+            retenciones: f.retenciones || 0,
+            retencionesDetalle: f.retenciones_detalle || "",
             // Fechas de servicio (vienen de Supabase como YYYY-MM-DD, las convertimos a YYYYMMDD para el PDF)
             fch_serv_desde: f.fch_serv_desde ? f.fch_serv_desde.replace(/-/g,"") : "",
             fch_serv_hasta: f.fch_serv_hasta ? f.fch_serv_hasta.replace(/-/g,"") : "",
@@ -889,6 +902,11 @@ export default function App() {
       if(savedUser) setCurrentUser(JSON.parse(savedUser));
     }catch(e){}
 
+    // Cargar ingresos bancarios
+    supabase.from("ingresos_bancarios").select("*").order("fecha", { ascending: false }).then(({ data }) => {
+      if (data) setIngresosBancarios(data);
+    });
+
     // Cargar proveedores
     supabase.from("proveedores").select("*").order("nombre").then(({ data }) => {
       if (data) setProveedores(data);
@@ -1017,7 +1035,7 @@ export default function App() {
             }}
           />}
           {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} currentUser={currentUser} canEdit={canEdit} plantillas={plantillasGastos} setPlantillas={setPlantillasGastos} proveedores={proveedores} setProveedores={setProveedores}/>}
-          {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses}/>}
+          {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses} ingresosBancarios={ingresosBancarios} setIngresosBancarios={setIngresosBancarios}/>}
           {page==="reports"&&<Reports clients={clients} contracts={contracts} invoices={invoices} expenses={expenses}/>}
           {page==="users"&&currentUser.role==="webmaster"&&<Users users={users} setUsers={setUsers} currentUser={currentUser}/>}
           {page==="settings"&&<Settings config={config} setConfig={setConfig} canEdit={canEdit}/>}
@@ -1067,7 +1085,7 @@ function Dashboard({clients,contracts,invoices,expenses,notifications,setPage}){
   const facturado = tot.total;
   const ivaDelMes = tot.iva;
   const iibbDelMes = tot.iibb;
-  const cobrado = mi.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+i.total,0);
+  const cobrado = mi.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+(i.montoCobrado||i.total),0);
   const adeudado = facturado - cobrado;
   const totalGastos=me.filter(e=>e.pagado).reduce((s,e)=>s+e.monto,0);
   const gastosPendientes=me.filter(e=>!e.pagado).reduce((s,e)=>s+e.monto,0);
@@ -1642,6 +1660,58 @@ function ContractModal({data,clients,onSave,onClose}){
 // ── SINCRONIZACIÓN AUTOMÁTICA CON ARCA ─────────────────────────────────────
 // Consulta el último número autorizado por ARCA en un PV+Tipo y compara con
 // lo que tenemos guardado. Trae los faltantes uno por uno.
+// ── MODAL DE COBRO ────────────────────────────────────────────────────────────
+function CobroModal({factura, onCobrar, onClose}){
+  const [montoCobrado, setMontoCobrado] = useState(factura.total);
+  const [retenciones, setRetenciones] = useState(0);
+  const [retencionesDetalle, setRetencionesDetalle] = useState("");
+  const neto = (parseFloat(montoCobrado)||0) - (parseFloat(retenciones)||0);
+
+  return(
+    <Modal title="💰 Registrar cobro" onClose={onClose}>
+      <div className="space-y-4">
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
+          <p className="text-xs text-blue-600 font-medium">{factura.numero} — {factura.clientName}</p>
+          <p className="text-sm font-bold text-blue-800 mt-0.5">Total facturado: {fmtMoney(factura.total)}</p>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs font-medium text-gray-600">Monto cobrado ($)</label>
+            <input type="number" value={montoCobrado} onChange={e=>setMontoCobrado(e.target.value)}
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-400"/>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-600">Retenciones / descuentos ($)</label>
+            <input type="number" value={retenciones||""} onChange={e=>setRetenciones(e.target.value)}
+              placeholder="0" className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-400"/>
+          </div>
+          {parseFloat(retenciones)>0&&(
+            <div className="col-span-2">
+              <label className="text-xs font-medium text-gray-600">Detalle de retenciones</label>
+              <input type="text" value={retencionesDetalle} onChange={e=>setRetencionesDetalle(e.target.value)}
+                placeholder="Ej: Ret. IIBB 3%, Ret. Ganancias..."
+                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-400"/>
+            </div>
+          )}
+        </div>
+        {parseFloat(retenciones)>0&&(
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex justify-between items-center">
+            <span className="text-xs text-amber-700">Neto a recibir:</span>
+            <span className="font-bold text-amber-800">{fmtMoney(neto)}</span>
+          </div>
+        )}
+        <div className="flex gap-3 justify-end pt-2">
+          <button onClick={onClose} className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50">Cancelar</button>
+          <button onClick={()=>onCobrar(factura, montoCobrado, retenciones, retencionesDetalle)}
+            className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium">
+            ✓ Confirmar cobro
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function SyncArcaModal({ clients, invoices, onClose, onImportar }) {
   const [puntoVenta, setPuntoVenta] = useState(1);
   const [tipoFactura, setTipoFactura] = useState("A");
@@ -2224,6 +2294,66 @@ function FacturaManualModal({ clients, onClose, onSave }) {
   );
 }
 
+// ── MODAL DE COBRO DE FACTURA ────────────────────────────────────────────────
+function ModalCobro({inv,onSave,onClose}){
+  const [fecha,setFecha]=useState(inv.fechaPago||todayStr());
+  const [monto,setMonto]=useState(inv.montoCobrado>0?inv.montoCobrado:inv.total);
+  const [retenciones,setRetenciones]=useState(inv.retenciones||0);
+  const [retencionesDetalle,setRetencionesDetalle]=useState(inv.retencionesDetalle||"");
+
+  const montoCobrado = parseFloat(monto)||0;
+  const retencionesNum = parseFloat(retenciones)||0;
+  const neto = montoCobrado - retencionesNum;
+
+  const guardar = () => {
+    if(!fecha){ alert("Ingresá la fecha de cobro"); return; }
+    onSave({
+      estado:             "Pagada",
+      fechaPago:          fecha,
+      montoCobrado:       montoCobrado,
+      retenciones:        retencionesNum,
+      retencionesDetalle: retencionesDetalle,
+    });
+  };
+
+  return(
+    <Modal title="💰 Registrar cobro" onClose={onClose}>
+      <div className="space-y-4">
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
+          <p className="text-xs text-blue-600 font-medium">{inv.clientName}</p>
+          <p className="text-xs text-blue-500">{inv.numero} — {inv.periodo}</p>
+          <p className="text-sm font-bold text-blue-800 mt-1">Total facturado: {fmtMoney(inv.total)}</p>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Fecha de cobro" value={fecha} onChange={e=>setFecha(e.target.value)} type="date"/>
+          <div>
+            <label className="text-xs font-medium text-gray-600">Monto cobrado ($)</label>
+            <input type="number" value={monto} onChange={e=>setMonto(e.target.value)}
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-600">Retenciones / descuentos ($)</label>
+            <input type="number" value={retenciones} onChange={e=>setRetenciones(e.target.value)}
+              placeholder="0"
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+          </div>
+          <Field label="Detalle retenciones (opcional)" value={retencionesDetalle}
+            onChange={e=>setRetencionesDetalle(e.target.value)}
+            placeholder="Ej: Ret. IIBB 3%"/>
+        </div>
+        {retencionesNum>0&&(
+          <div className="bg-gray-50 rounded-xl p-3 text-sm">
+            <div className="flex justify-between text-gray-600"><span>Cobrado:</span><span>{fmtMoney(montoCobrado)}</span></div>
+            <div className="flex justify-between text-red-500"><span>Retenciones:</span><span>- {fmtMoney(retencionesNum)}</span></div>
+            <div className="flex justify-between font-bold text-gray-800 border-t border-gray-200 mt-1 pt-1"><span>Neto recibido:</span><span>{fmtMoney(neto)}</span></div>
+          </div>
+        )}
+      </div>
+      <ModalFooter onClose={onClose} onSave={guardar} saveLabel="✓ Confirmar cobro"/>
+    </Modal>
+  );
+}
+
 function Billing({clients,contracts,setContracts,invoices,setInvoices,notifications,setNotifications,config,canEdit,descargarPDF,guardarFacturaSupabase,emitirNotaCredito,registrarEmailEnHistorial,marcarEmailEnviadoSupabase,actualizarEmailsCliente}){
   const today=new Date();
   const [selMonth,setSelMonth]=useState(today.getMonth()+1);
@@ -2232,7 +2362,9 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
   const [emailModal,setEmailModal]=useState(null);
   const [ncModal,setNcModal]=useState(null);
   const [manualModal,setManualModal]=useState(false);
+  const [modalCobro,setModalCobro]=useState(null);
   const [syncModal,setSyncModal]=useState(false);
+  const [cobroModal,setCobroModal]=useState(null);
   const [editContractModal,setEditContractModal]=useState(null);
 
   // Guardar cambios en contrato (replica la lógica de Contracts.save)
@@ -2507,7 +2639,47 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
     return results && results.length > 0 && results[0].estado === "Emitida";
   };
 
-  const updateInvoice=(id,data)=>setInvoices(prev=>prev.map(i=>i.id===id?{...i,...data}:i));
+  const [modalCobro,setModalCobro]=useState(null); // factura a cobrar
+  const updateInvoice = async (id, data) => {
+    setInvoices(prev => prev.map(i => i.id === id ? {...i, ...data} : i));
+    const isUUID = id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    if (!isUUID) return;
+    const supaData = {};
+    if (data.estado       !== undefined) supaData.estado             = data.estado;
+    if (data.fechaPago    !== undefined) supaData.fecha_pago         = data.fechaPago || null;
+    if (data.montoCobrado !== undefined) supaData.monto_cobrado      = data.montoCobrado;
+    if (data.retenciones  !== undefined) supaData.retenciones        = data.retenciones;
+    if (data.retencionesDetalle !== undefined) supaData.retenciones_detalle = data.retencionesDetalle;
+    if (data.cae          !== undefined) supaData.cae                = data.cae;
+    if (Object.keys(supaData).length > 0) {
+      const { error } = await supabase.from("facturas").update(supaData).eq("id", id);
+      if (error) console.error("Error actualizando factura:", error.message);
+    }
+  };
+
+
+  const marcarCobrada = async (inv, montoCobrado, retenciones, retencionesDetalle) => {
+    const payload = {
+      estado: "Pagada",
+      fecha_pago: todayStr(),
+      monto_cobrado: parseFloat(montoCobrado) || inv.total,
+      retenciones: parseFloat(retenciones) || 0,
+      retenciones_detalle: retencionesDetalle || "",
+    };
+    const esUUID = inv.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(inv.id);
+    if (esUUID) {
+      const { error } = await supabase.from("facturas").update(payload).eq("id", inv.id);
+      if (error) { alert("Error guardando cobro: " + error.message); return; }
+    }
+    updateInvoice(inv.id, {
+      estado: "Pagada",
+      fechaPago: todayStr(),
+      montoCobrado: parseFloat(montoCobrado) || inv.total,
+      retenciones: parseFloat(retenciones) || 0,
+      retencionesDetalle: retencionesDetalle || "",
+    });
+    setModalCobro(null);
+  };
 
   return(
     <div className="space-y-4">
@@ -2636,14 +2808,20 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
                   <td className="px-3 py-2.5 text-xs text-orange-600 font-medium">{fmtMoney(inv.iva)}</td>
                   <td className="px-3 py-2.5 text-xs font-bold">{fmtMoney(inv.total)}</td>
                   <td className="px-3 py-2.5">
-                    {canEdit?(
-                      <select value={inv.estado} onChange={e=>updateInvoice(inv.id,{estado:e.target.value,...(e.target.value==="Pagada"?{fechaPago:todayStr()}:{fechaPago:""})})}
-                        className={`text-xs border rounded px-1.5 py-1 font-medium focus:outline-none cursor-pointer ${inv.estado==="Pagada"?"border-green-300 bg-green-50 text-green-700":inv.estado==="Emitida"?"border-blue-300 bg-blue-50 text-blue-700":"border-gray-200 bg-gray-50 text-gray-600"}`}>
-                        <option value="Borrador">Borrador</option>
-                        <option value="Emitida">Emitida</option>
-                        <option value="Pagada">Pagada</option>
-                      </select>
-                    ):<EstadoBadge estado={inv.estado}/>}
+                    <div className="flex flex-col gap-1 items-start">
+                      <EstadoBadge estado={inv.estado}/>
+                      {canEdit && inv.estado==="Emitida" && inv.cae && (
+                        <button onClick={()=>setModalCobro(inv)}
+                          className="text-xs px-2 py-0.5 bg-green-600 text-white rounded hover:bg-green-700 font-medium">
+                          💰 Cobrar
+                        </button>
+                      )}
+                      {inv.estado==="Pagada" && inv.retenciones>0 && (
+                        <span className="text-xs text-orange-500" title={inv.retencionesDetalle}>
+                          ret. {fmtMoney(inv.retenciones)}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-3 py-2.5">
                     {inv.cae?<span className="font-mono text-xs text-gray-400">{inv.cae.slice(0,8)}...</span>:
@@ -2756,6 +2934,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
           }}
         />
       )}
+      {modalCobro&&<CobroModal factura={modalCobro} onCobrar={marcarCobrada} onClose={()=>setModalCobro(null)}/>}
       {syncModal && (
         <SyncArcaModal
           clients={clients}
@@ -4225,11 +4404,20 @@ function Reports({clients,contracts,invoices,expenses}){
   const totIva = totRep.iva;
   const totFact = totRep.total;
   const totIibb = totRep.iibb;
-  const totCob=filtInv.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+i.total,0);
+  const totCob=filtInv.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+(i.montoCobrado||i.total),0);
   const totAd=totFact-totCob;
   const totGastos=filtExp.filter(e=>e.pagado).reduce((s,e)=>s+e.monto,0);
   const gastosPendFin=filtExp.filter(e=>!e.pagado).reduce((s,e)=>s+e.monto,0);
   const resultado=totCob-totGastos;
+  // Saldo bancario real del período
+  const filtIng = ingresosBancarios.filter(i => {
+    const d = new Date(i.fecha);
+    return (!fMonth || d.getMonth()+1 === Number(fMonth)) && (!fYear || d.getFullYear() === Number(fYear));
+  });
+  const totIngresos = filtIng.reduce((s,i) => s + parseFloat(i.monto||0), 0);
+  const totGastosPagados = filtExp.filter(e=>e.pagado).reduce((s,e) => s + e.monto, 0);
+  const saldoReal = totIngresos - totGastosPagados;
+
   const byClient=clients.map(c=>{
     const ci=filtInv.filter(i=>i.clientId===c.id);
     const t = totalizarFacturas(ci);
@@ -4505,7 +4693,7 @@ function Reports({clients,contracts,invoices,expenses}){
   );
 }
 
-function Finance({clients,invoices,expenses}){
+function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBancarios}){
   const today=new Date();
   const [fMonth,setFMonth]=useState(String(today.getMonth()+1));
   const [fYear,setFYear]=useState(String(today.getFullYear()));
@@ -4561,8 +4749,29 @@ function Finance({clients,invoices,expenses}){
           <div><p className="text-xs text-orange-500">Total con IVA</p><p className="font-bold text-orange-900 text-xl">{fmtMoney(totFact)}</p></div>
         </div>
       </div>
+      {filtIng.length>0&&(
+        <div className={`rounded-xl border p-4 ${saldoReal>=0?"bg-emerald-50 border-emerald-200":"bg-red-50 border-red-200"}`}>
+          <h3 className="font-semibold text-sm mb-3 text-emerald-800">🏦 Saldo bancario real{fMonth?` — ${MONTHS[Number(fMonth)-1]} ${fYear}`:""}</h3>
+          <div className="grid grid-cols-3 gap-4 mb-3">
+            <div><p className="text-xs text-gray-500">Ingresos banco</p><p className="font-bold text-emerald-700 text-lg">{fmtMoney(totIngresos)}</p><p className="text-xs text-gray-400">{filtIng.length} movimientos</p></div>
+            <div><p className="text-xs text-gray-500">Gastos pagados</p><p className="font-bold text-red-600 text-lg">{fmtMoney(totGastosPagados)}</p></div>
+            <div><p className="text-xs text-gray-500">Saldo estimado</p><p className={`font-bold text-2xl ${saldoReal>=0?"text-emerald-700":"text-red-700"}`}>{fmtMoney(saldoReal)}</p></div>
+          </div>
+          <div className="border-t border-emerald-200 pt-3 max-h-48 overflow-y-auto">
+            {filtIng.map(i=>(
+              <div key={i.id} className="flex items-center justify-between py-1.5 border-b border-emerald-100 last:border-0">
+                <div>
+                  <p className="text-xs font-medium text-gray-700">{i.origen||i.descripcion}</p>
+                  <p className="text-xs text-gray-400">{i.descripcion} · {i.fecha} · Comp: {i.comprobante||"—"}</p>
+                </div>
+                <p className="text-xs font-bold text-emerald-700">{fmtMoney(i.monto)}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className={`rounded-xl border p-4 ${resultado>=0?"bg-green-50 border-green-200":"bg-red-50 border-red-200"}`}>
-        <h3 className={`font-semibold text-sm mb-3 ${resultado>=0?"text-green-800":"text-red-800"}`}>{resultado>=0?"✅ Resultado positivo":"⚠️ Resultado negativo"}</h3>
+        <h3 className={`font-semibold text-sm mb-3 ${resultado>=0?"text-green-800":"text-red-800"}`}>{resultado>=0?"✅ Resultado RadioFact":"⚠️ Resultado RadioFact"}</h3>
         <div className="grid grid-cols-3 gap-4">
           <div><p className="text-xs text-gray-500">Cobrado</p><p className="font-bold text-green-700 text-lg">{fmtMoney(totCob)}</p></div>
           <div><p className="text-xs text-gray-500">Gastos</p><p className="font-bold text-red-600 text-lg">{fmtMoney(totGastos)}</p></div>
@@ -4714,11 +4923,11 @@ function Modal({title,onClose,children,wide=false}){
   );
 }
 
-function ModalFooter({onClose,onSave}){
+function ModalFooter({onClose,onSave,saveLabel="Guardar"}){
   return(
     <div className="flex justify-end gap-2 mt-4">
       <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">Cancelar</button>
-      <button onClick={onSave} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">Guardar</button>
+      <button onClick={onSave} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">{saveLabel}</button>
     </div>
   );
 }
