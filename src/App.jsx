@@ -1,4 +1,4 @@
-// RadioFact v2.3 — Gastos Supabase + Ingresos Bancarios + Dashboard mejorado
+// RadioFact v2.3 — Gastos Supabase + Ingresos Bancarios + Dashboard mejorado 2
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./supabase";
 
