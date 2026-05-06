@@ -1,4 +1,4 @@
-// RadioFact v2.2 — Padrón A5 ARCA + sin botón Sincronizar
+// RadioFact v2.3 — Gastos Supabase + Ingresos Bancarios + Dashboard mejorado
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./supabase";
 
