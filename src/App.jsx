@@ -3687,7 +3687,6 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
   const [modal,setModal]=useState(null);
   const [modalPlantillas,setModalPlantillas]=useState(false);
   const [modalProveedores,setModalProveedores]=useState(false);
-  const [modalProveedores,setModalProveedores]=useState(false);
   const [fMonth,setFMonth]=useState(String(new Date().getMonth()+1));
   const [fYear,setFYear]=useState(String(new Date().getFullYear()));
   const [fCat,setFCat]=useState("");
