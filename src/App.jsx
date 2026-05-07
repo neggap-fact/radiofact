@@ -1,4 +1,4 @@
-// RadioFact v2.5 — fix filtIng dentro de Finance
+// RadioFact v2.6 — saldo inicial acumulado en Finanzas
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./supabase";
 
@@ -375,6 +375,7 @@ export default function App() {
   const [plantillasGastos, setPlantillasGastos] = useState([]);
   const [proveedores, setProveedores] = useState([]);
   const [ingresosBancarios, setIngresosBancarios] = useState([]);
+  const [saldosIniciales, setSaldosIniciales] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [page, setPage] = useState("dashboard");
   const [config, setConfig] = useState({
@@ -892,6 +893,11 @@ export default function App() {
       if(savedUser) setCurrentUser(JSON.parse(savedUser));
     }catch(e){}
 
+    // Cargar saldos iniciales
+    supabase.from("saldos_iniciales").select("*").then(({ data }) => {
+      if (data) setSaldosIniciales(data);
+    });
+
     // Cargar ingresos bancarios
     supabase.from("ingresos_bancarios").select("*").order("fecha", { ascending: false }).then(({ data }) => {
       if (data) setIngresosBancarios(data);
@@ -1025,7 +1031,7 @@ export default function App() {
             }}
           />}
           {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} currentUser={currentUser} canEdit={canEdit} plantillas={plantillasGastos} setPlantillas={setPlantillasGastos} proveedores={proveedores} setProveedores={setProveedores}/>}
-          {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses} ingresosBancarios={ingresosBancarios} setIngresosBancarios={setIngresosBancarios}/>}
+          {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses} ingresosBancarios={ingresosBancarios} setIngresosBancarios={setIngresosBancarios} saldosIniciales={saldosIniciales}/>}
           {page==="reports"&&<Reports clients={clients} contracts={contracts} invoices={invoices} expenses={expenses}/>}
           {page==="users"&&currentUser.role==="webmaster"&&<Users users={users} setUsers={setUsers} currentUser={currentUser}/>}
           {page==="settings"&&<Settings config={config} setConfig={setConfig} canEdit={canEdit}/>}
@@ -4672,7 +4678,7 @@ function Reports({clients,contracts,invoices,expenses}){
   );
 }
 
-function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBancarios}){
+function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBancarios,saldosIniciales=[]}){
   const today=new Date();
   const [fMonth,setFMonth]=useState(String(today.getMonth()+1));
   const [fYear,setFYear]=useState(String(today.getFullYear()));
@@ -4688,14 +4694,20 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
   const totAd=totFact-totCob;
   const totGastos=filtExp.reduce((s,e)=>s+e.monto,0);
   const resultado=totCob-totGastos;
-    // Saldo bancario real del período
+    // Saldo inicial del mes (arrastrado del mes anterior)
+  const saldoInicial = (() => {
+    const reg = saldosIniciales.find(s => s.anio === Number(fYear) && s.mes === Number(fMonth));
+    return reg ? parseFloat(reg.saldo) : 0;
+  })();
+
+  // Saldo bancario real del período
   const filtIng = (ingresosBancarios||[]).filter(i => {
     const d = new Date(i.fecha);
     return (!fMonth || d.getMonth()+1 === Number(fMonth)) && (!fYear || d.getFullYear() === Number(fYear));
   });
   const totIngresos = filtIng.reduce((s,i) => s + parseFloat(i.monto||0), 0);
   const totGastosPagados = (filtExp||[]).filter(e=>e.pagado).reduce((s,e) => s + e.monto, 0);
-  const saldoReal = totIngresos - totGastosPagados;
+  const saldoReal = saldoInicial + totIngresos - totGastosPagados;
 
   const byClient=clients.map(c=>{
     const ci=filtInv.filter(i=>i.clientId===c.id);
@@ -4741,9 +4753,10 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
         <div className={`rounded-xl border p-4 ${saldoReal>=0?"bg-emerald-50 border-emerald-200":"bg-red-50 border-red-200"}`}>
           <h3 className="font-semibold text-sm mb-3 text-emerald-800">🏦 Saldo bancario real{fMonth?` — ${MONTHS[Number(fMonth)-1]} ${fYear}`:""}</h3>
           <div className="grid grid-cols-3 gap-4 mb-3">
+            {saldoInicial>0&&<div><p className="text-xs text-gray-500">Saldo inicial</p><p className="font-bold text-emerald-600 text-lg">{fmtMoney(saldoInicial)}</p><p className="text-xs text-gray-400">arrastrado del mes anterior</p></div>}
             <div><p className="text-xs text-gray-500">Ingresos banco</p><p className="font-bold text-emerald-700 text-lg">{fmtMoney(totIngresos)}</p><p className="text-xs text-gray-400">{filtIng.length} movimientos</p></div>
             <div><p className="text-xs text-gray-500">Gastos pagados</p><p className="font-bold text-red-600 text-lg">{fmtMoney(totGastosPagados)}</p></div>
-            <div><p className="text-xs text-gray-500">Saldo estimado</p><p className={`font-bold text-2xl ${saldoReal>=0?"text-emerald-700":"text-red-700"}`}>{fmtMoney(saldoReal)}</p></div>
+            <div><p className="text-xs text-gray-500">Saldo disponible</p><p className={`font-bold text-2xl ${saldoReal>=0?"text-emerald-700":"text-red-700"}`}>{fmtMoney(saldoReal)}</p></div>
           </div>
           <div className="border-t border-emerald-200 pt-3 max-h-48 overflow-y-auto">
             {filtIng.map(i=>(
