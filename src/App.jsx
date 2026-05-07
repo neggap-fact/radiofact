@@ -1,4 +1,4 @@
-// RadioFact v2.9 — Finance panel unificado
+// RadioFact v3.0 — Dashboard mejorado + Finance/Reports unificados
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./supabase";
 
@@ -1032,7 +1032,7 @@ export default function App() {
           />}
           {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} currentUser={currentUser} canEdit={canEdit} plantillas={plantillasGastos} setPlantillas={setPlantillasGastos} proveedores={proveedores} setProveedores={setProveedores}/>}
           {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses} ingresosBancarios={ingresosBancarios} setIngresosBancarios={setIngresosBancarios} saldosIniciales={saldosIniciales}/>}
-          {page==="reports"&&<Reports clients={clients} contracts={contracts} invoices={invoices} expenses={expenses}/>}
+          {page==="reports_disabled"&&<Reports clients={clients} contracts={contracts} invoices={invoices} expenses={expenses}/>}
           {page==="users"&&currentUser.role==="webmaster"&&<Users users={users} setUsers={setUsers} currentUser={currentUser}/>}
           {page==="settings"&&<Settings config={config} setConfig={setConfig} canEdit={canEdit}/>}
           {emailNCModal && (
@@ -1101,13 +1101,13 @@ function Dashboard({clients,contracts,invoices,expenses,notifications,setPage}){
       )}
       <div className="grid grid-cols-3 gap-3 lg:grid-cols-7">
         {[
-          {label:"Clientes",value:clients.filter(c=>c.active).length,sub:"activos",page:"clients",color:"bg-blue-50 border-blue-200 hover:bg-blue-100",labelColor:"text-blue-500",valueColor:"text-blue-800"},
-          {label:"Contratos",value:contracts.filter(c=>c.active).length,sub:"vigentes",page:"contracts",color:"bg-indigo-50 border-indigo-200 hover:bg-indigo-100",labelColor:"text-indigo-500",valueColor:"text-indigo-800"},
           {label:"Facturado",value:fmtMoney(facturado),sub:MONTHS[m-1],page:"billing",color:"bg-emerald-50 border-emerald-200 hover:bg-emerald-100",labelColor:"text-emerald-500",valueColor:"text-emerald-800"},
+          {label:"IVA del mes",value:fmtMoney(ivaDelMes),sub:"débito fiscal",page:"finance",color:"bg-orange-50 border-orange-200 hover:bg-orange-100",labelColor:"text-orange-500",valueColor:"text-orange-800"},
+          {label:"IIBB 3%",value:fmtMoney(iibbDelMes),sub:"informativo",page:"finance",color:"bg-purple-50 border-purple-200 hover:bg-purple-100",labelColor:"text-purple-500",valueColor:"text-purple-800"},
           {label:"Cobrado",value:fmtMoney(cobrado),sub:"este mes",page:"billing",color:"bg-green-50 border-green-200 hover:bg-green-100",labelColor:"text-green-500",valueColor:"text-green-800"},
           {label:"Adeudado",value:fmtMoney(adeudado),sub:"pendiente",page:"billing",color:"bg-amber-50 border-amber-200 hover:bg-amber-100",labelColor:"text-amber-500",valueColor:"text-amber-800"},
-          {label:"IVA del mes",value:fmtMoney(ivaDelMes),sub:"débito fiscal",page:"reports",color:"bg-orange-50 border-orange-200 hover:bg-orange-100",labelColor:"text-orange-500",valueColor:"text-orange-800"},
-          {label:"IIBB 3%",value:fmtMoney(iibbDelMes),sub:"informativo",page:"reports",color:"bg-purple-50 border-purple-200 hover:bg-purple-100",labelColor:"text-purple-500",valueColor:"text-purple-800"},
+          {label:"Clientes",value:clients.filter(c=>c.active).length,sub:"activos",page:"clients",color:"bg-blue-50 border-blue-200 hover:bg-blue-100",labelColor:"text-blue-500",valueColor:"text-blue-800"},
+          {label:"Contratos",value:contracts.filter(c=>c.active).length,sub:"vigentes",page:"contracts",color:"bg-indigo-50 border-indigo-200 hover:bg-indigo-100",labelColor:"text-indigo-500",valueColor:"text-indigo-800"},
         ].map((s,i)=>(
           <button key={i} onClick={()=>setPage(s.page)}
             className={`rounded-xl border p-3 text-left transition-colors ${s.color}`}>
@@ -1129,10 +1129,20 @@ function Dashboard({clients,contracts,invoices,expenses,notifications,setPage}){
             <h3 className="font-semibold text-sm">Últimas facturas</h3>
             <button onClick={()=>setPage("billing")} className="text-xs text-blue-600 hover:underline">Ver todas →</button>
           </div>
-          {[...invoices].filter(i=>i.total>100&&i.estado!=="Anulada").sort((a,b)=>b.fecha-a.fecha||(b.id>a.id?1:-1)).slice(0,5).map(inv=>(
-            <div key={inv.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
-              <div><p className="text-xs font-medium truncate max-w-36">{inv.clientName}</p><p className="text-xs text-gray-400">{MONTHS[(inv.month||1)-1]} {inv.year}</p></div>
-              <div className="text-right"><p className="text-xs font-semibold">{fmtMoney(inv.total)}</p><EstadoBadge estado={inv.estado}/></div>
+          {[...invoices].filter(i=>i.total>100&&i.estado!=="Anulada").sort((a,b)=>{
+            const da=a.fecha||`${a.year||0}${String(a.month||0).padStart(2,"0")}`;
+            const db=b.fecha||`${b.year||0}${String(b.month||0).padStart(2,"0")}`;
+            return db.localeCompare(da)||(b.numero||0)-(a.numero||0);
+          }).slice(0,8).map(inv=>(
+            <div key={inv.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0 hover:bg-gray-50 rounded cursor-pointer" onClick={()=>setPage("billing")}>
+              <div>
+                <p className="text-xs font-medium truncate max-w-40">{inv.clientName}</p>
+                <p className="text-xs text-gray-400">{inv.tipo||"A"}-{String(inv.puntoVenta||3).padStart(4,"0")}-{String(inv.numero||0).padStart(8,"0")} · {MONTHS[(inv.month||1)-1]} {inv.year}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs font-semibold">{fmtMoney(inv.total)}</p>
+                <EstadoBadge estado={inv.estado}/>
+              </div>
             </div>
           ))}
         </div>
@@ -1142,15 +1152,15 @@ function Dashboard({clients,contracts,invoices,expenses,notifications,setPage}){
             <button onClick={()=>setPage("expenses")} className="text-xs text-blue-600 hover:underline">Ver todos →</button>
           </div>
           {expenses.length===0?<p className="text-xs text-gray-400 py-4 text-center">Sin gastos</p>:
-            [...expenses].filter(e=>e.pagado).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)).slice(0,5).map(ex=>(
-              <div key={ex.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
+            [...expenses].filter(e=>e.pagado).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)).slice(0,8).map(ex=>(
+              <div key={ex.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0 hover:bg-gray-50 rounded cursor-pointer" onClick={()=>setPage("expenses")}>
                 <div>
                   <p className="text-xs font-medium">{ex.proveedor||ex.descripcion}</p>
-                  <p className="text-xs text-gray-400">{ex.descripcion!==ex.proveedor&&ex.proveedor?ex.descripcion+" · ":""}{ex.categoria}</p>
+                  <p className="text-xs text-gray-400">{ex.descripcion} · {ex.fecha?.slice(0,10)||""}</p>
                 </div>
                 <div className="text-right">
                   <p className="text-xs font-semibold text-red-600">{fmtMoney(ex.monto)}</p>
-                  {!ex.pagado&&<span className="text-xs text-amber-500">Pendiente</span>}
+                  <p className="text-xs text-gray-400">{ex.categoria}</p>
                 </div>
               </div>
             ))}
@@ -4737,45 +4747,20 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
         {fMonth&&<span className="text-xs font-medium text-gray-500">{MONTHS[Number(fMonth)-1]} {fYear}</span>}
       </div>
 
-      {/* ── PANEL ÚNICO: facturación + saldo bancario ─────────────────── */}
-      <div className="grid grid-cols-3 gap-3">
-        {/* Facturación del período */}
-        <div className="col-span-2 bg-white rounded-xl border border-gray-200 p-4">
-          <p className="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wide">Facturación</p>
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <p className="text-xs text-gray-400">Facturado</p>
-              <p className="text-xl font-bold text-blue-700">{fmtMoney(totFact)}</p>
-              <p className="text-xs text-gray-400">base {fmtMoney(totNeto)} + IVA {fmtMoney(totIva)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-gray-400">Cobrado</p>
-              <p className="text-xl font-bold text-green-700">{fmtMoney(totCob)}</p>
-              <p className="text-xs text-gray-400">{filtInv.filter(i=>i.estado==="Pagada").length} facturas</p>
-            </div>
-            <div>
-              <p className="text-xs text-gray-400">Adeudado</p>
-              <p className="text-xl font-bold text-red-600">{fmtMoney(totAd)}</p>
-              <p className="text-xs text-gray-400">{filtInv.filter(i=>i.estado!=="Pagada"&&i.estado!=="Anulada").length} facturas pendientes</p>
-            </div>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        {[
+          {label:"Facturado",value:fmtMoney(totFact),sub:`base ${fmtMoney(totNeto)} + IVA ${fmtMoney(totIva)}`,bl:"border-l-blue-500",tv:"text-blue-700"},
+          {label:"IVA a declarar",value:fmtMoney(totIva),sub:"débito fiscal",bl:"border-l-orange-500",tv:"text-orange-600"},
+          {label:"IIBB 3%",value:fmtMoney(Math.round(totNeto*0.03)),sub:"estimado",bl:"border-l-purple-500",tv:"text-purple-600"},
+          {label:"Cobrado",value:fmtMoney(totCob),sub:`${filtInv.filter(i=>i.estado==="Pagada").length} facturas`,bl:"border-l-green-500",tv:"text-green-700"},
+          {label:"Adeudado",value:fmtMoney(totAd),sub:`${filtInv.filter(i=>i.estado!=="Pagada"&&i.estado!=="Anulada").length} pendientes`,bl:"border-l-red-500",tv:"text-red-600"},
+        ].map(s=>(
+          <div key={s.label} className={`bg-white rounded-xl border border-gray-200 border-l-4 ${s.bl} p-3`}>
+            <p className="text-xs text-gray-400">{s.label}</p>
+            <p className={`text-lg font-bold mt-0.5 ${s.tv}`}>{s.value}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{s.sub}</p>
           </div>
-          <div className="mt-3 pt-3 border-t border-gray-100 flex gap-6">
-            <div><p className="text-xs text-gray-400">IVA a declarar</p><p className="font-semibold text-orange-600">{fmtMoney(totIva)}</p></div>
-            <div><p className="text-xs text-gray-400">IIBB 3% estimado</p><p className="font-semibold text-purple-600">{fmtMoney(Math.round(totNeto*0.03))}</p></div>
-            <div><p className="text-xs text-gray-400">Gastos pagados</p><p className="font-semibold text-red-500">{fmtMoney(totGastosPagados)}</p></div>
-          </div>
-        </div>
-        {/* Saldo bancario */}
-        <div className={`rounded-xl border p-4 ${saldoReal>=0?"bg-emerald-50 border-emerald-200":"bg-red-50 border-red-200"}`}>
-          <p className="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wide">Saldo bancario</p>
-          {saldoInicial>0&&<div className="mb-2"><p className="text-xs text-gray-500">Inicial (arrastrado)</p><p className="font-semibold text-emerald-600">{fmtMoney(saldoInicial)}</p></div>}
-          <div className="mb-2"><p className="text-xs text-gray-500">+ Ingresos ({filtIng.length} movs.)</p><p className="font-semibold text-emerald-700">{fmtMoney(totIngresos)}</p></div>
-          <div className="mb-3"><p className="text-xs text-gray-500">- Gastos pagados</p><p className="font-semibold text-red-600">{fmtMoney(totGastosPagados)}</p></div>
-          <div className="border-t border-emerald-200 pt-2">
-            <p className="text-xs text-gray-500">Saldo disponible</p>
-            <p className={`text-2xl font-bold ${saldoReal>=0?"text-emerald-700":"text-red-700"}`}>{fmtMoney(saldoReal)}</p>
-          </div>
-        </div>
+        ))}
       </div>
       {filtIng.length>0&&(
         <div className={`rounded-xl border p-4 ${saldoReal>=0?"bg-emerald-50 border-emerald-200":"bg-red-50 border-red-200"}`}>
