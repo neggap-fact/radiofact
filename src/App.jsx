@@ -1,4 +1,4 @@
-// RadioFact v2.4 — fix Finance ingresosBancarios
+// RadioFact v2.5 — fix filtIng dentro de Finance
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./supabase";
 
@@ -4397,15 +4397,6 @@ function Reports({clients,contracts,invoices,expenses}){
   const totGastos=filtExp.filter(e=>e.pagado).reduce((s,e)=>s+e.monto,0);
   const gastosPendFin=filtExp.filter(e=>!e.pagado).reduce((s,e)=>s+e.monto,0);
   const resultado=totCob-totGastos;
-  // Saldo bancario real del período
-  const filtIng = (ingresosBancarios||[]).filter(i => {
-    const d = new Date(i.fecha);
-    return (!fMonth || d.getMonth()+1 === Number(fMonth)) && (!fYear || d.getFullYear() === Number(fYear));
-  });
-  const totIngresos = filtIng.reduce((s,i) => s + parseFloat(i.monto||0), 0);
-  const totGastosPagados = (filtExp||[]).filter(e=>e.pagado).reduce((s,e) => s + e.monto, 0);
-  const saldoReal = totIngresos - totGastosPagados;
-
   const byClient=clients.map(c=>{
     const ci=filtInv.filter(i=>i.clientId===c.id);
     const t = totalizarFacturas(ci);
@@ -4697,6 +4688,15 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
   const totAd=totFact-totCob;
   const totGastos=filtExp.reduce((s,e)=>s+e.monto,0);
   const resultado=totCob-totGastos;
+    // Saldo bancario real del período
+  const filtIng = (ingresosBancarios||[]).filter(i => {
+    const d = new Date(i.fecha);
+    return (!fMonth || d.getMonth()+1 === Number(fMonth)) && (!fYear || d.getFullYear() === Number(fYear));
+  });
+  const totIngresos = filtIng.reduce((s,i) => s + parseFloat(i.monto||0), 0);
+  const totGastosPagados = (filtExp||[]).filter(e=>e.pagado).reduce((s,e) => s + e.monto, 0);
+  const saldoReal = totIngresos - totGastosPagados;
+
   const byClient=clients.map(c=>{
     const ci=filtInv.filter(i=>i.clientId===c.id);
     const t = totalizarFacturas(ci);
