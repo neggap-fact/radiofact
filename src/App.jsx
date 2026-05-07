@@ -1,4 +1,4 @@
-// RadioFact v2.3 — Gastos Supabase + Ingresos Bancarios + Dashboard mejorado
+// RadioFact v2.4 — fix duplicados mapeo facturas
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./supabase";
 
@@ -485,17 +485,8 @@ export default function App() {
             cae: f.cae || "",
             cae_vencimiento: f.cae_vencimiento || "",
             fechaPago: f.fecha_pago || "",
-            montoCobrado: f.monto_cobrado || 0,
-            retenciones: f.retenciones || 0,
-            retencionesDetalle: f.retenciones_detalle || "",
             montoCobrado: parseFloat(f.monto_cobrado) || 0,
             retenciones: parseFloat(f.retenciones) || 0,
-            retencionesDetalle: f.retenciones_detalle || "",
-            montoCobrado: parseFloat(f.monto_cobrado) || 0,
-            retenciones: parseFloat(f.retenciones) || 0,
-            retencionesDetalle: f.retenciones_detalle || "",
-            montoCobrado: f.monto_cobrado || 0,
-            retenciones: f.retenciones || 0,
             retencionesDetalle: f.retenciones_detalle || "",
             // Fechas de servicio (vienen de Supabase como YYYY-MM-DD, las convertimos a YYYYMMDD para el PDF)
             fch_serv_desde: f.fch_serv_desde ? f.fch_serv_desde.replace(/-/g,"") : "",
