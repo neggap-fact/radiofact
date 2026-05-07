@@ -1,4 +1,4 @@
-// RadioFact v2.4 — fix duplicados mapeo facturas
+// RadioFact v2.4 — fix Finance ingresosBancarios
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./supabase";
 
