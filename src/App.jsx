@@ -1,4 +1,4 @@
-// RadioFact v2.6 — saldo inicial acumulado en Finanzas
+// RadioFact v2.8 — Finance cards simplificadas
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./supabase";
 
@@ -1129,7 +1129,7 @@ function Dashboard({clients,contracts,invoices,expenses,notifications,setPage}){
             <h3 className="font-semibold text-sm">Últimas facturas</h3>
             <button onClick={()=>setPage("billing")} className="text-xs text-blue-600 hover:underline">Ver todas →</button>
           </div>
-          {[...invoices].filter(i=>i.total>100).reverse().slice(0,5).map(inv=>(
+          {[...invoices].filter(i=>i.total>100&&i.estado!=="Anulada").sort((a,b)=>b.fecha-a.fecha||(b.id>a.id?1:-1)).slice(0,5).map(inv=>(
             <div key={inv.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
               <div><p className="text-xs font-medium truncate max-w-36">{inv.clientName}</p><p className="text-xs text-gray-400">{MONTHS[(inv.month||1)-1]} {inv.year}</p></div>
               <div className="text-right"><p className="text-xs font-semibold">{fmtMoney(inv.total)}</p><EstadoBadge estado={inv.estado}/></div>
@@ -1142,7 +1142,7 @@ function Dashboard({clients,contracts,invoices,expenses,notifications,setPage}){
             <button onClick={()=>setPage("expenses")} className="text-xs text-blue-600 hover:underline">Ver todos →</button>
           </div>
           {expenses.length===0?<p className="text-xs text-gray-400 py-4 text-center">Sin gastos</p>:
-            [...expenses].reverse().slice(0,5).map(ex=>(
+            [...expenses].filter(e=>e.pagado).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)).slice(0,5).map(ex=>(
               <div key={ex.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
                 <div>
                   <p className="text-xs font-medium">{ex.proveedor||ex.descripcion}</p>
@@ -4469,17 +4469,26 @@ function Reports({clients,contracts,invoices,expenses}){
         </button>
       </div>
       <div className="grid grid-cols-4 gap-3">
-        {[
-          {label:"Total facturado",value:fmtMoney(totFact),color:"blue"},
-          {label:"Total cobrado",value:fmtMoney(totCob),color:"green"},
-          {label:"IVA débito fiscal",value:fmtMoney(totIva),color:"orange"},
-          {label:"Gastos registrados",value:fmtMoney(totGastos),color:"red"},
-        ].map(s=>(
-          <div key={s.label} className="bg-white rounded-xl border border-gray-200 p-3">
-            <p className="text-xs text-gray-400">{s.label}</p>
-            <p className={`font-bold text-base mt-0.5 ${s.color==="blue"?"text-blue-700":s.color==="orange"?"text-orange-600":s.color==="green"?"text-green-700":"text-red-600"}`}>{s.value}</p>
-          </div>
-        ))}
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
+          <p className="text-xs text-blue-500 font-medium">Facturado</p>
+          <p className="font-bold text-lg text-blue-800">{fmtMoney(totFact)}</p>
+          <p className="text-xs text-blue-400">base {fmtMoney(totNeto)} + IVA {fmtMoney(totIva)}</p>
+        </div>
+        <div className="bg-green-50 border border-green-200 rounded-xl p-3">
+          <p className="text-xs text-green-500 font-medium">Cobrado</p>
+          <p className="font-bold text-lg text-green-800">{fmtMoney(totCob)}</p>
+          <p className="text-xs text-green-400">{filtInv.filter(i=>i.estado==="Pagada").length} facturas cobradas</p>
+        </div>
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+          <p className="text-xs text-amber-500 font-medium">Adeudado</p>
+          <p className="font-bold text-lg text-amber-800">{fmtMoney(totAd)}</p>
+          <p className="text-xs text-amber-400">{filtInv.filter(i=>i.estado!=="Pagada"&&i.estado!=="Anulada").length} facturas pendientes</p>
+        </div>
+        <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+          <p className="text-xs text-red-500 font-medium">Gastos pagados</p>
+          <p className="font-bold text-lg text-red-800">{fmtMoney(totGastos)}</p>
+          <p className="text-xs text-red-400">IVA a declarar: {fmtMoney(totIva)}</p>
+        </div>
       </div>
       <div className="bg-gray-50 rounded-xl border border-gray-200 p-4">
         <p className="text-xs font-semibold text-gray-500 mb-3">📊 Resultado orientativo del período</p>
