@@ -1,4 +1,4 @@
-// RadioFact v2.8 — Finance cards simplificadas
+// RadioFact v2.9 — Finance panel unificado
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./supabase";
 
@@ -4736,26 +4736,45 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
         </select>
         {fMonth&&<span className="text-xs font-medium text-gray-500">{MONTHS[Number(fMonth)-1]} {fYear}</span>}
       </div>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {[
-          {label:"Neto facturado",value:fmtMoney(totNeto),sub:"sin IVA",bl:"border-l-blue-500",tv:"text-blue-700"},
-          {label:"IVA 10.5% — débito fiscal",value:fmtMoney(totIva),sub:"a declarar",bl:"border-l-orange-500",tv:"text-orange-600"},
-          {label:"Total cobrado",value:fmtMoney(totCob),sub:`${filtInv.filter(i=>i.estado==="Pagada").length} facturas`,bl:"border-l-green-500",tv:"text-green-700"},
-          {label:"Total adeudado",value:fmtMoney(totAd),sub:`${filtInv.filter(i=>i.estado!=="Pagada").length} facturas`,bl:"border-l-red-500",tv:"text-red-600"},
-        ].map(s=>(
-          <div key={s.label} className={`bg-white rounded-xl border border-gray-200 border-l-4 ${s.bl} p-4`}>
-            <p className="text-xs text-gray-400">{s.label}</p>
-            <p className={`text-xl font-bold mt-1 ${s.tv}`}>{s.value}</p>
-            <p className="text-xs text-gray-400 mt-0.5">{s.sub}</p>
+
+      {/* ── PANEL ÚNICO: facturación + saldo bancario ─────────────────── */}
+      <div className="grid grid-cols-3 gap-3">
+        {/* Facturación del período */}
+        <div className="col-span-2 bg-white rounded-xl border border-gray-200 p-4">
+          <p className="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wide">Facturación</p>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <p className="text-xs text-gray-400">Facturado</p>
+              <p className="text-xl font-bold text-blue-700">{fmtMoney(totFact)}</p>
+              <p className="text-xs text-gray-400">base {fmtMoney(totNeto)} + IVA {fmtMoney(totIva)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-400">Cobrado</p>
+              <p className="text-xl font-bold text-green-700">{fmtMoney(totCob)}</p>
+              <p className="text-xs text-gray-400">{filtInv.filter(i=>i.estado==="Pagada").length} facturas</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-400">Adeudado</p>
+              <p className="text-xl font-bold text-red-600">{fmtMoney(totAd)}</p>
+              <p className="text-xs text-gray-400">{filtInv.filter(i=>i.estado!=="Pagada"&&i.estado!=="Anulada").length} facturas pendientes</p>
+            </div>
           </div>
-        ))}
-      </div>
-      <div className="bg-orange-50 border border-orange-200 rounded-xl p-4">
-        <h3 className="font-semibold text-sm text-orange-800 mb-3">📊 Resumen IVA{fMonth?` — ${MONTHS[Number(fMonth)-1]} ${fYear}`:""}</h3>
-        <div className="grid grid-cols-3 gap-6">
-          <div><p className="text-xs text-orange-500">Base imponible</p><p className="font-bold text-orange-900 text-xl">{fmtMoney(totNeto)}</p></div>
-          <div><p className="text-xs text-orange-500">IVA 10.5%</p><p className="font-bold text-orange-900 text-xl">{fmtMoney(totIva)}</p></div>
-          <div><p className="text-xs text-orange-500">Total con IVA</p><p className="font-bold text-orange-900 text-xl">{fmtMoney(totFact)}</p></div>
+          <div className="mt-3 pt-3 border-t border-gray-100 flex gap-6">
+            <div><p className="text-xs text-gray-400">IVA a declarar</p><p className="font-semibold text-orange-600">{fmtMoney(totIva)}</p></div>
+            <div><p className="text-xs text-gray-400">IIBB 3% estimado</p><p className="font-semibold text-purple-600">{fmtMoney(Math.round(totNeto*0.03))}</p></div>
+            <div><p className="text-xs text-gray-400">Gastos pagados</p><p className="font-semibold text-red-500">{fmtMoney(totGastosPagados)}</p></div>
+          </div>
+        </div>
+        {/* Saldo bancario */}
+        <div className={`rounded-xl border p-4 ${saldoReal>=0?"bg-emerald-50 border-emerald-200":"bg-red-50 border-red-200"}`}>
+          <p className="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wide">Saldo bancario</p>
+          {saldoInicial>0&&<div className="mb-2"><p className="text-xs text-gray-500">Inicial (arrastrado)</p><p className="font-semibold text-emerald-600">{fmtMoney(saldoInicial)}</p></div>}
+          <div className="mb-2"><p className="text-xs text-gray-500">+ Ingresos ({filtIng.length} movs.)</p><p className="font-semibold text-emerald-700">{fmtMoney(totIngresos)}</p></div>
+          <div className="mb-3"><p className="text-xs text-gray-500">- Gastos pagados</p><p className="font-semibold text-red-600">{fmtMoney(totGastosPagados)}</p></div>
+          <div className="border-t border-emerald-200 pt-2">
+            <p className="text-xs text-gray-500">Saldo disponible</p>
+            <p className={`text-2xl font-bold ${saldoReal>=0?"text-emerald-700":"text-red-700"}`}>{fmtMoney(saldoReal)}</p>
+          </div>
         </div>
       </div>
       {filtIng.length>0&&(
