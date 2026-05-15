@@ -30,6 +30,10 @@ const Icons = {
   report: "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M8 13h8M8 17h5",
   trash: "M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14zM10 11v6M14 11v6",
   creditNote: "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8",
+  cash: "M3 6h18v12H3zM12 12a3 3 0 100-6 3 3 0 000 6zM6 9h.01M18 9h.01",
+  bank: "M3 21h18M5 21V10M10 21V10M14 21V10M19 21V10M2 10h20L12 3 2 10z",
+  card: "M22 4H2a2 2 0 00-2 2v12a2 2 0 002 2h20a2 2 0 002-2V6a2 2 0 00-2-2zM2 10h22",
+  add: "M12 5v14M5 12h14",
 };
 
 const BACKEND_URL = "https://radiofact-backend-production.up.railway.app";
@@ -1027,7 +1031,7 @@ export default function App() {
           {page==="clients"&&<Clients clients={clients} setClients={setClients} contracts={contracts} invoices={invoices} currentUser={currentUser} canEdit={canEdit} registrarEmailEnHistorial={registrarEmailEnHistorial}/>}
           {page==="contracts"&&<Contracts contracts={contracts} setContracts={setContracts} clients={clients} invoices={invoices} currentUser={currentUser} canEdit={canEdit}/>}
           {/* FIX 1: agregado guardarFacturaSupabase como prop */}
-          {page==="billing"&&<Billing clients={clients} contracts={contracts} setContracts={setContracts} invoices={invoices} setInvoices={setInvoices} notifications={notifications} setNotifications={setNotifications} config={config} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase} emitirNotaCredito={emitirNotaCredito} registrarEmailEnHistorial={registrarEmailEnHistorial} marcarEmailEnviadoSupabase={marcarEmailEnviadoSupabase} actualizarEmailsCliente={actualizarEmailsCliente}/>}
+          {page==="billing"&&<Billing clients={clients} contracts={contracts} setContracts={setContracts} invoices={invoices} setInvoices={setInvoices} notifications={notifications} setNotifications={setNotifications} config={config} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase} emitirNotaCredito={emitirNotaCredito} registrarEmailEnHistorial={registrarEmailEnHistorial} marcarEmailEnviadoSupabase={marcarEmailEnviadoSupabase} actualizarEmailsCliente={actualizarEmailsCliente} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias}/>}
           {page==="factura-directa"&&<FacturaDirecta clients={clients} setClients={setClients} invoices={invoices} setInvoices={setInvoices} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase}/>}
           {page==="notas-credito"&&<CreditNotes
             creditNotes={creditNotes}
@@ -1682,49 +1686,118 @@ function ContractModal({data,clients,onSave,onClose}){
 // Consulta el último número autorizado por ARCA en un PV+Tipo y compara con
 // lo que tenemos guardado. Trae los faltantes uno por uno.
 // ── MODAL DE COBRO ────────────────────────────────────────────────────────────
-function CobroModal({factura, onCobrar, onClose}){
+function CobroModal({factura, onCobrar, onClose, cuentasBancarias=[]}){
   const [montoCobrado, setMontoCobrado] = useState(factura.total);
-  const [retenciones, setRetenciones] = useState(0);
   const [retencionesDetalle, setRetencionesDetalle] = useState("");
-  const neto = (parseFloat(montoCobrado)||0) - (parseFloat(retenciones)||0);
+  const cuentasActivas = (cuentasBancarias||[]).filter(c => c.activa !== false);
+  const [cuentaDestinoId, setCuentaDestinoId] = useState(cuentasActivas[0]?.id || "");
+  
+  // Auto-calcular descuentos/retenciones basado en monto cobrado
+  const totalFactura = parseFloat(factura.total) || 0;
+  const montoCobradoNum = parseFloat(montoCobrado) || 0;
+  const descuentoCalculado = Math.max(0, totalFactura - montoCobradoNum);
+  const hayDescuento = descuentoCalculado > 0;
+
+  const handleConfirmar = () => {
+    // montoCobrado ya es el monto real, descuentoCalculado es la retención
+    onCobrar(factura, montoCobrado, descuentoCalculado, retencionesDetalle, cuentaDestinoId);
+  };
 
   return(
     <Modal title="💰 Registrar cobro" onClose={onClose}>
       <div className="space-y-4">
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
-          <p className="text-xs text-blue-600 font-medium">{factura.numero} — {factura.clientName}</p>
-          <p className="text-sm font-bold text-blue-800 mt-0.5">Total facturado: {fmtMoney(factura.total)}</p>
+        {/* SECCIÓN 1: DATOS DE LA FACTURA */}
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+          <p className="text-xs text-blue-600 font-medium mb-2">{factura.numero} — {factura.clientName}</p>
+          <div className="space-y-1">
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-blue-700">Total facturado:</span>
+              <span className="font-bold text-lg text-blue-900">{fmtMoney(totalFactura)}</span>
+            </div>
+          </div>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+
+        {/* SECCIÓN 2: ENTRADA DE MONTO COBRADO */}
+        <div className="space-y-3">
           <div>
-            <label className="text-xs font-medium text-gray-600">Monto cobrado ($)</label>
-            <input type="number" value={montoCobrado} onChange={e=>setMontoCobrado(e.target.value)}
-              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-400"/>
+            <label className="text-xs font-medium text-gray-700 block mb-1">💵 ¿Cuánto se cobró realmente?</label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-medium">$</span>
+              <input 
+                type="number" 
+                value={montoCobrado} 
+                onChange={e=>setMontoCobrado(e.target.value)}
+                step="0.01"
+                className="w-full pl-8 pr-3 py-3 border-2 border-gray-200 rounded-lg text-base font-semibold focus:outline-none focus:border-green-400"
+              />
+            </div>
+            <p className="text-xs text-gray-500 mt-1">Ingresá el monto exacto que entró a la cuenta bancaria (incluye descuentos/retenciones)</p>
           </div>
-          <div>
-            <label className="text-xs font-medium text-gray-600">Retenciones / descuentos ($)</label>
-            <input type="number" value={retenciones||""} onChange={e=>setRetenciones(e.target.value)}
-              placeholder="0" className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-400"/>
-          </div>
-          {parseFloat(retenciones)>0&&(
-            <div className="col-span-2">
-              <label className="text-xs font-medium text-gray-600">Detalle de retenciones</label>
-              <input type="text" value={retencionesDetalle} onChange={e=>setRetencionesDetalle(e.target.value)}
-                placeholder="Ej: Ret. IIBB 3%, Ret. Ganancias..."
-                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-400"/>
+
+          {/* SECCIÓN 3: DISCRIMINACIÓN AUTOMÁTICA DE DESCUENTO */}
+          {hayDescuento && (
+            <div className="bg-amber-50 border-2 border-amber-200 rounded-xl p-4">
+              <div className="space-y-2">
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-amber-700">Total facturado:</span>
+                  <span className="font-semibold text-amber-900">{fmtMoney(totalFactura)}</span>
+                </div>
+                <div className="flex justify-between items-center text-sm border-t border-amber-200 pt-2">
+                  <span className="text-amber-700">Menos: Descuento/Retención:</span>
+                  <span className="font-bold text-red-600">-{fmtMoney(descuentoCalculado)}</span>
+                </div>
+                <div className="flex justify-between items-center text-base font-bold bg-white rounded-lg p-2">
+                  <span className="text-gray-700">Cobrado neto:</span>
+                  <span className="text-green-600">{fmtMoney(montoCobradoNum)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* SECCIÓN 4: DETALLE DE DESCUENTO/RETENCIÓN */}
+          {hayDescuento && (
+            <div>
+              <label className="text-xs font-medium text-gray-700 block mb-1">📝 Detallar el descuento/retención</label>
+              <input 
+                type="text" 
+                value={retencionesDetalle} 
+                onChange={e=>setRetencionesDetalle(e.target.value)}
+                placeholder="Ej: Ret. IIBB 3% + Ret. Ganancias 4%"
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-amber-400"
+              />
+              <p className="text-xs text-gray-500 mt-1">Esto queda registrado para auditoría</p>
             </div>
           )}
         </div>
-        {parseFloat(retenciones)>0&&(
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex justify-between items-center">
-            <span className="text-xs text-amber-700">Neto a recibir:</span>
-            <span className="font-bold text-amber-800">{fmtMoney(neto)}</span>
-          </div>
-        )}
-        <div className="flex gap-3 justify-end pt-2">
-          <button onClick={onClose} className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50">Cancelar</button>
-          <button onClick={()=>onCobrar(factura, montoCobrado, retenciones, retencionesDetalle)}
-            className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium">
+
+        {/* SECCIÓN 5: SELECCIONAR CUENTA DESTINO */}
+        <div>
+          <label className="text-xs font-medium text-gray-700 block mb-1">🏦 ¿A qué cuenta entró el dinero?</label>
+          <select 
+            value={cuentaDestinoId} 
+            onChange={e=>setCuentaDestinoId(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-400">
+            <option value="">— Sin asignar —</option>
+            {cuentasActivas.map(c => (
+              <option key={c.id} value={c.id}>
+                {c.tipo_efectivo ? "💵 " : "🏦 "}{c.nombre} ({c.banco})
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-gray-500 mt-1">El saldo se actualizará automáticamente con el monto cobrado</p>
+        </div>
+
+        {/* BOTONES DE ACCIÓN */}
+        <div className="flex gap-3 justify-end pt-4 border-t border-gray-200">
+          <button 
+            onClick={onClose} 
+            className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50 font-medium">
+            Cancelar
+          </button>
+          <button 
+            onClick={handleConfirmar}
+            disabled={!cuentaDestinoId || montoCobradoNum <= 0}
+            className="px-5 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold disabled:opacity-50 disabled:cursor-not-allowed">
             ✓ Confirmar cobro
           </button>
         </div>
@@ -2119,10 +2192,11 @@ function SyncArcaModal({ clients, invoices, onClose, onImportar }) {
 // ── CARGA MANUAL DE FACTURA EXTERNA (emitida en ARCA Web) ─────────────────
 // Para facturas que se emiten directamente en arca.gob.ar (PV 1, 2, etc.)
 // y necesitamos sumarlas a los totales de RadioFact sin re-emitir.
-function FacturaManualModal({ clients, onClose, onSave }) {
+function FacturaManualModal({ clients, contracts=[], onClose, onSave }) {
   const hoy = new Date().toISOString().slice(0, 10);
   const [form, setForm] = useState({
     clientId: "",
+    contractId: "",
     puntoVenta: 1,
     numero: "",
     tipoFactura: "A",
@@ -2199,6 +2273,7 @@ function FacturaManualModal({ clients, onClose, onSave }) {
         fechaPago: "",
         emailEnviado: false,
         origen: "manual_arca",
+        contractId: form.contractId || null,
         fch_serv_desde: form.fch_serv_desde ? form.fch_serv_desde.replace(/-/g, "") : "",
         fch_serv_hasta: form.fch_serv_hasta ? form.fch_serv_hasta.replace(/-/g, "") : "",
         fch_vto_pago: form.fch_vto_pago ? form.fch_vto_pago.replace(/-/g, "") : "",
@@ -2224,13 +2299,46 @@ function FacturaManualModal({ clients, onClose, onSave }) {
         <div className="grid grid-cols-2 gap-3">
           <div className="col-span-2">
             <label className="text-xs font-medium text-gray-600">Cliente *</label>
-            <select value={form.clientId} onChange={f("clientId")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+            <select value={form.clientId} onChange={e=>setForm(p=>({...p, clientId: e.target.value, contractId: ""}))} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
               <option value="">— elegir cliente —</option>
               {clients.filter(c => c.active).map(c => (
                 <option key={c.id} value={c.id}>{c.razonSocial}{c.alias ? ` (${c.alias})` : ""}</option>
               ))}
             </select>
           </div>
+
+          {form.clientId && contracts.filter(ct => ct.clientId === form.clientId && ct.active !== false).length > 0 && (
+            <div className="col-span-2 bg-blue-50 border border-blue-200 rounded-lg p-2">
+              <label className="text-xs font-medium text-blue-700">📋 Asociar a contrato existente (opcional)</label>
+              <select
+                value={form.contractId}
+                onChange={e => {
+                  const ctId = e.target.value;
+                  const ct = contracts.find(x => x.id === ctId);
+                  if (ct) {
+                    setForm(p => ({
+                      ...p,
+                      contractId: ctId,
+                      descripcion: ct.descripcion || p.descripcion,
+                      neto: String(ct.montoNeto || ""),
+                      iva: String(ct.iva || ""),
+                    }));
+                  } else {
+                    setForm(p => ({ ...p, contractId: "" }));
+                  }
+                }}
+                className="w-full mt-1 px-3 py-2 border border-blue-200 rounded-lg text-sm focus:outline-none bg-white"
+              >
+                <option value="">— Sin contrato asociado —</option>
+                {contracts.filter(ct => ct.clientId === form.clientId && ct.active !== false).map(ct => (
+                  <option key={ct.id} value={ct.id}>
+                    {ct.descripcion} · {fmtMoney(ct.total)}
+                  </option>
+                ))}
+              </select>
+              {form.contractId && <p className="text-xs text-blue-600 mt-1">✓ Descripción y montos pre-cargados desde el contrato. Podés editarlos si esta factura difiere.</p>}
+            </div>
+          )}
 
           <div>
             <label className="text-xs font-medium text-gray-600">Tipo factura *</label>
@@ -2375,7 +2483,7 @@ function ModalCobro({inv,onSave,onClose}){
   );
 }
 
-function Billing({clients,contracts,setContracts,invoices,setInvoices,notifications,setNotifications,config,canEdit,descargarPDF,guardarFacturaSupabase,emitirNotaCredito,registrarEmailEnHistorial,marcarEmailEnviadoSupabase,actualizarEmailsCliente}){
+function Billing({clients,contracts,setContracts,invoices,setInvoices,notifications,setNotifications,config,canEdit,descargarPDF,guardarFacturaSupabase,emitirNotaCredito,registrarEmailEnHistorial,marcarEmailEnviadoSupabase,actualizarEmailsCliente,cuentasBancarias=[],setCuentasBancarias}){
   const today=new Date();
   const [selMonth,setSelMonth]=useState(today.getMonth()+1);
   const [selYear,setSelYear]=useState(today.getFullYear());
@@ -2678,25 +2786,45 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
   };
 
 
-  const marcarCobrada = async (inv, montoCobrado, retenciones, retencionesDetalle) => {
+  const marcarCobrada = async (inv, montoCobrado, retenciones, retencionesDetalle, cuentaDestinoId) => {
+    const montoNum = parseFloat(montoCobrado) || inv.total;
+    const retenNum = parseFloat(retenciones) || 0;
+    const montoNeto = montoNum - retenNum; // lo que efectivamente entra a la cuenta
     const payload = {
       estado: "Pagada",
       fecha_pago: todayStr(),
-      monto_cobrado: parseFloat(montoCobrado) || inv.total,
-      retenciones: parseFloat(retenciones) || 0,
+      monto_cobrado: montoNum,
+      retenciones: retenNum,
       retenciones_detalle: retencionesDetalle || "",
+      cuenta_destino_id: cuentaDestinoId || null,
     };
     const esUUID = inv.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(inv.id);
     if (esUUID) {
       const { error } = await supabase.from("facturas").update(payload).eq("id", inv.id);
       if (error) { alert("Error guardando cobro: " + error.message); return; }
     }
+    // Actualizar saldo de cuenta destino (si se eligió una)
+    if (cuentaDestinoId && setCuentasBancarias) {
+      const cuenta = (cuentasBancarias||[]).find(c => c.id === cuentaDestinoId);
+      if (cuenta) {
+        const nuevoSaldo = (parseFloat(cuenta.saldo_actual)||0) + montoNeto;
+        const { error: errCuenta } = await supabase.from("cuentas_bancarias")
+          .update({ saldo_actual: nuevoSaldo }).eq("id", cuentaDestinoId);
+        if (errCuenta) { alert("⚠️ Cobro registrado pero falló actualización de saldo: " + errCuenta.message); }
+        else {
+          setCuentasBancarias(prev => prev.map(c =>
+            c.id === cuentaDestinoId ? { ...c, saldo_actual: nuevoSaldo } : c
+          ));
+        }
+      }
+    }
     updateInvoice(inv.id, {
       estado: "Pagada",
       fechaPago: todayStr(),
-      montoCobrado: parseFloat(montoCobrado) || inv.total,
-      retenciones: parseFloat(retenciones) || 0,
+      montoCobrado: montoNum,
+      retenciones: retenNum,
       retencionesDetalle: retencionesDetalle || "",
+      cuentaDestinoId: cuentaDestinoId || null,
     });
     setModalCobro(null);
   };
@@ -2733,22 +2861,42 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
           )}
         </div>
       </div>
-      {monthInvoices.length>0&&(
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {[
-            {label:"Neto",value:fmtMoney(totNeto),cls:"bg-gray-50 border-gray-200",txt:"text-gray-700",sub:totalesMes.cantidad>0?`${totalesMes.cantidad} factura(s) activas`:""},
-            {label:"IVA 10.5%",value:fmtMoney(totIva),cls:"bg-orange-50 border-orange-200",txt:"text-orange-700",sub:"débito fiscal"},
-            {label:"Total",value:fmtMoney(totTotal),cls:"bg-blue-50 border-blue-200",txt:"text-blue-700",sub:"facturado neto de NC"},
-            {label:"IIBB 3%",value:fmtMoney(totIibb),cls:"bg-purple-50 border-purple-200",txt:"text-purple-700",sub:"a pagar (informativo)"},
-          ].map(s=>(
-            <div key={s.label} className={`rounded-xl border p-3 ${s.cls}`}>
-              <p className="text-xs text-gray-500">{s.label}</p>
-              <p className={`font-bold text-base ${s.txt}`}>{s.value}</p>
-              {s.sub && <p className="text-xs text-gray-400 mt-0.5">{s.sub}</p>}
+      {monthInvoices.length>0&&(() => {
+        const facPV3 = monthInvoices.filter(i => (i.puntoVenta||3) === 3 && i.estado !== "Anulada");
+        const facPV1 = monthInvoices.filter(i => (i.puntoVenta||3) !== 3 && i.estado !== "Anulada");
+        const totPV3 = facPV3.reduce((s,i)=>s+(i.total||0), 0);
+        const totPV1 = facPV1.reduce((s,i)=>s+(i.total||0), 0);
+        return (
+          <>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              {[
+                {label:"Neto",value:fmtMoney(totNeto),cls:"bg-gray-50 border-gray-200",txt:"text-gray-700",sub:totalesMes.cantidad>0?`${totalesMes.cantidad} factura(s) activas`:""},
+                {label:"IVA 10.5%",value:fmtMoney(totIva),cls:"bg-orange-50 border-orange-200",txt:"text-orange-700",sub:"débito fiscal"},
+                {label:"Total",value:fmtMoney(totTotal),cls:"bg-blue-50 border-blue-200",txt:"text-blue-700",sub:"facturado neto de NC"},
+                {label:"IIBB 3%",value:fmtMoney(totIibb),cls:"bg-purple-50 border-purple-200",txt:"text-purple-700",sub:"a pagar (informativo)"},
+              ].map(s=>(
+                <div key={s.label} className={`rounded-xl border p-3 ${s.cls}`}>
+                  <p className="text-xs text-gray-500">{s.label}</p>
+                  <p className={`font-bold text-base ${s.txt}`}>{s.value}</p>
+                  {s.sub && <p className="text-xs text-gray-400 mt-0.5">{s.sub}</p>}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      )}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="bg-blue-50 border border-blue-200 border-l-4 border-l-blue-500 rounded-xl p-3">
+                <p className="text-xs text-blue-600 font-medium">📻 PV 3 — RadioFact (automáticas)</p>
+                <p className="font-bold text-lg text-blue-800 mt-1">{fmtMoney(totPV3)}</p>
+                <p className="text-xs text-blue-500 mt-0.5">{facPV3.length} factura(s) emitidas vía ARCA SDK</p>
+              </div>
+              <div className="bg-purple-50 border border-purple-200 border-l-4 border-l-purple-500 rounded-xl p-3">
+                <p className="text-xs text-purple-600 font-medium">📄 PV 1 — ARCA Web (manuales)</p>
+                <p className="font-bold text-lg text-purple-800 mt-1">{fmtMoney(totPV1)}</p>
+                <p className="text-xs text-purple-500 mt-0.5">{facPV1.length} factura(s) cargadas a mano</p>
+              </div>
+            </div>
+          </>
+        );
+      })()}
       {pendingContracts.length>0&&canEdit&&(
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -2938,7 +3086,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
         />
       )}
       {manualModal && (
-        <FacturaManualModal
+        <FacturaManualModal contracts={contracts}
           clients={clients}
           onClose={()=>setManualModal(false)}
           onSave={async (inv) => {
@@ -2954,7 +3102,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
           }}
         />
       )}
-      {modalCobro&&<CobroModal factura={modalCobro} onCobrar={marcarCobrada} onClose={()=>setModalCobro(null)}/>}
+      {modalCobro&&<CobroModal factura={modalCobro} onCobrar={marcarCobrada} onClose={()=>setModalCobro(null)} cuentasBancarias={cuentasBancarias}/>}
       {syncModal && (
         <SyncArcaModal
           clients={clients}
@@ -4876,6 +5024,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
   const [fMonth,setFMonth]=useState(String(today.getMonth()+1));
   const [fYear,setFYear]=useState(String(today.getFullYear()));
   const [modalCuentas,setModalCuentas]=useState(false);
+  const [modalMovEfectivo,setModalMovEfectivo]=useState(false);
 
   // ── FILTROS DE PERÍODO ─────────────────────────
   const filtInv=invoices.filter(i=>(!fMonth||i.month===Number(fMonth))&&(!fYear||i.year===Number(fYear)));
@@ -4889,6 +5038,20 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
   const totIibb = Math.round(totNeto * 0.03); // IIBB Santa Cruz 3%
   const totCob = filtInv.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+i.total,0);
   const totAd = totFact - totCob;
+
+  // ── FACTURACIÓN POR PUNTO DE VENTA ─────────────
+  const facPV3 = filtInv.filter(i => (i.puntoVenta||3) === 3 && i.estado !== "Anulada");
+  const facPV1 = filtInv.filter(i => (i.puntoVenta||3) !== 3 && i.estado !== "Anulada");
+  const totPV3 = facPV3.reduce((s,i)=>s+(i.total||0), 0);
+  const totPV1 = facPV1.reduce((s,i)=>s+(i.total||0), 0);
+  const cobPV3 = facPV3.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+i.total,0);
+  const cobPV1 = facPV1.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+i.total,0);
+
+  // ── EFECTIVO Y CUENTAS BANCARIAS SEPARADAS ─────
+  const cuentasEfectivo = cuentasBancarias.filter(c => c.tipo_efectivo === true);
+  const cuentasBanco = cuentasBancarias.filter(c => c.tipo_efectivo !== true);
+  const totalEfectivo = cuentasEfectivo.filter(c => c.activa !== false).reduce((s,c) => s + (parseFloat(c.saldo_actual)||0), 0);
+  const totalEnBancos = cuentasBanco.filter(c => c.activa !== false).reduce((s,c) => s + (parseFloat(c.saldo_actual)||0), 0);
 
   // ── GASTOS DISCRIMINADOS ───────────────────────
   const gastosImpuestosBanco = filtExp.filter(e=>e.categoria==="Impuestos bancarios");
@@ -4964,38 +5127,63 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
       </div>
 
       {/* ══════════════════════════════════════════ */}
-      {/* 1) CUENTAS BANCARIAS                       */}
+      {/* 1) CUENTAS BANCARIAS Y EFECTIVO            */}
       {/* ══════════════════════════════════════════ */}
       <div className="bg-white rounded-xl border border-emerald-200 p-4">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-emerald-700">🏦 Cuentas Bancarias</h3>
-          <button
-            onClick={() => setModalCuentas(true)}
-            className="flex items-center gap-1 text-xs bg-emerald-600 text-white px-3 py-1.5 rounded-lg hover:bg-emerald-700"
-          >
-            <Icon d={Icons.plus} size={12}/>Nueva cuenta
-          </button>
+          <h3 className="text-sm font-semibold text-emerald-700">🏦 Cuentas y efectivo</h3>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setModalMovEfectivo(true)}
+              className="flex items-center gap-1 text-xs bg-amber-500 text-white px-3 py-1.5 rounded-lg hover:bg-amber-600"
+              title="Registrar entrada o salida de efectivo"
+            >
+              <Icon d={Icons.cash} size={12}/>Mov. efectivo
+            </button>
+            <button
+              onClick={() => setModalCuentas(true)}
+              className="flex items-center gap-1 text-xs bg-emerald-600 text-white px-3 py-1.5 rounded-lg hover:bg-emerald-700"
+            >
+              <Icon d={Icons.plus} size={12}/>Nueva cuenta
+            </button>
+          </div>
         </div>
         {cuentasBancarias.length === 0 ? (
           <p className="text-sm text-gray-400 text-center py-4">No hay cuentas registradas. Hacé click en "Nueva cuenta" para agregar una.</p>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {cuentasBancarias.map(c => (
-              <div
-                key={c.id}
-                className={`rounded-lg p-3 border ${c.activa === false ? "bg-gray-50 border-gray-200 opacity-60" : "bg-gradient-to-br from-emerald-50 to-teal-50 border-emerald-200"}`}
-              >
+            {[...cuentasBancarias].sort((a,b) => {
+              // Efectivo SIEMPRE al final, los bancos primero por saldo desc
+              if (a.tipo_efectivo === true && b.tipo_efectivo !== true) return 1;
+              if (a.tipo_efectivo !== true && b.tipo_efectivo === true) return -1;
+              return (parseFloat(b.saldo_actual)||0) - (parseFloat(a.saldo_actual)||0);
+            }).map(c => {
+              const isEfectivo = c.tipo_efectivo === true;
+              const inactive = c.activa === false;
+              const bgClass = inactive
+                ? "bg-gray-50 border-gray-200 opacity-60"
+                : isEfectivo
+                  ? "bg-gradient-to-br from-amber-50 to-yellow-50 border-amber-300"
+                  : "bg-gradient-to-br from-emerald-50 to-teal-50 border-emerald-200";
+              const labelClass = isEfectivo ? "text-amber-700" : "text-emerald-700";
+              const subClass = isEfectivo ? "text-amber-500" : "text-emerald-500";
+              const amountClass = isEfectivo ? "text-amber-900" : "text-emerald-900";
+              const borderClass = isEfectivo ? "border-amber-100" : "border-emerald-100";
+              return (
+              <div key={c.id} className={`rounded-lg p-3 border ${bgClass}`}>
                 <div className="flex items-start justify-between mb-2">
                   <div>
-                    <p className="text-xs font-medium text-emerald-700">{c.nombre}</p>
-                    <p className="text-xs text-emerald-500 mt-0.5">{c.banco}</p>
+                    <p className={`text-xs font-medium ${labelClass}`}>
+                      {isEfectivo ? "💵 " : "🏦 "}{c.nombre}
+                    </p>
+                    <p className={`text-xs ${subClass} mt-0.5`}>{c.banco}</p>
                   </div>
-                  {c.activa === false && (
+                  {inactive && (
                     <span className="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded">Inactiva</span>
                   )}
                 </div>
-                <p className="text-lg font-bold text-emerald-900">{fmtMoney(c.saldo_actual)}</p>
-                <div className="flex gap-1 mt-2 pt-2 border-t border-emerald-100">
+                <p className={`text-lg font-bold ${amountClass}`}>{fmtMoney(c.saldo_actual)}</p>
+                <div className={`flex gap-1 mt-2 pt-2 border-t ${borderClass}`}>
                   <button
                     onClick={() => desactivarCuenta(c)}
                     className="text-xs px-2 py-1 bg-white border border-gray-200 text-gray-600 rounded hover:bg-gray-50 flex-1"
@@ -5012,7 +5200,8 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -5022,9 +5211,9 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
       {/* ══════════════════════════════════════════ */}
       <div className="bg-white rounded-xl border border-gray-200 p-4">
         <h3 className="text-sm font-semibold text-gray-700 mb-3">📊 Facturación e impuestos</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
           <div className="bg-blue-50 rounded-lg p-3 border-l-4 border-blue-500">
-            <p className="text-xs text-gray-500">Facturado</p>
+            <p className="text-xs text-gray-500">Facturado TOTAL</p>
             <p className="text-xl font-bold text-blue-700 mt-1">{fmtMoney(totFact)}</p>
             <p className="text-xs text-gray-400 mt-0.5">neto {fmtMoney(totNeto)} + IVA {fmtMoney(totIva)}</p>
           </div>
@@ -5037,6 +5226,30 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
             <p className="text-xs text-gray-500">IIBB Santa Cruz 3%</p>
             <p className="text-xl font-bold text-purple-600 mt-1">{fmtMoney(totIibb)}</p>
             <p className="text-xs text-gray-400 mt-0.5">sobre base imponible</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-3 border-t border-gray-100">
+          <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-xs text-blue-600 font-medium">📻 PV 3 — RadioFact</p>
+                <p className="text-xs text-blue-400">automáticas vía ARCA SDK</p>
+              </div>
+              <span className="text-xs bg-blue-200 text-blue-700 px-2 py-0.5 rounded-full">{facPV3.length}</span>
+            </div>
+            <p className="text-lg font-bold text-blue-800 mt-2">{fmtMoney(totPV3)}</p>
+            <p className="text-xs text-blue-500 mt-1">Cobrado: {fmtMoney(cobPV3)} · Pendiente: {fmtMoney(totPV3 - cobPV3)}</p>
+          </div>
+          <div className="bg-purple-50 rounded-lg p-3 border border-purple-200">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-xs text-purple-600 font-medium">📄 PV 1 — ARCA Web</p>
+                <p className="text-xs text-purple-400">cargadas manualmente</p>
+              </div>
+              <span className="text-xs bg-purple-200 text-purple-700 px-2 py-0.5 rounded-full">{facPV1.length}</span>
+            </div>
+            <p className="text-lg font-bold text-purple-800 mt-2">{fmtMoney(totPV1)}</p>
+            <p className="text-xs text-purple-500 mt-1">Cobrado: {fmtMoney(cobPV1)} · Pendiente: {fmtMoney(totPV1 - cobPV1)}</p>
           </div>
         </div>
       </div>
@@ -5061,16 +5274,23 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
       </div>
 
       {/* ══════════════════════════════════════════ */}
-      {/* 4) TOTAL DE ACTIVOS                        */}
+      {/* 4) TOTAL DE ACTIVOS — desglosado            */}
       {/* ══════════════════════════════════════════ */}
-      <div className="bg-gradient-to-r from-emerald-500 to-teal-500 rounded-xl p-5 text-white shadow-md">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs text-emerald-100 uppercase tracking-wide font-medium">Total de activos</p>
-            <p className="text-3xl font-bold mt-1">{fmtMoney(totalActivos)}</p>
-            <p className="text-xs text-emerald-100 mt-1">suma de {cuentasActivas.length} cuenta(s) activa(s)</p>
-          </div>
-          <div className="text-5xl opacity-30">🏦</div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="bg-gradient-to-r from-emerald-500 to-teal-500 rounded-xl p-5 text-white shadow-md">
+          <p className="text-xs text-emerald-100 uppercase tracking-wide font-medium">Total activos</p>
+          <p className="text-2xl font-bold mt-1">{fmtMoney(totalActivos)}</p>
+          <p className="text-xs text-emerald-100 mt-1">{cuentasActivas.length} cuenta(s) activa(s)</p>
+        </div>
+        <div className="bg-gradient-to-r from-blue-500 to-cyan-500 rounded-xl p-5 text-white shadow-md">
+          <p className="text-xs text-blue-100 uppercase tracking-wide font-medium">🏦 En bancos</p>
+          <p className="text-2xl font-bold mt-1">{fmtMoney(totalEnBancos)}</p>
+          <p className="text-xs text-blue-100 mt-1">{cuentasBanco.filter(c=>c.activa!==false).length} cuenta(s)</p>
+        </div>
+        <div className="bg-gradient-to-r from-amber-500 to-yellow-500 rounded-xl p-5 text-white shadow-md">
+          <p className="text-xs text-amber-100 uppercase tracking-wide font-medium">💵 Efectivo</p>
+          <p className="text-2xl font-bold mt-1">{fmtMoney(totalEfectivo)}</p>
+          <p className="text-xs text-amber-100 mt-1">{cuentasEfectivo.filter(c=>c.activa!==false).length} caja(s)</p>
         </div>
       </div>
 
@@ -5213,7 +5433,92 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
           onClose={() => setModalCuentas(false)}
         />
       )}
+
+      {/* ── MODAL MOVIMIENTO DE EFECTIVO ────────────── */}
+      {modalMovEfectivo && (
+        <MovimientoEfectivoModal
+          cuentasEfectivo={cuentasEfectivo}
+          setCuentasBancarias={setCuentasBancarias}
+          onClose={() => setModalMovEfectivo(false)}
+        />
+      )}
     </div>
+  );
+}
+
+// ========================================
+// MODAL MOVIMIENTO DE EFECTIVO
+// ========================================
+function MovimientoEfectivoModal({ cuentasEfectivo, setCuentasBancarias, onClose }) {
+  const cuentasActivas = (cuentasEfectivo||[]).filter(c => c.activa !== false);
+  const [cuentaId, setCuentaId] = useState(cuentasActivas[0]?.id || "");
+  const [tipo, setTipo] = useState("entrada");
+  const [monto, setMonto] = useState("");
+  const [motivo, setMotivo] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const guardar = async () => {
+    const m = parseFloat(monto);
+    if (!cuentaId) { alert("Elegí una caja de efectivo"); return; }
+    if (!m || m <= 0) { alert("Monto inválido"); return; }
+    setSaving(true);
+    const cuenta = cuentasActivas.find(c => c.id === cuentaId);
+    const delta = tipo === "entrada" ? m : -m;
+    const nuevoSaldo = (parseFloat(cuenta.saldo_actual)||0) + delta;
+    if (nuevoSaldo < 0 && !confirm(`El saldo quedaría en ${fmtMoney(nuevoSaldo)} (negativo). ¿Continuar?`)) {
+      setSaving(false); return;
+    }
+    const { error } = await supabase.from("cuentas_bancarias")
+      .update({ saldo_actual: nuevoSaldo }).eq("id", cuentaId);
+    if (error) { alert("Error: "+error.message); setSaving(false); return; }
+    setCuentasBancarias(prev => prev.map(c =>
+      c.id === cuentaId ? { ...c, saldo_actual: nuevoSaldo } : c
+    ));
+    onClose();
+  };
+
+  if (cuentasActivas.length === 0) {
+    return (
+      <Modal title="💵 Movimiento de efectivo" onClose={onClose}>
+        <div className="text-center py-6">
+          <p className="text-sm text-gray-600 mb-2">No hay cajas de efectivo activas.</p>
+          <p className="text-xs text-gray-400">Creá una desde "Nueva cuenta" marcando la opción "Es efectivo".</p>
+        </div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal title="💵 Movimiento de efectivo" onClose={onClose}>
+      <div className="space-y-3">
+        <div>
+          <label className="text-xs font-medium text-gray-600">Caja de efectivo</label>
+          <select value={cuentaId} onChange={e=>setCuentaId(e.target.value)} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+            {cuentasActivas.map(c => (
+              <option key={c.id} value={c.id}>{c.nombre} (saldo: {fmtMoney(c.saldo_actual)})</option>
+            ))}
+          </select>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={()=>setTipo("entrada")}
+            className={`px-3 py-2 rounded-lg text-sm font-medium border ${tipo==="entrada" ? "bg-emerald-100 border-emerald-400 text-emerald-700" : "bg-white border-gray-200 text-gray-500"}`}
+          >➕ Entrada</button>
+          <button
+            onClick={()=>setTipo("salida")}
+            className={`px-3 py-2 rounded-lg text-sm font-medium border ${tipo==="salida" ? "bg-red-100 border-red-400 text-red-700" : "bg-white border-gray-200 text-gray-500"}`}
+          >➖ Salida</button>
+        </div>
+        <Field label="Monto" value={monto} onChange={e=>setMonto(e.target.value)} type="number"/>
+        <Field label="Motivo / descripción" value={motivo} onChange={e=>setMotivo(e.target.value)}/>
+        <div className="bg-gray-50 rounded-lg p-2 text-xs">
+          <p className="text-gray-500">Saldo nuevo: <span className={`font-bold ${tipo==="entrada"?"text-emerald-700":"text-red-600"}`}>
+            {fmtMoney(((cuentasActivas.find(c=>c.id===cuentaId)?.saldo_actual)||0) + (tipo==="entrada" ? (parseFloat(monto)||0) : -(parseFloat(monto)||0)))}
+          </span></p>
+        </div>
+        <ModalFooter onClose={onClose} onSave={guardar} saveLabel={saving ? "Guardando..." : "Confirmar"}/>
+      </div>
+    </Modal>
   );
 }
 
