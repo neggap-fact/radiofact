@@ -36,7 +36,7 @@ const BACKEND_URL = "https://radiofact-backend-production.up.railway.app";
 const DEBUG_MODE = false; // Cambiar a false para emitir facturas reales a ARCA
 
 const MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
-const EXPENSE_CATS = ["Sueldos","Gastos Fijos","Gastos Variables","Gastos Externos","Proveedores","Servicios","Impuestos","Alquiler","Otros"];
+const EXPENSE_CATS = ["Sueldos","Gastos Fijos","Gastos Variables","Gastos Externos","Proveedores","Servicios","Impuestos","Impuestos bancarios","Comisiones bancarias","Alquiler","Otros"];
 
 function fmtMoney(n) {
   return new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:0}).format(n||0);
@@ -980,7 +980,7 @@ export default function App() {
     {id:"notas-credito",label:"Notas de Crédito",icon:Icons.creditNote},
     {id:"expenses",label:"Gastos",icon:Icons.expenses},
     {id:"finance",label:"Finanzas",icon:Icons.finance},
-    {id:"reports",label:"Reportes",icon:Icons.download},
+    {id:"proveedores",label:"Proveedores",icon:Icons.users},
     ...(currentUser.role==="webmaster"?[{id:"users",label:"Usuarios",icon:Icons.users}]:[]),
     {id:"settings",label:"Configuración",icon:Icons.settings},
   ];
@@ -1046,8 +1046,8 @@ export default function App() {
             }}
           />}
           {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} currentUser={currentUser} canEdit={canEdit} plantillas={plantillasGastos} setPlantillas={setPlantillasGastos} proveedores={proveedores} setProveedores={setProveedores} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias} tarjetasCredito={tarjetasCredito} setTarjetasCredito={setTarjetasCredito}/>}
+          {page==="proveedores"&&<ProveedoresPage proveedores={proveedores} setProveedores={setProveedores} canEdit={canEdit}/>}
           {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses} ingresosBancarios={ingresosBancarios} setIngresosBancarios={setIngresosBancarios} saldosIniciales={saldosIniciales} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias}/>}
-          {page==="reports_disabled"&&<Reports clients={clients} contracts={contracts} invoices={invoices} expenses={expenses}/>}
           {page==="users"&&currentUser.role==="webmaster"&&<Users users={users} setUsers={setUsers} currentUser={currentUser}/>}
           {page==="settings"&&<Settings config={config} setConfig={setConfig} canEdit={canEdit}/>}
           {emailNCModal && (
@@ -3710,8 +3710,6 @@ function EmailNCModal({ nc, factura, cliente, config, onClose, onSent }) {
 function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlantillas,proveedores,setProveedores,cuentasBancarias,setCuentasBancarias,tarjetasCredito,setTarjetasCredito}){
   const [modal,setModal]=useState(null);
   const [modalPlantillas,setModalPlantillas]=useState(false);
-  const [modalProveedores,setModalProveedores]=useState(false);
-  const [modalCuentas,setModalCuentas]=useState(false);
   const [modalTarjetas,setModalTarjetas]=useState(false);
   const [fMonth,setFMonth]=useState(String(new Date().getMonth()+1));
   const [fYear,setFYear]=useState(String(new Date().getFullYear()));
@@ -3862,9 +3860,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
           <button onClick={()=>{setFSearch("");setFCat("");setFTipo("");}} className="text-xs text-gray-400 hover:text-gray-600 underline">Limpiar</button>
         )}
         {canEdit&&<>
-          <button onClick={()=>setModalCuentas(true)} className="flex items-center gap-2 bg-emerald-50 border border-emerald-300 text-emerald-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-emerald-100 ml-auto"><Icon d={Icons.bank} size={14}/>Cuentas</button>
-          <button onClick={()=>setModalTarjetas(true)} className="flex items-center gap-2 bg-blue-50 border border-blue-300 text-blue-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-blue-100"><Icon d={Icons.card} size={14}/>Tarjetas</button>
-          <button onClick={()=>setModalProveedores(true)} className="flex items-center gap-2 bg-white border border-gray-300 text-gray-600 px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-50"><Icon d={Icons.users} size={14}/>Proveedores</button>
+          <button onClick={()=>setModalTarjetas(true)} className="flex items-center gap-2 bg-blue-50 border border-blue-300 text-blue-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-blue-100 ml-auto"><Icon d={Icons.card} size={14}/>Tarjetas</button>
           <button onClick={()=>setModalPlantillas(true)} className="flex items-center gap-2 bg-white border border-gray-300 text-gray-600 px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-50"><Icon d={Icons.settings} size={14}/>Plantillas</button>
           <button onClick={()=>setModal(empty)} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"><Icon d={Icons.plus} size={14}/>Nuevo gasto</button>
         </>}
@@ -3957,9 +3953,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
         {filtered.length===0&&<div className="text-center py-8 text-gray-400 text-sm">Sin gastos</div>}
       </div>
 
-      {modalCuentas&&<CuentasBancariasModal cuentas={cuentasBancarias} setCuentas={setCuentasBancarias} onClose={()=>setModalCuentas(false)}/>}
       {modalTarjetas&&<TarjetasCreditoModal tarjetas={tarjetasCredito} setTarjetas={setTarjetasCredito} onClose={()=>setModalTarjetas(false)}/>}
-      {modalProveedores&&<ProveedoresModal proveedores={proveedores} setProveedores={setProveedores} onClose={()=>setModalProveedores(false)}/>}
       {modalPlantillas&&<PlantillasGastosModal plantillas={plantillas} setPlantillas={setPlantillas} onClose={()=>setModalPlantillas(false)}/>}
       {modal&&<ExpenseModal data={modal} onSave={save} onClose={()=>setModal(null)} plantillas={plantillas} proveedores={proveedores} tarjetasCredito={tarjetasCredito}/>}
       {confirmDelete && (
@@ -4309,6 +4303,163 @@ function TarjetasCreditoModal({tarjetas,setTarjetas,onClose}){
 
 
 // ── MODAL GESTIÓN DE PROVEEDORES ────────────────────────────────────────────
+// ========================================
+// PÁGINA PROVEEDORES (vista completa)
+// ========================================
+
+function ProveedoresPage({proveedores, setProveedores, canEdit}){
+  const emptyP = {nombre:"",cuit:"",categoria:"Gastos Fijos",telefono:"",email:"",notas:""};
+  const [form, setForm] = useState(emptyP);
+  const [editId, setEditId] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState("");
+  const [showForm, setShowForm] = useState(false);
+  const f = k => e => setForm(p => ({...p, [k]: e.target.value}));
+
+  const filtered = proveedores.filter(p => {
+    const q = search.toLowerCase();
+    return !search ||
+      (p.nombre||"").toLowerCase().includes(q) ||
+      (p.cuit||"").toLowerCase().includes(q) ||
+      (p.categoria||"").toLowerCase().includes(q);
+  });
+
+  const guardar = async () => {
+    if(!form.nombre.trim()){ alert("El nombre es obligatorio"); return; }
+    setLoading(true);
+    const payload = {
+      nombre: form.nombre.trim(),
+      cuit: form.cuit || null,
+      categoria: form.categoria || "Otros",
+      telefono: form.telefono || null,
+      email: form.email || null,
+      notas: form.notas || null,
+      activo: true,
+    };
+    if(editId){
+      const {error} = await supabase.from("proveedores").update(payload).eq("id", editId);
+      if(error){ alert("Error: "+error.message); setLoading(false); return; }
+      setProveedores(prev => prev.map(p => p.id === editId ? {...p, ...payload} : p));
+    } else {
+      const {data, error} = await supabase.from("proveedores").insert([payload]).select().single();
+      if(error){ alert("Error: "+error.message); setLoading(false); return; }
+      setProveedores(prev => [...prev, data]);
+    }
+    setForm(emptyP);
+    setEditId(null);
+    setShowForm(false);
+    setLoading(false);
+  };
+
+  const editar = (p) => {
+    setForm({
+      nombre: p.nombre || "",
+      cuit: p.cuit || "",
+      categoria: p.categoria || "Gastos Fijos",
+      telefono: p.telefono || "",
+      email: p.email || "",
+      notas: p.notas || "",
+    });
+    setEditId(p.id);
+    setShowForm(true);
+  };
+
+  const borrar = async (p) => {
+    if(!confirm(`¿Eliminar proveedor "${p.nombre}"?`)) return;
+    const {error} = await supabase.from("proveedores").delete().eq("id", p.id);
+    if(error){ alert("Error: "+error.message); return; }
+    setProveedores(prev => prev.filter(x => x.id !== p.id));
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <h2 className="text-xl font-bold text-gray-800">Proveedores</h2>
+        <span className="text-sm text-gray-400">({proveedores.length})</span>
+        <div className="ml-auto flex gap-2">
+          <input
+            placeholder="Buscar proveedor..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none w-64"
+          />
+          {canEdit && (
+            <button
+              onClick={() => { setForm(emptyP); setEditId(null); setShowForm(!showForm); }}
+              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"
+            >
+              <Icon d={Icons.plus} size={14}/>{showForm ? "Cancelar" : "Nuevo proveedor"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {showForm && canEdit && (
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">
+            {editId ? "Editar proveedor" : "Nuevo proveedor"}
+          </h3>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Nombre *" value={form.nombre} onChange={f("nombre")}/>
+            <Field label="CUIT" value={form.cuit} onChange={f("cuit")}/>
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Categoría</label>
+              <select value={form.categoria} onChange={f("categoria")} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+                {EXPENSE_CATS.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <Field label="Teléfono" value={form.telefono} onChange={f("telefono")}/>
+            <Field label="Email" value={form.email} onChange={f("email")} type="email"/>
+            <Field label="Notas" value={form.notas} onChange={f("notas")}/>
+          </div>
+          <div className="flex justify-end gap-2 mt-3">
+            <button onClick={() => { setForm(emptyP); setEditId(null); setShowForm(false); }} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Cancelar</button>
+            <button onClick={guardar} disabled={loading} className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50">
+              {loading ? "Guardando..." : (editId ? "Actualizar" : "Crear")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <table className="w-full">
+          <thead className="bg-gray-50 border-b border-gray-100">
+            <tr>
+              <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Nombre</th>
+              <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">CUIT</th>
+              <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Categoría</th>
+              <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Teléfono</th>
+              <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Email</th>
+              {canEdit && <th className="text-right text-xs font-medium text-gray-500 px-4 py-3">Acciones</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 ? (
+              <tr><td colSpan={canEdit ? 6 : 5} className="text-center text-sm text-gray-400 py-8">No hay proveedores</td></tr>
+            ) : filtered.map(p => (
+              <tr key={p.id} className="border-b border-gray-50 hover:bg-gray-50">
+                <td className="px-4 py-3 text-sm font-medium text-gray-800">{p.nombre}</td>
+                <td className="px-4 py-3 text-sm text-gray-600">{p.cuit || "—"}</td>
+                <td className="px-4 py-3 text-sm text-gray-600">
+                  <span className="inline-block bg-gray-100 text-gray-700 text-xs px-2 py-0.5 rounded">{p.categoria || "—"}</span>
+                </td>
+                <td className="px-4 py-3 text-sm text-gray-600">{p.telefono || "—"}</td>
+                <td className="px-4 py-3 text-sm text-gray-600">{p.email || "—"}</td>
+                {canEdit && (
+                  <td className="px-4 py-3 text-right">
+                    <button onClick={() => editar(p)} className="text-blue-600 hover:bg-blue-50 p-1 rounded mr-1"><Icon d={Icons.edit} size={14}/></button>
+                    <button onClick={() => borrar(p)} className="text-red-600 hover:bg-red-50 p-1 rounded"><Icon d={Icons.trash} size={14}/></button>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function ProveedoresModal({proveedores,setProveedores,onClose}){
   const emptyP={nombre:"",cuit:"",categoria:"Gastos Fijos",telefono:"",email:"",notas:""};
   const [form,setForm]=useState(emptyP);
@@ -4720,347 +4871,87 @@ function EmitirNCModal({ factura, cliente, onClose, onConfirm }) {
   );
 }
 
-function Reports({clients,contracts,invoices,expenses}){
-  const today=new Date();
-  const [fMonth,setFMonth]=useState(String(today.getMonth()+1));
-  const [fYear,setFYear]=useState(String(today.getFullYear()));
-  const [activeTab,setActiveTab]=useState("facturas");
-  const filtInv=invoices.filter(i=>(!fMonth||i.month===Number(fMonth))&&(!fYear||i.year===Number(fYear)));
-  const filtExp=expenses.filter(e=>{const d=new Date(e.fecha);return(!fMonth||d.getMonth()+1===Number(fMonth))&&(!fYear||d.getFullYear()===Number(fYear));});
-  // Totales descontando facturas anuladas con NC
-  const totRep = totalizarFacturas(filtInv);
-  const totNeto = totRep.neto;
-  const totIva = totRep.iva;
-  const totFact = totRep.total;
-  const totIibb = totRep.iibb;
-  const totCob=filtInv.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+(i.montoCobrado||i.total),0);
-  const totAd=totFact-totCob;
-  const totGastos=filtExp.filter(e=>e.pagado).reduce((s,e)=>s+e.monto,0);
-  const gastosPendFin=filtExp.filter(e=>!e.pagado).reduce((s,e)=>s+e.monto,0);
-  const resultado=totCob-totGastos;
-  const byClient=clients.map(c=>{
-    const ci=filtInv.filter(i=>i.clientId===c.id);
-    const t = totalizarFacturas(ci);
-    return{...c,neto:t.neto,iva:t.iva,total:t.total,iibb:t.iibb,cobrado:ci.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+i.total,0),cantidad:t.cantidad,facturas:ci};
-  }).filter(c=>c.total>0);
-  const periodoLabel=fMonth?`${MONTHS[Number(fMonth)-1]} ${fYear}`:`Todo ${fYear}`;
-
-  const exportExcel=()=>{
-    const BOM="\uFEFF",sep=";",nl="\r\n";
-    const row=(...cols)=>cols.map(c=>String(c??"-").replace(/;/g,",")).join(sep);
-    let csv=BOM;
-    csv+=row(`REPORTE MENSUAL DE FACTURACIÓN — ${periodoLabel.toUpperCase()}`)+nl;
-    csv+=row(`Generado: ${new Date().toLocaleDateString("es-AR")}`)+nl+nl;
-    csv+=row("RESUMEN GENERAL")+nl;
-    csv+=row("Concepto","Monto")+nl;
-    csv+=row("Neto facturado",totNeto)+nl;
-    csv+=row("IVA 10.5%",totIva)+nl;
-    csv+=row("Total facturado",totFact)+nl;
-    csv+=row("Total cobrado",totCob)+nl;
-    csv+=row("Total adeudado",totAd)+nl;
-    csv+=row("Total gastos registrados",totGastos)+nl;
-    csv+=row("  del cual Gastos Externos",gastosExternos)+nl;
-    csv+=row("Ajuste adicional manual",(parseFloat(otrosGastosExtra)||0))+nl;
-    csv+=row("RESULTADO ESTIMADO",resultadoFinal)+nl;
-    csv+=row("(*) Solo orientativo","")+nl+nl;
-    csv+=row("DETALLE DE FACTURAS")+nl;
-    csv+=row("Número","Cliente","Alias","CUIT","Tipo","Período","Neto","IVA 10.5%","Total","Estado","CAE","Fecha Pago")+nl;
-    filtInv.forEach(inv=>{const client=clients.find(c=>c.id===inv.clientId);csv+=row(inv.numero,inv.clientName,client?.alias||"",client?.cuit||"",inv.tipoFactura,inv.periodo,inv.neto,inv.iva,inv.total,inv.estado,inv.cae||"",inv.fechaPago||"")+nl;});
-    csv+=row("","","","","","TOTALES",totNeto,totIva,totFact)+nl+nl;
-    csv+=row("RESUMEN POR CLIENTE")+nl;
-    csv+=row("Cliente","Alias","CUIT","Tipo","Facturas","Neto","IVA","Total","Cobrado","Saldo")+nl;
-    byClient.forEach(c=>{csv+=row(c.razonSocial,c.alias||"",c.cuit,c.tipoFactura,c.cantidad,c.neto,c.iva,c.total,c.cobrado,c.total-c.cobrado)+nl;});
-    csv+=nl+row("DETALLE DE GASTOS")+nl;
-    csv+=row("Fecha","Descripción","Categoría","Proveedor","Comprobante","Monto","Estado")+nl;
-    filtExp.forEach(e=>{csv+=row(e.fecha,e.descripcion,e.categoria,e.proveedor||"",e.comprobante||"",e.monto,e.pagado?"Pagado":"Pendiente")+nl;});
-    csv+=row("","","","","TOTAL GASTOS REGISTRADOS",totGastos)+nl;
-    csv+=row("","","","","OTROS GASTOS",(parseFloat(otrosGastos)||0))+nl;
-    csv+=row("","","","","TOTAL GASTOS",totGastos+(parseFloat(otrosGastos)||0))+nl;
-    const base64=btoa(unescape(encodeURIComponent(csv)));
-    const a=document.createElement("a");
-    a.href=`data:text/csv;charset=utf-8;base64,${base64}`;
-    a.download=`RadioFact_Reporte_${periodoLabel.replace(" ","_")}.csv`;
-    document.body.appendChild(a);a.click();document.body.removeChild(a);
-  };
-
-  const [otrosGastosExtra, setOtrosGastosExtra] = useState(0); // ajuste manual adicional
-  const gastosExternos = filtExp.filter(e=>e.categoria==="Gastos Externos"&&e.pagado).reduce((s,e)=>s+e.monto,0);
-  const totalGastosReporte = totGastos + (parseFloat(otrosGastosExtra)||0);
-  const resultadoFinal = totCob - totalGastosReporte;
-  const tabs=[{id:"facturas",label:"Facturas"},{id:"clientes",label:"Por cliente"},{id:"gastos",label:"Gastos"},{id:"iva",label:"Resumen IVA"}];
-  return(
-    <div className="space-y-4">
-      <div className="flex items-center gap-3 flex-wrap">
-        <select value={fMonth} onChange={e=>setFMonth(e.target.value)} className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
-          <option value="">Todo el año</option>
-          {MONTHS.map((m,i)=><option key={i} value={i+1}>{m}</option>)}
-        </select>
-        <select value={fYear} onChange={e=>setFYear(e.target.value)} className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
-          {[2024,2025,2026].map(y=><option key={y}>{y}</option>)}
-        </select>
-        <span className="text-xs text-gray-500 font-medium flex-1">📄 {periodoLabel}</span>
-        <button onClick={exportExcel} className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-green-700">
-          <Icon d={Icons.download} size={15}/>Descargar Excel
-        </button>
-      </div>
-      <div className="grid grid-cols-4 gap-3">
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
-          <p className="text-xs text-blue-500 font-medium">Facturado</p>
-          <p className="font-bold text-lg text-blue-800">{fmtMoney(totFact)}</p>
-          <p className="text-xs text-blue-400">base {fmtMoney(totNeto)} + IVA {fmtMoney(totIva)}</p>
-        </div>
-        <div className="bg-green-50 border border-green-200 rounded-xl p-3">
-          <p className="text-xs text-green-500 font-medium">Cobrado</p>
-          <p className="font-bold text-lg text-green-800">{fmtMoney(totCob)}</p>
-          <p className="text-xs text-green-400">{filtInv.filter(i=>i.estado==="Pagada").length} facturas cobradas</p>
-        </div>
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
-          <p className="text-xs text-amber-500 font-medium">Adeudado</p>
-          <p className="font-bold text-lg text-amber-800">{fmtMoney(totAd)}</p>
-          <p className="text-xs text-amber-400">{filtInv.filter(i=>i.estado!=="Pagada"&&i.estado!=="Anulada").length} facturas pendientes</p>
-        </div>
-        <div className="bg-red-50 border border-red-200 rounded-xl p-3">
-          <p className="text-xs text-red-500 font-medium">Gastos pagados</p>
-          <p className="font-bold text-lg text-red-800">{fmtMoney(totGastos)}</p>
-          <p className="text-xs text-red-400">IVA a declarar: {fmtMoney(totIva)}</p>
-        </div>
-      </div>
-      <div className="bg-gray-50 rounded-xl border border-gray-200 p-4">
-        <p className="text-xs font-semibold text-gray-500 mb-3">📊 Resultado orientativo del período</p>
-        <div className="flex items-end gap-6 flex-wrap">
-          <div><p className="text-xs text-gray-400">Cobrado</p><p className="font-bold text-green-700">{fmtMoney(totCob)}</p></div>
-          <div><p className="text-xs text-gray-400">Gastos registrados</p><p className="font-bold text-red-600">{fmtMoney(totGastos)}</p></div>
-          {gastosExternos>0&&(
-            <div>
-              <p className="text-xs text-gray-400">Gastos Externos</p>
-              <p className="font-bold text-red-500">{fmtMoney(gastosExternos)}</p>
-              <p className="text-xs text-gray-400">incluidos arriba</p>
-            </div>
-          )}
-          <div>
-            <p className="text-xs text-gray-400 mb-1">Ajuste adicional (opcional)</p>
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs text-gray-500">$</span>
-              <input
-                type="number"
-                value={otrosGastosExtra||""}
-                onChange={e=>setOtrosGastosExtra(e.target.value)}
-                placeholder="0"
-                className="w-32 px-2 py-1 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-blue-400"
-              />
-            </div>
-          </div>
-          <div className={`rounded-xl px-4 py-2 ${resultadoFinal>=0?"bg-green-50 border border-green-200":"bg-red-50 border border-red-200"}`}>
-            <p className="text-xs text-gray-500">Resultado estimado</p>
-            <p className={`font-bold text-lg ${resultadoFinal>=0?"text-green-700":"text-red-600"}`}>{fmtMoney(resultadoFinal)}</p>
-            <p className="text-xs text-gray-400 mt-0.5">Solo orientativo</p>
-          </div>
-        </div>
-        {gastosExternos===0&&(
-          <p className="text-xs text-gray-400 mt-3">💡 Cargá gastos de categoría <strong>Gastos Externos</strong> para registrar compras de equipos, impuestos bancarios, sellados, etc. Se suman automáticamente acá.</p>
-        )}
-      </div>
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div className="flex border-b border-gray-200">
-          {tabs.map(t=>(
-            <button key={t.id} onClick={()=>setActiveTab(t.id)}
-              className={`px-4 py-3 text-sm font-medium transition-colors ${activeTab===t.id?"border-b-2 border-blue-600 text-blue-700":"text-gray-500 hover:text-gray-700"}`}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-        {activeTab==="facturas"&&(
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>{["N° Factura","Cliente","Tipo","Período","Neto","IVA 10.5%","Total","Estado","Pago"].map(h=><th key={h} className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>)}</tr>
-              </thead>
-              <tbody>
-                {filtInv.length===0?<tr><td colSpan={9} className="text-center py-8 text-gray-400 text-sm">Sin facturas</td></tr>:
-                  filtInv.map(inv=>(
-                    <tr key={inv.id} className="border-b border-gray-50 hover:bg-gray-50">
-                      <td className="px-3 py-2.5 font-mono text-xs">{inv.numero}</td>
-                      <td className="px-3 py-2.5 text-xs">
-                        <div className="font-medium">{inv.clientName}</div>
-                        {(() => {
-                          const cli = clients.find(c => c.id === inv.clientId);
-                          return cli?.alias ? <div className="text-xs text-gray-400">{cli.alias}</div> : null;
-                        })()}
-                      </td>
-                      <td className="px-3 py-2.5"><span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-xs font-bold">{inv.tipoFactura}</span></td>
-                      <td className="px-3 py-2.5 text-xs text-gray-500">{inv.periodo}</td>
-                      <td className="px-3 py-2.5 text-xs text-gray-600">{fmtMoney(inv.neto)}</td>
-                      <td className="px-3 py-2.5 text-xs text-orange-600 font-medium">{fmtMoney(inv.iva)}</td>
-                      <td className="px-3 py-2.5 text-xs font-bold">{fmtMoney(inv.total)}</td>
-                      <td className="px-3 py-2.5"><EstadoBadge estado={inv.estado}/></td>
-                      <td className="px-3 py-2.5 text-xs text-gray-500">{inv.fechaPago?fmtDate(inv.fechaPago):"—"}</td>
-                    </tr>
-                  ))}
-              </tbody>
-              {filtInv.length>0&&<tfoot className="bg-gray-50 border-t-2 border-gray-300"><tr><td colSpan={4} className="px-3 py-2.5 text-xs font-bold">TOTALES</td><td className="px-3 py-2.5 text-xs font-bold">{fmtMoney(totNeto)}</td><td className="px-3 py-2.5 text-xs font-bold text-orange-700">{fmtMoney(totIva)}</td><td className="px-3 py-2.5 text-xs font-bold text-blue-700">{fmtMoney(totFact)}</td><td colSpan={2}></td></tr></tfoot>}
-            </table>
-          </div>
-        )}
-        {activeTab==="clientes"&&(
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>{["Cliente","CUIT","Tipo","Facturas","Neto","IVA 10.5%","Total","Cobrado","Saldo"].map(h=><th key={h} className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500">{h}</th>)}</tr>
-              </thead>
-              <tbody>
-                {byClient.length===0?<tr><td colSpan={9} className="text-center py-8 text-gray-400 text-sm">Sin datos</td></tr>:
-                  byClient.map(c=>(
-                    <tr key={c.id} className="border-b border-gray-50 hover:bg-gray-50">
-                      <td className="px-3 py-2.5 text-sm">
-                        <div className="font-medium">{c.razonSocial}</div>
-                        {c.alias && <div className="text-xs text-gray-400 truncate">{c.alias}</div>}
-                      </td>
-                      <td className="px-3 py-2.5 font-mono text-xs text-gray-500">{c.cuit}</td>
-                      <td className="px-3 py-2.5"><span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-xs font-bold">{c.tipoFactura}</span></td>
-                      <td className="px-3 py-2.5 text-xs text-center">{c.cantidad}</td>
-                      <td className="px-3 py-2.5 text-xs text-gray-600">{fmtMoney(c.neto)}</td>
-                      <td className="px-3 py-2.5 text-xs text-orange-600 font-medium">{fmtMoney(c.iva)}</td>
-                      <td className="px-3 py-2.5 text-xs font-bold">{fmtMoney(c.total)}</td>
-                      <td className="px-3 py-2.5 text-xs text-green-700">{fmtMoney(c.cobrado)}</td>
-                      <td className="px-3 py-2.5 text-xs font-semibold text-red-600">{c.total-c.cobrado>0?fmtMoney(c.total-c.cobrado):"—"}</td>
-                    </tr>
-                  ))}
-              </tbody>
-              {byClient.length>0&&<tfoot className="bg-gray-50 border-t-2 border-gray-300"><tr><td colSpan={4} className="px-3 py-2.5 text-xs font-bold">TOTALES</td><td className="px-3 py-2.5 text-xs font-bold">{fmtMoney(totNeto)}</td><td className="px-3 py-2.5 text-xs font-bold text-orange-700">{fmtMoney(totIva)}</td><td className="px-3 py-2.5 text-xs font-bold text-blue-700">{fmtMoney(totFact)}</td><td className="px-3 py-2.5 text-xs font-bold text-green-700">{fmtMoney(totCob)}</td><td className="px-3 py-2.5 text-xs font-bold text-red-600">{totAd>0?fmtMoney(totAd):"—"}</td></tr></tfoot>}
-            </table>
-          </div>
-        )}
-        {activeTab==="gastos"&&(
-          <div>
-            <div className="p-4 border-b border-gray-100">
-              <p className="text-xs font-semibold text-gray-500 mb-3">Por categoría</p>
-              <div className="grid grid-cols-3 gap-3">
-                {EXPENSE_CATS.map(cat=>{
-                  const tot=filtExp.filter(e=>e.categoria===cat).reduce((s,e)=>s+e.monto,0);
-                  if(!tot) return null;
-                  const pct=totGastos>0?Math.round(tot/totGastos*100):0;
-                  return(<div key={cat} className="bg-gray-50 rounded-lg p-3"><div className="flex justify-between mb-1"><span className="text-xs text-gray-500">{cat}</span><span className="text-xs text-gray-400">{pct}%</span></div><p className="font-bold text-sm text-red-600">{fmtMoney(tot)}</p><div className="mt-1.5 h-1.5 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-red-400 rounded-full" style={{width:`${pct}%`}}/></div></div>);
-                })}
-              </div>
-            </div>
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>{["Fecha","Descripción","Categoría","Proveedor","Comprobante","Monto","Estado"].map(h=><th key={h} className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500">{h}</th>)}</tr>
-              </thead>
-              <tbody>
-                {filtExp.length===0?<tr><td colSpan={7} className="text-center py-8 text-gray-400 text-sm">Sin gastos</td></tr>:
-                  filtExp.map(e=>(
-                    <tr key={e.id} className="border-b border-gray-50 hover:bg-gray-50">
-                      <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">{fmtDate(e.fecha)}</td>
-                      <td className="px-3 py-2.5 text-xs font-medium">{e.descripcion}</td>
-                      <td className="px-3 py-2.5"><span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-xs">{e.categoria}</span></td>
-                      <td className="px-3 py-2.5 text-xs text-gray-500">{e.proveedor||"—"}</td>
-                      <td className="px-3 py-2.5 text-xs font-mono text-gray-400">
-                  <div className="flex items-center gap-1">
-                    <span>{e.comprobante||"—"}</span>
-                    {e.url_comprobante && (
-                      <a href={e.url_comprobante} target="_blank" rel="noopener noreferrer"
-                        className="text-blue-500 hover:text-blue-700" title="Ver comprobante">
-                        🔗
-                      </a>
-                    )}
-                  </div>
-                </td>
-                      <td className="px-3 py-2.5 text-xs font-semibold text-red-600">{fmtMoney(e.monto)}</td>
-                      <td className="px-3 py-2.5">
-                  {e.pagado
-                    ? <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">✓ Pagado</span>
-                    : canEdit
-                      ? <button onClick={()=>togglePagado(e)} className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 font-medium" title="Marcar como pagado">⏳ Pendiente</button>
-                      : <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">⏳ Pendiente</span>
-                  }
-                </td>
-                    </tr>
-                  ))}
-              </tbody>
-              {filtExp.length>0&&<tfoot className="bg-gray-50 border-t-2 border-gray-300"><tr><td colSpan={5} className="px-3 py-2.5 text-xs font-bold">TOTAL GASTOS</td><td className="px-3 py-2.5 text-xs font-bold text-red-700">{fmtMoney(totGastos)}</td><td></td></tr></tfoot>}
-            </table>
-          </div>
-        )}
-        {activeTab==="iva"&&(
-          <div className="p-5 space-y-4">
-            <div className="bg-orange-50 border border-orange-200 rounded-xl p-5">
-              <h3 className="font-semibold text-orange-800 mb-4">📊 Resumen IVA — {periodoLabel}</h3>
-              <div className="grid grid-cols-3 gap-6 mb-4">
-                <div><p className="text-xs text-orange-500 mb-1">Base imponible (neto)</p><p className="text-2xl font-bold text-orange-900">{fmtMoney(totNeto)}</p></div>
-                <div><p className="text-xs text-orange-500 mb-1">IVA 10.5% débito fiscal</p><p className="text-2xl font-bold text-orange-900">{fmtMoney(totIva)}</p></div>
-                <div><p className="text-xs text-orange-500 mb-1">Total con IVA</p><p className="text-2xl font-bold text-orange-900">{fmtMoney(totFact)}</p></div>
-              </div>
-              <p className="text-xs text-orange-400">* Entregá este resumen a tu contador para la DDJJ mensual.</p>
-            </div>
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 border border-gray-200">
-                <tr>{["Cliente","Tipo Fac.","Neto","IVA 10.5%","Total"].map(h=><th key={h} className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500">{h}</th>)}</tr>
-              </thead>
-              <tbody>
-                {byClient.map(c=>(
-                  <tr key={c.id} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="px-3 py-2.5 text-sm">
-                      <div className="font-medium">{c.razonSocial}</div>
-                      {c.alias && <div className="text-xs text-gray-400">{c.alias}</div>}
-                    </td>
-                    <td className="px-3 py-2.5"><span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-xs font-bold">{c.tipoFactura}</span></td>
-                    <td className="px-3 py-2.5 text-xs text-gray-600">{fmtMoney(c.neto)}</td>
-                    <td className="px-3 py-2.5 text-xs font-bold text-orange-600">{fmtMoney(c.iva)}</td>
-                    <td className="px-3 py-2.5 text-xs font-bold">{fmtMoney(c.total)}</td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot className="bg-orange-50 border-t-2 border-orange-300">
-                <tr><td colSpan={2} className="px-3 py-2.5 text-xs font-bold text-orange-800">TOTAL</td><td className="px-3 py-2.5 text-xs font-bold text-orange-800">{fmtMoney(totNeto)}</td><td className="px-3 py-2.5 text-xs font-bold text-orange-800">{fmtMoney(totIva)}</td><td className="px-3 py-2.5 text-xs font-bold text-orange-800">{fmtMoney(totFact)}</td></tr>
-              </tfoot>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBancarios,saldosIniciales=[],cuentasBancarias=[],setCuentasBancarias}){
   const today=new Date();
   const [fMonth,setFMonth]=useState(String(today.getMonth()+1));
   const [fYear,setFYear]=useState(String(today.getFullYear()));
+  const [modalCuentas,setModalCuentas]=useState(false);
+
+  // ── FILTROS DE PERÍODO ─────────────────────────
   const filtInv=invoices.filter(i=>(!fMonth||i.month===Number(fMonth))&&(!fYear||i.year===Number(fYear)));
   const filtExp=expenses.filter(e=>{const d=new Date(e.fecha);return(!fMonth||d.getMonth()+1===Number(fMonth))&&(!fYear||d.getFullYear()===Number(fYear));});
-  // Totales descontando facturas anuladas con NC
+
+  // ── FACTURACIÓN ────────────────────────────────
   const totFin = totalizarFacturas(filtInv);
   const totNeto = totFin.neto;
   const totIva = totFin.iva;
   const totFact = totFin.total;
-  const totIibb = totFin.iibb;
-  const totCob=filtInv.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+i.total,0);
-  const totAd=totFact-totCob;
-  const totGastos=filtExp.reduce((s,e)=>s+e.monto,0);
-  const resultado=totCob-totGastos;
-    // Saldo inicial del mes (arrastrado del mes anterior)
-  const saldoInicial = (() => {
-    const reg = saldosIniciales.find(s => s.anio === Number(fYear) && s.mes === Number(fMonth));
-    return reg ? parseFloat(reg.saldo) : 0;
-  })();
+  const totIibb = Math.round(totNeto * 0.03); // IIBB Santa Cruz 3%
+  const totCob = filtInv.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+i.total,0);
+  const totAd = totFact - totCob;
 
-  // Saldo bancario real del período
+  // ── GASTOS DISCRIMINADOS ───────────────────────
+  const gastosImpuestosBanco = filtExp.filter(e=>e.categoria==="Impuestos bancarios");
+  const gastosComisionesBanco = filtExp.filter(e=>e.categoria==="Comisiones bancarias");
+  const gastosImpuestos = filtExp.filter(e=>e.categoria==="Impuestos");
+  const gastosOperativos = filtExp.filter(e=>!["Impuestos bancarios","Comisiones bancarias","Impuestos"].includes(e.categoria));
+
+  const totImpBanco = gastosImpuestosBanco.reduce((s,e)=>s+e.monto,0);
+  const totComBanco = gastosComisionesBanco.reduce((s,e)=>s+e.monto,0);
+  const totImpuestosOtros = gastosImpuestos.reduce((s,e)=>s+e.monto,0);
+  const totOperativos = gastosOperativos.reduce((s,e)=>s+e.monto,0);
+  const totGastos = filtExp.reduce((s,e)=>s+e.monto,0);
+  const totImpuestosTotal = totIva + totIibb + totImpuestosOtros + totImpBanco;
+
+  // ── ACTIVOS ────────────────────────────────────
+  const cuentasActivas = cuentasBancarias.filter(c => c.activa !== false);
+  const totalActivos = cuentasActivas.reduce((s,c) => s + (parseFloat(c.saldo_actual)||0), 0);
+
+  // ── INGRESOS BANCARIOS DEL PERÍODO ─────────────
   const filtIng = (ingresosBancarios||[]).filter(i => {
     const d = new Date(i.fecha);
     return (!fMonth || d.getMonth()+1 === Number(fMonth)) && (!fYear || d.getFullYear() === Number(fYear));
   });
   const totIngresos = filtIng.reduce((s,i) => s + parseFloat(i.monto||0), 0);
-  const totGastosPagados = (filtExp||[]).filter(e=>e.pagado).reduce((s,e) => s + e.monto, 0);
-  const saldoReal = saldoInicial + totIngresos - totGastosPagados;
 
+  // ── IMPUESTOS BANCARIOS POR CUENTA ─────────────
+  // (Agrupa gastos cat="Impuestos bancarios" + "Comisiones bancarias" por proveedor o por banco)
+  const impuestosPorBanco = {};
+  [...gastosImpuestosBanco, ...gastosComisionesBanco].forEach(g => {
+    const key = g.proveedor || "Sin asignar";
+    if (!impuestosPorBanco[key]) impuestosPorBanco[key] = {impuestos: 0, comisiones: 0, total: 0};
+    if (g.categoria === "Impuestos bancarios") impuestosPorBanco[key].impuestos += g.monto;
+    else impuestosPorBanco[key].comisiones += g.monto;
+    impuestosPorBanco[key].total += g.monto;
+  });
+
+  // ── PENDIENTES POR CLIENTE ─────────────────────
   const byClient=clients.map(c=>{
     const ci=filtInv.filter(i=>i.clientId===c.id);
     const t = totalizarFacturas(ci);
     return{...c,facturado:t.total,cobrado:ci.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+i.total,0),neto:t.neto,iva:t.iva,facturas:ci};
   }).filter(c=>c.facturado>0);
   const morosos=byClient.filter(c=>c.cobrado<c.facturado);
+
+  // ── ACCIONES SOBRE CUENTAS ─────────────────────
+  const desactivarCuenta = async (cuenta) => {
+    if(!confirm(`¿${cuenta.activa===false?"Activar":"Desactivar"} cuenta "${cuenta.nombre}"?`)) return;
+    const nuevoEstado = cuenta.activa === false;
+    const {error} = await supabase.from("cuentas_bancarias").update({activa: nuevoEstado}).eq("id", cuenta.id);
+    if(error){ alert("Error: "+error.message); return; }
+    setCuentasBancarias(prev => prev.map(c => c.id === cuenta.id ? {...c, activa: nuevoEstado} : c));
+  };
+
+  const borrarCuenta = async (cuenta) => {
+    if(!confirm(`¿Eliminar permanentemente la cuenta "${cuenta.nombre}"?\n\nEsta acción NO se puede deshacer.`)) return;
+    const {error} = await supabase.from("cuentas_bancarias").delete().eq("id", cuenta.id);
+    if(error){ alert("Error: "+error.message); return; }
+    setCuentasBancarias(prev => prev.filter(c => c.id !== cuenta.id));
+  };
+
   return(
     <div className="space-y-4">
+      {/* ── FILTRO DE PERÍODO ────────────────────── */}
       <div className="flex items-center gap-3">
         <select value={fMonth} onChange={e=>setFMonth(e.target.value)} className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
           <option value="">Todos los meses</option>
@@ -5072,71 +4963,183 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
         {fMonth&&<span className="text-xs font-medium text-gray-500">{MONTHS[Number(fMonth)-1]} {fYear}</span>}
       </div>
 
-      {/* CUENTAS BANCARIAS ACTIVAS */}
-      {cuentasBancarias && cuentasBancarias.length > 0 && (
-        <div className="bg-white rounded-xl border border-emerald-200 p-4">
-          <h3 className="text-sm font-semibold text-emerald-700 mb-3">🏦 Cuentas Bancarias</h3>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            {cuentasBancarias.filter(c => c.activa !== false).map(c => (
-              <div key={c.id} className="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-lg p-3 border border-emerald-200">
-                <p className="text-xs font-medium text-emerald-700">{c.nombre}</p>
-                <p className="text-sm font-bold text-emerald-900 mt-1">{fmtMoney(c.saldo_actual)}</p>
-                <p className="text-xs text-emerald-500 mt-0.5">{c.banco}</p>
-              </div>
-            ))}
-          </div>
+      {/* ══════════════════════════════════════════ */}
+      {/* 1) CUENTAS BANCARIAS                       */}
+      {/* ══════════════════════════════════════════ */}
+      <div className="bg-white rounded-xl border border-emerald-200 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-emerald-700">🏦 Cuentas Bancarias</h3>
+          <button
+            onClick={() => setModalCuentas(true)}
+            className="flex items-center gap-1 text-xs bg-emerald-600 text-white px-3 py-1.5 rounded-lg hover:bg-emerald-700"
+          >
+            <Icon d={Icons.plus} size={12}/>Nueva cuenta
+          </button>
         </div>
-      )}
-
-
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        {[
-          {label:"Facturado",value:fmtMoney(totFact),sub:`base ${fmtMoney(totNeto)} + IVA ${fmtMoney(totIva)}`,bl:"border-l-blue-500",tv:"text-blue-700"},
-          {label:"IVA a declarar",value:fmtMoney(totIva),sub:"débito fiscal",bl:"border-l-orange-500",tv:"text-orange-600"},
-          {label:"IIBB 3%",value:fmtMoney(Math.round(totNeto*0.03)),sub:"estimado",bl:"border-l-purple-500",tv:"text-purple-600"},
-          {label:"Cobrado",value:fmtMoney(totCob),sub:`${filtInv.filter(i=>i.estado==="Pagada").length} facturas`,bl:"border-l-green-500",tv:"text-green-700"},
-          {label:"Adeudado",value:fmtMoney(totAd),sub:`${filtInv.filter(i=>i.estado!=="Pagada"&&i.estado!=="Anulada").length} pendientes`,bl:"border-l-red-500",tv:"text-red-600"},
-        ].map(s=>(
-          <div key={s.label} className={`bg-white rounded-xl border border-gray-200 border-l-4 ${s.bl} p-3`}>
-            <p className="text-xs text-gray-400">{s.label}</p>
-            <p className={`text-lg font-bold mt-0.5 ${s.tv}`}>{s.value}</p>
-            <p className="text-xs text-gray-400 mt-0.5">{s.sub}</p>
-          </div>
-        ))}
-      </div>
-      {filtIng.length>0&&(
-        <div className={`rounded-xl border p-4 ${saldoReal>=0?"bg-emerald-50 border-emerald-200":"bg-red-50 border-red-200"}`}>
-          <h3 className="font-semibold text-sm mb-3 text-emerald-800">🏦 Saldo bancario real{fMonth?` — ${MONTHS[Number(fMonth)-1]} ${fYear}`:""}</h3>
-          <div className="grid grid-cols-3 gap-4 mb-3">
-            {saldoInicial>0&&<div><p className="text-xs text-gray-500">Saldo inicial</p><p className="font-bold text-emerald-600 text-lg">{fmtMoney(saldoInicial)}</p><p className="text-xs text-gray-400">arrastrado del mes anterior</p></div>}
-            <div><p className="text-xs text-gray-500">Ingresos banco</p><p className="font-bold text-emerald-700 text-lg">{fmtMoney(totIngresos)}</p><p className="text-xs text-gray-400">{filtIng.length} movimientos</p></div>
-            <div><p className="text-xs text-gray-500">Gastos pagados</p><p className="font-bold text-red-600 text-lg">{fmtMoney(totGastosPagados)}</p></div>
-            <div><p className="text-xs text-gray-500">Saldo disponible</p><p className={`font-bold text-2xl ${saldoReal>=0?"text-emerald-700":"text-red-700"}`}>{fmtMoney(saldoReal)}</p></div>
-          </div>
-          <div className="border-t border-emerald-200 pt-3 max-h-48 overflow-y-auto">
-            {filtIng.map(i=>(
-              <div key={i.id} className="flex items-center justify-between py-1.5 border-b border-emerald-100 last:border-0">
-                <div>
-                  <p className="text-xs font-medium text-gray-700">{i.origen||i.descripcion}</p>
-                  <p className="text-xs text-gray-400">{i.descripcion} · {i.fecha} · Comp: {i.comprobante||"—"}</p>
+        {cuentasBancarias.length === 0 ? (
+          <p className="text-sm text-gray-400 text-center py-4">No hay cuentas registradas. Hacé click en "Nueva cuenta" para agregar una.</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {cuentasBancarias.map(c => (
+              <div
+                key={c.id}
+                className={`rounded-lg p-3 border ${c.activa === false ? "bg-gray-50 border-gray-200 opacity-60" : "bg-gradient-to-br from-emerald-50 to-teal-50 border-emerald-200"}`}
+              >
+                <div className="flex items-start justify-between mb-2">
+                  <div>
+                    <p className="text-xs font-medium text-emerald-700">{c.nombre}</p>
+                    <p className="text-xs text-emerald-500 mt-0.5">{c.banco}</p>
+                  </div>
+                  {c.activa === false && (
+                    <span className="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded">Inactiva</span>
+                  )}
                 </div>
-                <p className="text-xs font-bold text-emerald-700">{fmtMoney(i.monto)}</p>
+                <p className="text-lg font-bold text-emerald-900">{fmtMoney(c.saldo_actual)}</p>
+                <div className="flex gap-1 mt-2 pt-2 border-t border-emerald-100">
+                  <button
+                    onClick={() => desactivarCuenta(c)}
+                    className="text-xs px-2 py-1 bg-white border border-gray-200 text-gray-600 rounded hover:bg-gray-50 flex-1"
+                    title={c.activa === false ? "Activar" : "Desactivar"}
+                  >
+                    {c.activa === false ? "Activar" : "Desactivar"}
+                  </button>
+                  <button
+                    onClick={() => borrarCuenta(c)}
+                    className="text-xs px-2 py-1 bg-white border border-red-200 text-red-600 rounded hover:bg-red-50"
+                    title="Eliminar"
+                  >
+                    <Icon d={Icons.trash} size={12}/>
+                  </button>
+                </div>
               </div>
             ))}
           </div>
-        </div>
-      )}
-      <div className={`rounded-xl border p-4 ${resultado>=0?"bg-green-50 border-green-200":"bg-red-50 border-red-200"}`}>
-        <h3 className={`font-semibold text-sm mb-3 ${resultado>=0?"text-green-800":"text-red-800"}`}>{resultado>=0?"✅ Resultado RadioFact":"⚠️ Resultado RadioFact"}</h3>
-        <div className="grid grid-cols-3 gap-4">
-          <div><p className="text-xs text-gray-500">Cobrado</p><p className="font-bold text-green-700 text-lg">{fmtMoney(totCob)}</p></div>
-          <div><p className="text-xs text-gray-500">Gastos</p><p className="font-bold text-red-600 text-lg">{fmtMoney(totGastos)}</p></div>
-          <div><p className="text-xs text-gray-500">Resultado</p><p className={`font-bold text-2xl ${resultado>=0?"text-green-700":"text-red-700"}`}>{fmtMoney(resultado)}</p></div>
+        )}
+      </div>
+
+      {/* ══════════════════════════════════════════ */}
+      {/* 2) FACTURACIÓN E IMPUESTOS                 */}
+      {/* ══════════════════════════════════════════ */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4">
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">📊 Facturación e impuestos</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="bg-blue-50 rounded-lg p-3 border-l-4 border-blue-500">
+            <p className="text-xs text-gray-500">Facturado</p>
+            <p className="text-xl font-bold text-blue-700 mt-1">{fmtMoney(totFact)}</p>
+            <p className="text-xs text-gray-400 mt-0.5">neto {fmtMoney(totNeto)} + IVA {fmtMoney(totIva)}</p>
+          </div>
+          <div className="bg-orange-50 rounded-lg p-3 border-l-4 border-orange-500">
+            <p className="text-xs text-gray-500">IVA a declarar</p>
+            <p className="text-xl font-bold text-orange-600 mt-1">{fmtMoney(totIva)}</p>
+            <p className="text-xs text-gray-400 mt-0.5">débito fiscal</p>
+          </div>
+          <div className="bg-purple-50 rounded-lg p-3 border-l-4 border-purple-500">
+            <p className="text-xs text-gray-500">IIBB Santa Cruz 3%</p>
+            <p className="text-xl font-bold text-purple-600 mt-1">{fmtMoney(totIibb)}</p>
+            <p className="text-xs text-gray-400 mt-0.5">sobre base imponible</p>
+          </div>
         </div>
       </div>
-      {morosos.length>0&&(
-        <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <h3 className="font-semibold text-sm mb-3 text-red-600 flex items-center gap-2"><Icon d={Icons.alert} size={15}/>Saldos pendientes</h3>
+
+      {/* ══════════════════════════════════════════ */}
+      {/* 3) COBRANZAS                               */}
+      {/* ══════════════════════════════════════════ */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4">
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">💰 Cobranzas</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="bg-green-50 rounded-lg p-3 border-l-4 border-green-500">
+            <p className="text-xs text-gray-500">Cobrado</p>
+            <p className="text-xl font-bold text-green-700 mt-1">{fmtMoney(totCob)}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{filtInv.filter(i=>i.estado==="Pagada").length} factura(s) cobrada(s)</p>
+          </div>
+          <div className="bg-red-50 rounded-lg p-3 border-l-4 border-red-500">
+            <p className="text-xs text-gray-500">Adeudado / Por cobrar</p>
+            <p className="text-xl font-bold text-red-600 mt-1">{fmtMoney(totAd)}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{filtInv.filter(i=>i.estado!=="Pagada"&&i.estado!=="Anulada").length} pendiente(s)</p>
+          </div>
+        </div>
+      </div>
+
+      {/* ══════════════════════════════════════════ */}
+      {/* 4) TOTAL DE ACTIVOS                        */}
+      {/* ══════════════════════════════════════════ */}
+      <div className="bg-gradient-to-r from-emerald-500 to-teal-500 rounded-xl p-5 text-white shadow-md">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs text-emerald-100 uppercase tracking-wide font-medium">Total de activos</p>
+            <p className="text-3xl font-bold mt-1">{fmtMoney(totalActivos)}</p>
+            <p className="text-xs text-emerald-100 mt-1">suma de {cuentasActivas.length} cuenta(s) activa(s)</p>
+          </div>
+          <div className="text-5xl opacity-30">🏦</div>
+        </div>
+      </div>
+
+      {/* ══════════════════════════════════════════ */}
+      {/* 5) TOTAL GASTOS + IMPUESTOS                */}
+      {/* ══════════════════════════════════════════ */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4">
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">💸 Gastos e impuestos del período</h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Gastos operativos</p>
+            <p className="text-base font-bold text-gray-800 mt-1">{fmtMoney(totOperativos)}</p>
+            <p className="text-xs text-gray-400">{gastosOperativos.length} ítem(s)</p>
+          </div>
+          <div className="bg-orange-50 rounded-lg p-3">
+            <p className="text-xs text-orange-600">Impuestos (IVA+IIBB+otros)</p>
+            <p className="text-base font-bold text-orange-700 mt-1">{fmtMoney(totImpuestosTotal)}</p>
+            <p className="text-xs text-orange-400">IVA {fmtMoney(totIva)} + IIBB {fmtMoney(totIibb)} + Otros {fmtMoney(totImpuestosOtros)}</p>
+          </div>
+          <div className="bg-amber-50 rounded-lg p-3">
+            <p className="text-xs text-amber-600">Impuestos bancarios</p>
+            <p className="text-base font-bold text-amber-700 mt-1">{fmtMoney(totImpBanco)}</p>
+            <p className="text-xs text-amber-400">{gastosImpuestosBanco.length} mov.</p>
+          </div>
+          <div className="bg-yellow-50 rounded-lg p-3">
+            <p className="text-xs text-yellow-700">Comisiones bancarias</p>
+            <p className="text-base font-bold text-yellow-700 mt-1">{fmtMoney(totComBanco)}</p>
+            <p className="text-xs text-yellow-500">{gastosComisionesBanco.length} mov.</p>
+          </div>
+        </div>
+        <div className="border-t border-gray-200 pt-3 mt-3 flex items-center justify-between">
+          <p className="text-sm font-medium text-gray-700">TOTAL gastos + impuestos del período:</p>
+          <p className="text-2xl font-bold text-red-600">{fmtMoney(totGastos + totImpuestosTotal - totImpBanco)}</p>
+        </div>
+        <p className="text-xs text-gray-400 mt-1">* No se duplican los impuestos bancarios (ya cuentan dentro de gastos del mes)</p>
+      </div>
+
+      {/* ══════════════════════════════════════════ */}
+      {/* 6) IMPUESTOS BANCARIOS POR CUENTA          */}
+      {/* ══════════════════════════════════════════ */}
+      {Object.keys(impuestosPorBanco).length > 0 && (
+        <div className="bg-white rounded-xl border border-amber-200 p-4">
+          <h3 className="text-sm font-semibold text-amber-700 mb-3">🏛️ Impuestos y comisiones por banco</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {Object.entries(impuestosPorBanco).map(([banco, valores]) => (
+              <div key={banco} className="bg-amber-50 rounded-lg p-3 border border-amber-100">
+                <p className="text-xs font-medium text-amber-800">{banco}</p>
+                <p className="text-lg font-bold text-amber-700 mt-1">{fmtMoney(valores.total)}</p>
+                <div className="text-xs text-amber-600 mt-1 space-y-0.5">
+                  {valores.impuestos > 0 && <p>• Impuestos: {fmtMoney(valores.impuestos)}</p>}
+                  {valores.comisiones > 0 && <p>• Comisiones: {fmtMoney(valores.comisiones)}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-gray-400 mt-3">
+            💡 Para cargar nuevos: ir a <b>Gastos → Nuevo gasto</b> y elegir categoría "Impuestos bancarios" o "Comisiones bancarias", poniendo el banco en el campo Proveedor.
+          </p>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════ */}
+      {/* 7) PENDIENTES POR CLIENTE                  */}
+      {/* ══════════════════════════════════════════ */}
+      {morosos.length > 0 && (
+        <div className="bg-white rounded-xl border border-red-200 p-4">
+          <h3 className="font-semibold text-sm mb-3 text-red-600 flex items-center gap-2">
+            <Icon d={Icons.alert} size={15}/>Saldos pendientes — {morosos.length} cliente(s)
+          </h3>
           {morosos.map(c=>(
             <div key={c.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
               <div>
@@ -5148,11 +5151,17 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
           ))}
         </div>
       )}
+
+      {/* ══════════════════════════════════════════ */}
+      {/* 8) DETALLE POR CLIENTE                     */}
+      {/* ══════════════════════════════════════════ */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-100"><h3 className="font-semibold text-sm">Detalle por cliente</h3></div>
+        <div className="px-4 py-3 border-b border-gray-100">
+          <h3 className="font-semibold text-sm">📋 Detalle por cliente</h3>
+        </div>
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-200">
-            <tr>{["Cliente","Facturas","Neto","IVA 10.5%","Total","Cobrado","Saldo"].map(h=><th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">{h}</th>)}</tr>
+            <tr>{["Cliente","Facturas","Neto","IVA","Total","Cobrado","Saldo"].map(h=><th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">{h}</th>)}</tr>
           </thead>
           <tbody>
             {byClient.map(c=>(
@@ -5171,11 +5180,43 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
             ))}
           </tbody>
         </table>
-        {byClient.length===0&&<div className="text-center py-8 text-gray-400 text-sm">Sin datos</div>}
+        {byClient.length===0&&<div className="text-center py-8 text-gray-400 text-sm">Sin datos del período seleccionado</div>}
       </div>
+
+      {/* ── INGRESOS BANCARIOS DEL PERÍODO ────────── */}
+      {filtIng.length > 0 && (
+        <div className="bg-white rounded-xl border border-emerald-200 p-4">
+          <h3 className="text-sm font-semibold text-emerald-700 mb-3">📥 Ingresos bancarios del período ({filtIng.length})</h3>
+          <div className="max-h-64 overflow-y-auto space-y-1">
+            {filtIng.map(i => (
+              <div key={i.id} className="flex items-center justify-between py-1.5 border-b border-emerald-50 last:border-0">
+                <div>
+                  <p className="text-xs font-medium text-gray-700">{i.origen || i.descripcion}</p>
+                  <p className="text-xs text-gray-400">{i.descripcion} · {i.fecha} · Comp: {i.comprobante || "—"}</p>
+                </div>
+                <p className="text-xs font-bold text-emerald-700">{fmtMoney(i.monto)}</p>
+              </div>
+            ))}
+            <div className="pt-2 mt-2 border-t border-emerald-200 flex items-center justify-between">
+              <p className="text-xs font-medium text-emerald-700">Total ingresos:</p>
+              <p className="text-sm font-bold text-emerald-700">{fmtMoney(totIngresos)}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL CUENTAS ──────────────────────────── */}
+      {modalCuentas && (
+        <CuentasBancariasModal
+          cuentas={cuentasBancarias}
+          setCuentas={setCuentasBancarias}
+          onClose={() => setModalCuentas(false)}
+        />
+      )}
     </div>
   );
 }
+
 
 function Users({users,setUsers,currentUser}){
   const [modal,setModal]=useState(null);
