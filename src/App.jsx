@@ -376,6 +376,8 @@ export default function App() {
   const [proveedores, setProveedores] = useState([]);
   const [ingresosBancarios, setIngresosBancarios] = useState([]);
   const [saldosIniciales, setSaldosIniciales] = useState([]);
+  const [cuentasBancarias, setCuentasBancarias] = useState([]);
+  const [tarjetasCredito, setTarjetasCredito] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [page, setPage] = useState("dashboard");
   const [config, setConfig] = useState({
@@ -932,8 +934,21 @@ export default function App() {
         url_comprobante: g.url_comprobante || "",
         pagado:          g.pagado !== false,
         notas:           g.notas || "",
+        es_tarjeta:      g.es_tarjeta === true,
+        tarjeta_id:      g.tarjeta_id || null,
+        socio:           g.socio || "",
       })));
     });
+    // Cargar cuentas bancarias
+    supabase.from("cuentas_bancarias").select("*").order("created_at").then(({ data }) => {
+      if (data) setCuentasBancarias(data);
+    });
+
+    // Cargar tarjetas de crédito
+    supabase.from("tarjetas_credito").select("*").order("socio").then(({ data }) => {
+      if (data) setTarjetasCredito(data);
+    });
+
   },[]);
 
   useEffect(()=>{
@@ -1030,8 +1045,8 @@ export default function App() {
               setEmailNCModal({ nc, factura, cliente: cli });
             }}
           />}
-          {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} currentUser={currentUser} canEdit={canEdit} plantillas={plantillasGastos} setPlantillas={setPlantillasGastos} proveedores={proveedores} setProveedores={setProveedores}/>}
-          {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses} ingresosBancarios={ingresosBancarios} setIngresosBancarios={setIngresosBancarios} saldosIniciales={saldosIniciales}/>}
+          {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} currentUser={currentUser} canEdit={canEdit} plantillas={plantillasGastos} setPlantillas={setPlantillasGastos} proveedores={proveedores} setProveedores={setProveedores} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias} tarjetasCredito={tarjetasCredito} setTarjetasCredito={setTarjetasCredito}/>}
+          {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses} ingresosBancarios={ingresosBancarios} setIngresosBancarios={setIngresosBancarios} saldosIniciales={saldosIniciales} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias}/>}
           {page==="reports_disabled"&&<Reports clients={clients} contracts={contracts} invoices={invoices} expenses={expenses}/>}
           {page==="users"&&currentUser.role==="webmaster"&&<Users users={users} setUsers={setUsers} currentUser={currentUser}/>}
           {page==="settings"&&<Settings config={config} setConfig={setConfig} canEdit={canEdit}/>}
@@ -3688,18 +3703,26 @@ function EmailNCModal({ nc, factura, cliente, config, onClose, onSent }) {
   );
 }
 
-function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlantillas,proveedores,setProveedores}){
+// ========================================
+// MÓDULO EXPENSES (con cuentas bancarias y tarjetas de crédito)
+// ========================================
+
+function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlantillas,proveedores,setProveedores,cuentasBancarias,setCuentasBancarias,tarjetasCredito,setTarjetasCredito}){
   const [modal,setModal]=useState(null);
   const [modalPlantillas,setModalPlantillas]=useState(false);
   const [modalProveedores,setModalProveedores]=useState(false);
+  const [modalCuentas,setModalCuentas]=useState(false);
+  const [modalTarjetas,setModalTarjetas]=useState(false);
   const [fMonth,setFMonth]=useState(String(new Date().getMonth()+1));
   const [fYear,setFYear]=useState(String(new Date().getFullYear()));
   const [fCat,setFCat]=useState("");
   const [fSearch,setFSearch]=useState("");
+  const [fTipo,setFTipo]=useState(""); // "todos", "normales", "tarjetas"
   const [confirmDelete, setConfirmDelete] = useState(null);
   const isWebmaster = currentUser?.role === "webmaster";
 
-  const empty={descripcion:"",categoria:"Gastos Fijos",monto:"",fecha:todayStr(),proveedor:"",comprobante:"",url_comprobante:"",pagado:true,notas:""};
+  const empty={descripcion:"",categoria:"Gastos Fijos",monto:"",fecha:todayStr(),proveedor:"",comprobante:"",url_comprobante:"",pagado:true,notas:"",es_tarjeta:false,tarjeta_id:"",socio:""};
+  
   const filtered=expenses.filter(e=>{
     const d=new Date(e.fecha);
     const matchMes=!fMonth||d.getMonth()+1===Number(fMonth);
@@ -3707,9 +3730,12 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
     const matchCat=!fCat||e.categoria===fCat;
     const q=fSearch.toLowerCase();
     const matchSearch=!fSearch||(e.descripcion||"").toLowerCase().includes(q)||(e.proveedor||"").toLowerCase().includes(q)||(e.categoria||"").toLowerCase().includes(q);
-    return matchMes&&matchAnio&&matchCat&&matchSearch;
+    const matchTipo = fTipo === "" || (fTipo === "normales" && !e.es_tarjeta) || (fTipo === "tarjetas" && e.es_tarjeta);
+    return matchMes&&matchAnio&&matchCat&&matchSearch&&matchTipo;
   });
+
   const [saving, setSaving] = useState(false);
+  
   const save = async (data) => {
     setSaving(true);
     const d = { ...data, monto: parseFloat(data.monto) || 0 };
@@ -3723,6 +3749,9 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
       url_comprobante:  d.url_comprobante || null,
       pagado:           d.pagado !== false,
       notas:            d.notas || null,
+      es_tarjeta:       d.es_tarjeta === true,
+      tarjeta_id:       d.tarjeta_id || null,
+      socio:            d.socio || null,
     };
     const esUUID = d.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(d.id);
     if (esUUID) {
@@ -3738,7 +3767,6 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
     setSaving(false);
   };
 
-  // Borrar gasto individual
   const askDeleteOne = (gasto) => {
     setConfirmDelete({
       tipo: "uno",
@@ -3756,7 +3784,6 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
     });
   };
 
-  // Borrar todos los gastos del filtro actual (solo webmaster)
   const askDeleteAll = () => {
     if (filtered.length === 0) {
       alert("No hay gastos en el filtro actual para borrar.");
@@ -3783,7 +3810,6 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
     });
   };
 
-  // Marcar/desmarcar pagado sin abrir el modal
   const togglePagado = async (gasto) => {
     const nuevoPagado = !gasto.pagado;
     const esUUID = gasto.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(gasto.id);
@@ -3797,7 +3823,15 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
   const totFiltered=filtered.reduce((s,e)=>s+e.monto,0);
   const totPagado=filtered.filter(e=>e.pagado).reduce((s,e)=>s+e.monto,0);
   const totPendiente=filtered.filter(e=>!e.pagado).reduce((s,e)=>s+e.monto,0);
+  
+  // Gastos por tarjeta
+  const gastosPorTarjeta = tarjetasCredito.map(tarj => {
+    const total = filtered.filter(e => e.tarjeta_id === tarj.id).reduce((s,e) => s + e.monto, 0);
+    return { tarjeta: tarj, total };
+  }).filter(x => x.total > 0);
+
   const byCat=EXPENSE_CATS.map(cat=>({cat,total:filtered.filter(e=>e.categoria===cat).reduce((s,e)=>s+e.monto,0)})).filter(x=>x.total>0).sort((a,b)=>b.total-a.total);
+  
   return(
     <div className="space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
@@ -3812,6 +3846,11 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
           <option value="">Todas las categorías</option>
           {EXPENSE_CATS.map(c=><option key={c}>{c}</option>)}
         </select>
+        <select value={fTipo} onChange={e=>setFTipo(e.target.value)} className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+          <option value="">Todos los tipos</option>
+          <option value="normales">Gastos normales</option>
+          <option value="tarjetas">Gastos de tarjeta</option>
+        </select>
         <input
           type="text"
           value={fSearch}
@@ -3819,41 +3858,72 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
           placeholder="Buscar por descripción o proveedor..."
           className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none w-56"
         />
-        {(fSearch||fCat)&&(
-          <button onClick={()=>{setFSearch("");setFCat("");}} className="text-xs text-gray-400 hover:text-gray-600 underline">Limpiar filtros</button>
+        {(fSearch||fCat||fTipo)&&(
+          <button onClick={()=>{setFSearch("");setFCat("");setFTipo("");}} className="text-xs text-gray-400 hover:text-gray-600 underline">Limpiar</button>
         )}
         {canEdit&&<>
-          <button onClick={()=>setModalProveedores(true)} className="flex items-center gap-2 bg-white border border-gray-300 text-gray-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 ml-auto"><Icon d={Icons.users} size={14}/>Proveedores</button>
-          <button onClick={()=>setModalPlantillas(true)} className="flex items-center gap-2 bg-white border border-gray-300 text-gray-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50"><Icon d={Icons.settings} size={14}/>Plantillas</button>
+          <button onClick={()=>setModalCuentas(true)} className="flex items-center gap-2 bg-emerald-50 border border-emerald-300 text-emerald-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-emerald-100 ml-auto"><Icon d={Icons.bank} size={14}/>Cuentas</button>
+          <button onClick={()=>setModalTarjetas(true)} className="flex items-center gap-2 bg-blue-50 border border-blue-300 text-blue-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-blue-100"><Icon d={Icons.card} size={14}/>Tarjetas</button>
+          <button onClick={()=>setModalProveedores(true)} className="flex items-center gap-2 bg-white border border-gray-300 text-gray-600 px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-50"><Icon d={Icons.users} size={14}/>Proveedores</button>
+          <button onClick={()=>setModalPlantillas(true)} className="flex items-center gap-2 bg-white border border-gray-300 text-gray-600 px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-50"><Icon d={Icons.settings} size={14}/>Plantillas</button>
           <button onClick={()=>setModal(empty)} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"><Icon d={Icons.plus} size={14}/>Nuevo gasto</button>
         </>}
         {isWebmaster&&filtered.length>0&&(
           <button
             onClick={askDeleteAll}
             className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-lg text-xs font-medium hover:bg-red-100"
-            title="Borrar todos los gastos visibles en el filtro actual"
           >
             <Icon d={Icons.trash} size={14}/>Borrar todos del filtro
           </button>
         )}
       </div>
+
+      {/* Resumen de tarjetas */}
+      {gastosPorTarjeta.length > 0 && (
+        <div className="bg-white rounded-xl border border-blue-200 p-4">
+          <p className="text-xs font-semibold text-blue-600 mb-3">💳 Gastos pendientes de pagar por tarjeta</p>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+            {gastosPorTarjeta.map(x => (
+              <div key={x.tarjeta.id} className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-2 border border-blue-200">
+                <p className="text-xs font-medium text-blue-700">{x.tarjeta.socio} — {x.tarjeta.tipo_tarjeta}</p>
+                <p className="text-sm font-bold text-blue-900 mt-1">{fmtMoney(x.total)}</p>
+                <p className="text-xs text-blue-500 mt-0.5">Últimos 4: {x.tarjeta.numero_ultimos_4}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-4 gap-3">
         {byCat.map(x=>(<div key={x.cat} className="bg-white rounded-xl border border-gray-200 p-3"><p className="text-xs text-gray-400">{x.cat}</p><p className="font-bold text-sm text-red-600">{fmtMoney(x.total)}</p></div>))}
         <div className="bg-red-50 border border-red-200 rounded-xl p-3"><p className="text-xs text-red-500 font-medium">✓ Pagado</p><p className="font-bold text-sm text-red-700">{fmtMoney(totPagado)}</p></div>
         {totPendiente>0&&<div className="bg-amber-50 border border-amber-200 rounded-xl p-3"><p className="text-xs text-amber-600 font-medium">⏳ Pendiente</p><p className="font-bold text-sm text-amber-700">{fmtMoney(totPendiente)}</p></div>}
       </div>
+
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-200">
-            <tr>{["Fecha","Descripción","Categoría","Proveedor","Comprobante","Monto","Estado",""].map(h=><th key={h} className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500">{h}</th>)}</tr>
+            <tr>{["Fecha","Descripción","Categoría","Proveedor/Tarjeta","Comprobante","Monto","Estado",""].map(h=><th key={h} className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500">{h}</th>)}</tr>
           </thead>
           <tbody>
             {filtered.map(e=>(
-              <tr key={e.id} className="border-b border-gray-50 hover:bg-gray-50">
+              <tr key={e.id} className={`border-b border-gray-50 hover:bg-gray-50 ${e.es_tarjeta ? "bg-blue-50" : ""}`}>
                 <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">{fmtDate(e.fecha)}</td>
                 <td className="px-3 py-2.5 text-xs font-medium">{e.descripcion}</td>
                 <td className="px-3 py-2.5"><span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-xs">{e.categoria}</span></td>
-                <td className="px-3 py-2.5 text-xs text-gray-500">{e.proveedor||"—"}</td>
+                <td className="px-3 py-2.5 text-xs text-gray-500">
+                  {e.es_tarjeta ? (
+                    <div className="flex flex-col gap-0.5">
+                      <span className="font-medium text-blue-700">💳 {e.socio}</span>
+                      {(() => {
+                        const tarj = tarjetasCredito.find(t => t.id === e.tarjeta_id);
+                        return tarj ? <span className="text-xs text-gray-500">{tarj.tipo_tarjeta} ({tarj.numero_ultimos_4})</span> : null;
+                      })()}
+                    </div>
+                  ) : (
+                    e.proveedor||"—"
+                  )}
+                </td>
                 <td className="px-3 py-2.5 text-xs font-mono text-gray-400">
                   <div className="flex items-center gap-1">
                     <span>{e.comprobante||"—"}</span>
@@ -3870,7 +3940,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
                   {e.pagado
                     ? <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">✓ Pagado</span>
                     : canEdit
-                      ? <button onClick={()=>togglePagado(e)} className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 font-medium" title="Marcar como pagado">⏳ Pendiente</button>
+                      ? <button onClick={()=>togglePagado(e)} className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 font-medium">⏳ Pendiente</button>
                       : <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">⏳ Pendiente</span>
                   }
                 </td>
@@ -3886,9 +3956,12 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
         </table>
         {filtered.length===0&&<div className="text-center py-8 text-gray-400 text-sm">Sin gastos</div>}
       </div>
+
+      {modalCuentas&&<CuentasBancariasModal cuentas={cuentasBancarias} setCuentas={setCuentasBancarias} onClose={()=>setModalCuentas(false)}/>}
+      {modalTarjetas&&<TarjetasCreditoModal tarjetas={tarjetasCredito} setTarjetas={setTarjetasCredito} onClose={()=>setModalTarjetas(false)}/>}
       {modalProveedores&&<ProveedoresModal proveedores={proveedores} setProveedores={setProveedores} onClose={()=>setModalProveedores(false)}/>}
       {modalPlantillas&&<PlantillasGastosModal plantillas={plantillas} setPlantillas={setPlantillas} onClose={()=>setModalPlantillas(false)}/>}
-      {modal&&<ExpenseModal data={modal} onSave={save} onClose={()=>setModal(null)} plantillas={plantillas} proveedores={proveedores}/>}
+      {modal&&<ExpenseModal data={modal} onSave={save} onClose={()=>setModal(null)} plantillas={plantillas} proveedores={proveedores} tarjetasCredito={tarjetasCredito}/>}
       {confirmDelete && (
         <ConfirmDeleteModal
           titulo={confirmDelete.titulo}
@@ -3903,7 +3976,12 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
   );
 }
 
-function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[]}){
+
+// ========================================
+// MODAL DE GASTOS (con soporte de tarjetas)
+// ========================================
+
+function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[],tarjetasCredito=[]}){
   const [form,setForm]=useState(data);
   const f=k=>e=>setForm(p=>({...p,[k]:e.target.value}));
 
@@ -3915,8 +3993,11 @@ function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[]}){
       monto:       p.monto      || prev.monto,
       proveedor:   p.proveedor  || prev.proveedor,
     }));
-    setShowPlantillas(false);
   };
+
+  const tarjetasDelSocio = form.socio 
+    ? tarjetasCredito.filter(t => t.socio === form.socio && t.activa !== false)
+    : [];
 
   return(
     <Modal title={form.id?"Editar gasto":"Nuevo gasto"} onClose={onClose} wide>
@@ -3935,6 +4016,20 @@ function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[]}){
             </select>
           </div>
         )}
+
+        {/* TIPO DE GASTO */}
+        <div className="col-span-2 flex items-center gap-3 bg-gray-50 rounded-lg p-3">
+          <label className="text-xs font-medium text-gray-600">Tipo de gasto:</label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="radio" checked={!form.es_tarjeta} onChange={()=>setForm(p=>({...p,es_tarjeta:false,tarjeta_id:"",socio:""}))} />
+            <span className="text-xs">Gasto normal</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="radio" checked={form.es_tarjeta === true} onChange={()=>setForm(p=>({...p,es_tarjeta:true}))} />
+            <span className="text-xs">Tarjeta de crédito</span>
+          </label>
+        </div>
+
         <div className="col-span-2"><Field label="Descripción" value={form.descripcion} onChange={f("descripcion")}/></div>
         <div>
           <label className="text-xs font-medium text-gray-600">Categoría</label>
@@ -3944,22 +4039,52 @@ function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[]}){
         </div>
         <Field label="Monto ($)" value={form.monto} onChange={f("monto")} type="number"/>
         <Field label="Fecha" value={form.fecha} onChange={f("fecha")} type="date"/>
-        <div>
-          <label className="text-xs font-medium text-gray-600">Proveedor / Beneficiario</label>
-          {proveedores.length>0
-            ? <select value={form.proveedor||""} onChange={f("proveedor")}
-                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
-                <option value="">— Sin proveedor —</option>
-                {proveedores.filter(p=>p.activo!==false).map(p=>(
-                  <option key={p.id} value={p.nombre}>{p.nombre}{p.cuit?" — "+p.cuit:""}</option>
-                ))}
+
+        {/* GASGOS DE TARJETA */}
+        {form.es_tarjeta === true ? (
+          <>
+            <div>
+              <label className="text-xs font-medium text-gray-600">Socio propietario de tarjeta</label>
+              <select value={form.socio||""} onChange={f("socio")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+                <option value="">— Elegir socio —</option>
+                <option value="Prieto">Prieto</option>
+                <option value="Barrionuevo">Barrionuevo</option>
               </select>
-            : <input type="text" value={form.proveedor||""} onChange={f("proveedor")}
-                placeholder="Nombre del proveedor"
-                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
-          }
-        </div>
-        <Field label="N° Comprobante" value={form.comprobante} onChange={f("comprobante")}/>
+            </div>
+            {form.socio && (
+              <div>
+                <label className="text-xs font-medium text-gray-600">Tarjeta</label>
+                <select value={form.tarjeta_id||""} onChange={f("tarjeta_id")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+                  <option value="">— Elegir tarjeta —</option>
+                  {tarjetasDelSocio.map(t => (
+                    <option key={t.id} value={t.id}>{t.tipo_tarjeta} - {t.numero_ultimos_4}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {/* GASTOS NORMALES */}
+            <div>
+              <label className="text-xs font-medium text-gray-600">Proveedor / Beneficiario</label>
+              {proveedores.length>0
+                ? <select value={form.proveedor||""} onChange={f("proveedor")}
+                    className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+                    <option value="">— Sin proveedor —</option>
+                    {proveedores.filter(p=>p.activo!==false).map(p=>(
+                      <option key={p.id} value={p.nombre}>{p.nombre}{p.cuit?" — "+p.cuit:""}</option>
+                    ))}
+                  </select>
+                : <input type="text" value={form.proveedor||""} onChange={f("proveedor")}
+                    placeholder="Nombre del proveedor"
+                    className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+              }
+            </div>
+            <Field label="N° Comprobante" value={form.comprobante} onChange={f("comprobante")}/>
+          </>
+        )}
+
         <div className="col-span-2">
           <label className="text-xs font-medium text-gray-600">Link al comprobante (Drive, foto, etc.)</label>
           <div className="flex gap-2 mt-1">
@@ -3982,6 +4107,206 @@ function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[]}){
     </Modal>
   );
 }
+
+
+// ========================================
+// MODAL DE CUENTAS BANCARIAS
+// ========================================
+
+function CuentasBancariasModal({cuentas,setCuentas,onClose}){
+  const emptyC={nombre:"",banco:"Santander",tipo:"cta_corriente",numero_cuenta:"",cbu:"",saldo_actual:"",saldo_inicial:"",activa:true,notas:""};
+  const [form,setForm]=useState(emptyC);
+  const [editId,setEditId]=useState(null);
+  const [loading,setLoading]=useState(false);
+  const f=k=>e=>setForm(p=>({...p,[k]:e.target.value}));
+
+  const guardar = async () => {
+    if(!form.nombre.trim()){ alert("El nombre es obligatorio"); return; }
+    setLoading(true);
+    const payload={
+      nombre:form.nombre.trim(),
+      banco:form.banco,
+      tipo:form.tipo,
+      numero_cuenta:form.numero_cuenta||"",
+      cbu:form.cbu||"",
+      saldo_actual:parseFloat(form.saldo_actual)||0,
+      saldo_inicial:parseFloat(form.saldo_inicial)||0,
+      fecha_saldo_actual:todayStr(),
+      activa:true,
+      notas:form.notas||"",
+    };
+    if(editId){
+      const {error}=await supabase.from("cuentas_bancarias").update(payload).eq("id",editId);
+      if(error){alert("Error: "+error.message);setLoading(false);return;}
+      setCuentas(prev=>prev.map(p=>p.id===editId?{...p,...payload}:p));
+    } else {
+      const {data,error}=await supabase.from("cuentas_bancarias").insert([payload]).select().single();
+      if(error){alert("Error: "+error.message);setLoading(false);return;}
+      setCuentas(prev=>[...prev,data]);
+    }
+    setForm(emptyC);setEditId(null);setLoading(false);
+  };
+
+  const editar=(p)=>{setForm({nombre:p.nombre,banco:p.banco,tipo:p.tipo,numero_cuenta:p.numero_cuenta||"",cbu:p.cbu||"",saldo_actual:p.saldo_actual||"",saldo_inicial:p.saldo_inicial||"",activa:p.activa,notas:p.notas||""});setEditId(p.id);};
+
+  const toggleActiva=async(p)=>{
+    await supabase.from("cuentas_bancarias").update({activa:!p.activa}).eq("id",p.id);
+    setCuentas(prev=>prev.map(x=>x.id===p.id?{...x,activa:!x.activa}:x));
+  };
+
+  return(
+    <Modal title="🏦 Cuentas bancarias" onClose={onClose} wide>
+      <p className="text-xs text-gray-500 mb-4">Registrá tus cuentas bancarias. Los saldos actuales se usan en el módulo Finanzas.</p>
+      <div className="grid grid-cols-3 gap-3 mb-4 p-3 bg-gray-50 rounded-xl border border-gray-200">
+        <p className="col-span-3 text-xs font-semibold text-gray-600">{editId?"✏️ Editando cuenta":"➕ Nueva cuenta"}</p>
+        <div className="col-span-3"><Field label="Nombre de la cuenta" value={form.nombre} onChange={f("nombre")} placeholder="Ej: Santander Corriente"/></div>
+        <div>
+          <label className="text-xs font-medium text-gray-600">Banco</label>
+          <select value={form.banco} onChange={f("banco")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+            <option value="Santander">Santander</option>
+            <option value="Credicoop">Credicoop</option>
+            <option value="Otro">Otro</option>
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600">Tipo</label>
+          <select value={form.tipo} onChange={f("tipo")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+            <option value="cta_corriente">Cta. Corriente</option>
+            <option value="caja_ahorro">Caja de Ahorro</option>
+            <option value="otro">Otro</option>
+          </select>
+        </div>
+        <Field label="Número cuenta (últimos 4)" value={form.numero_cuenta} onChange={f("numero_cuenta")} placeholder="XXXX-2847"/>
+        <Field label="CBU" value={form.cbu} onChange={f("cbu")} placeholder="0720000001"/>
+        <Field label="Saldo inicial" value={form.saldo_inicial} onChange={f("saldo_inicial")} type="number"/>
+        <Field label="Saldo actual" value={form.saldo_actual} onChange={f("saldo_actual")} type="number"/>
+        <div className="col-span-3"><Field label="Notas" value={form.notas} onChange={f("notas")} placeholder="Descripción, sucursal, etc."/></div>
+        <div className="col-span-3 flex gap-2 justify-end">
+          {editId&&<button onClick={()=>{setForm(emptyC);setEditId(null);}} className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-100">Cancelar</button>}
+          <button onClick={guardar} disabled={loading} className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+            {loading?"Guardando...":(editId?"Actualizar":"Agregar cuenta")}
+          </button>
+        </div>
+      </div>
+      {cuentas.length===0
+        ? <p className="text-sm text-gray-400 text-center py-4">No hay cuentas todavía</p>
+        : <div className="space-y-2">
+            {cuentas.map(p=>(
+              <div key={p.id} className={`flex items-center gap-3 rounded-lg px-3 py-2 border ${p.activa!==false?"bg-white border-gray-200":"bg-gray-50 border-gray-100 opacity-60"}`}>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800">{p.nombre}</p>
+                  <p className="text-xs text-gray-400">{p.banco} — {p.tipo}{p.numero_cuenta?" — "+p.numero_cuenta:""}</p>
+                  <p className="text-xs font-semibold text-emerald-600">Saldo: {fmtMoney(p.saldo_actual)}</p>
+                </div>
+                <button onClick={()=>toggleActiva(p)} className={`text-xs px-2 py-0.5 rounded-full border ${p.activa!==false?"bg-green-50 text-green-700 border-green-200":"bg-gray-100 text-gray-500 border-gray-200"}`}>
+                  {p.activa!==false?"Activa":"Inactiva"}
+                </button>
+                <button onClick={()=>editar(p)} className="text-gray-400 hover:text-blue-600 p-1"><Icon d={Icons.edit} size={15}/></button>
+              </div>
+            ))}
+          </div>
+      }
+    </Modal>
+  );
+}
+
+
+// ========================================
+// MODAL DE TARJETAS DE CRÉDITO
+// ========================================
+
+function TarjetasCreditoModal({tarjetas,setTarjetas,onClose}){
+  const emptyT={socio:"",banco:"Credicoop",tipo_tarjeta:"Visa",numero_ultimos_4:"",limite_credito:"",vencimiento_corte:"",activa:true,notas:""};
+  const [form,setForm]=useState(emptyT);
+  const [editId,setEditId]=useState(null);
+  const [loading,setLoading]=useState(false);
+  const f=k=>e=>setForm(p=>({...p,[k]:e.target.value}));
+
+  const guardar = async () => {
+    if(!form.socio.trim()){ alert("El nombre del socio es obligatorio"); return; }
+    setLoading(true);
+    const payload={
+      socio:form.socio.trim(),
+      banco:form.banco,
+      tipo_tarjeta:form.tipo_tarjeta,
+      numero_ultimos_4:form.numero_ultimos_4||"",
+      limite_credito:parseFloat(form.limite_credito)||0,
+      vencimiento_corte:parseInt(form.vencimiento_corte)||15,
+      activa:true,
+      notas:form.notas||"",
+    };
+    if(editId){
+      const {error}=await supabase.from("tarjetas_credito").update(payload).eq("id",editId);
+      if(error){alert("Error: "+error.message);setLoading(false);return;}
+      setTarjetas(prev=>prev.map(p=>p.id===editId?{...p,...payload}:p));
+    } else {
+      const {data,error}=await supabase.from("tarjetas_credito").insert([payload]).select().single();
+      if(error){alert("Error: "+error.message);setLoading(false);return;}
+      setTarjetas(prev=>[...prev,data]);
+    }
+    setForm(emptyT);setEditId(null);setLoading(false);
+  };
+
+  const editar=(p)=>{setForm({socio:p.socio,banco:p.banco,tipo_tarjeta:p.tipo_tarjeta,numero_ultimos_4:p.numero_ultimos_4||"",limite_credito:p.limite_credito||"",vencimiento_corte:p.vencimiento_corte||"",activa:p.activa,notas:p.notas||""});setEditId(p.id);};
+
+  const toggleActiva=async(p)=>{
+    await supabase.from("tarjetas_credito").update({activa:!p.activa}).eq("id",p.id);
+    setTarjetas(prev=>prev.map(x=>x.id===p.id?{...x,activa:!x.activa}:x));
+  };
+
+  return(
+    <Modal title="💳 Tarjetas de crédito Credicoop" onClose={onClose} wide>
+      <p className="text-xs text-gray-500 mb-4">Registrá las 4 tarjetas corporativas (2 Prieto, 2 Barrionuevo). Los gastos se asignan a tarjeta al cargar un gasto.</p>
+      <div className="grid grid-cols-3 gap-3 mb-4 p-3 bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl border border-blue-200">
+        <p className="col-span-3 text-xs font-semibold text-blue-700">{editId?"✏️ Editando tarjeta":"➕ Nueva tarjeta"}</p>
+        <div>
+          <label className="text-xs font-medium text-gray-600">Socio propietario</label>
+          <select value={form.socio} onChange={f("socio")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+            <option value="">— Elegir —</option>
+            <option value="Prieto">Prieto</option>
+            <option value="Barrionuevo">Barrionuevo</option>
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600">Tipo de tarjeta</label>
+          <select value={form.tipo_tarjeta} onChange={f("tipo_tarjeta")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+            <option value="Visa">Visa</option>
+            <option value="Cabal">Cabal</option>
+          </select>
+        </div>
+        <Field label="Últimos 4 dígitos" value={form.numero_ultimos_4} onChange={f("numero_ultimos_4")} placeholder="4832"/>
+        <Field label="Límite de crédito" value={form.limite_credito} onChange={f("limite_credito")} type="number"/>
+        <Field label="Día vto. corte (1-31)" value={form.vencimiento_corte} onChange={f("vencimiento_corte")} type="number"/>
+        <div className="col-span-3"><Field label="Notas (opcional)" value={form.notas} onChange={f("notas")} placeholder="Cuenta asociada, observaciones, etc."/></div>
+        <div className="col-span-3 flex gap-2 justify-end">
+          {editId&&<button onClick={()=>{setForm(emptyT);setEditId(null);}} className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-100">Cancelar</button>}
+          <button onClick={guardar} disabled={loading} className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+            {loading?"Guardando...":(editId?"Actualizar tarjeta":"Agregar tarjeta")}
+          </button>
+        </div>
+      </div>
+      {tarjetas.length===0
+        ? <p className="text-sm text-gray-400 text-center py-4">No hay tarjetas todavía</p>
+        : <div className="space-y-2">
+            {tarjetas.map(p=>(
+              <div key={p.id} className={`flex items-center gap-3 rounded-lg px-3 py-2 border ${p.activa!==false?"bg-white border-blue-200":"bg-gray-50 border-gray-100 opacity-60"}`}>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800">💳 {p.socio} — {p.tipo_tarjeta}</p>
+                  <p className="text-xs text-gray-400">{p.numero_ultimos_4} · Límite: {fmtMoney(p.limite_credito)} · Vto: día {p.vencimiento_corte}</p>
+                </div>
+                <button onClick={()=>toggleActiva(p)} className={`text-xs px-2 py-0.5 rounded-full border ${p.activa!==false?"bg-green-50 text-green-700 border-green-200":"bg-gray-100 text-gray-500 border-gray-200"}`}>
+                  {p.activa!==false?"Activa":"Inactiva"}
+                </button>
+                <button onClick={()=>editar(p)} className="text-gray-400 hover:text-blue-600 p-1"><Icon d={Icons.edit} size={15}/></button>
+              </div>
+            ))}
+          </div>
+      }
+    </Modal>
+  );
+}
+
+
 
 // ── MODAL GESTIÓN DE PROVEEDORES ────────────────────────────────────────────
 function ProveedoresModal({proveedores,setProveedores,onClose}){
@@ -4697,7 +5022,7 @@ function Reports({clients,contracts,invoices,expenses}){
   );
 }
 
-function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBancarios,saldosIniciales=[]}){
+function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBancarios,saldosIniciales=[],cuentasBancarias=[],setCuentasBancarias}){
   const today=new Date();
   const [fMonth,setFMonth]=useState(String(today.getMonth()+1));
   const [fYear,setFYear]=useState(String(today.getFullYear()));
@@ -4746,6 +5071,23 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
         </select>
         {fMonth&&<span className="text-xs font-medium text-gray-500">{MONTHS[Number(fMonth)-1]} {fYear}</span>}
       </div>
+
+      {/* CUENTAS BANCARIAS ACTIVAS */}
+      {cuentasBancarias && cuentasBancarias.length > 0 && (
+        <div className="bg-white rounded-xl border border-emerald-200 p-4">
+          <h3 className="text-sm font-semibold text-emerald-700 mb-3">🏦 Cuentas Bancarias</h3>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {cuentasBancarias.filter(c => c.activa !== false).map(c => (
+              <div key={c.id} className="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-lg p-3 border border-emerald-200">
+                <p className="text-xs font-medium text-emerald-700">{c.nombre}</p>
+                <p className="text-sm font-bold text-emerald-900 mt-1">{fmtMoney(c.saldo_actual)}</p>
+                <p className="text-xs text-emerald-500 mt-0.5">{c.banco}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         {[
