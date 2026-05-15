@@ -40,7 +40,7 @@ const BACKEND_URL = "https://radiofact-backend-production.up.railway.app";
 const DEBUG_MODE = false; // Cambiar a false para emitir facturas reales a ARCA
 
 const MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
-const EXPENSE_CATS = ["Sueldos","Gastos Fijos","Gastos Variables","Gastos Externos","Proveedores","Servicios","Impuestos","Impuestos bancarios","Comisiones bancarias","Alquiler","Otros"];
+const EXPENSE_CATS = ["Sueldos","Gastos Fijos","Gastos Variables","Gastos Externos","Proveedores","Impuestos","Impuestos bancarios","Otros"];
 
 function fmtMoney(n) {
   return new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:0}).format(n||0);
@@ -5025,6 +5025,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
   const [fYear,setFYear]=useState(String(today.getFullYear()));
   const [modalCuentas,setModalCuentas]=useState(false);
   const [modalMovEfectivo,setModalMovEfectivo]=useState(false);
+  const [mostrarMontos,setMostrarMontos]=useState(true);
 
   // ── FILTROS DE PERÍODO ─────────────────────────
   const filtInv=invoices.filter(i=>(!fMonth||i.month===Number(fMonth))&&(!fYear||i.year===Number(fYear)));
@@ -5054,13 +5055,11 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
   const totalEnBancos = cuentasBanco.filter(c => c.activa !== false).reduce((s,c) => s + (parseFloat(c.saldo_actual)||0), 0);
 
   // ── GASTOS DISCRIMINADOS ───────────────────────
-  const gastosImpuestosBanco = filtExp.filter(e=>e.categoria==="Impuestos bancarios");
-  const gastosComisionesBanco = filtExp.filter(e=>e.categoria==="Comisiones bancarias");
+  const gastosImpuestosBanco = filtExp.filter(e=>["Impuestos bancarios"].includes(e.categoria));
   const gastosImpuestos = filtExp.filter(e=>e.categoria==="Impuestos");
-  const gastosOperativos = filtExp.filter(e=>!["Impuestos bancarios","Comisiones bancarias","Impuestos"].includes(e.categoria));
+  const gastosOperativos = filtExp.filter(e=>!["Impuestos bancarios","Impuestos"].includes(e.categoria));
 
   const totImpBanco = gastosImpuestosBanco.reduce((s,e)=>s+e.monto,0);
-  const totComBanco = gastosComisionesBanco.reduce((s,e)=>s+e.monto,0);
   const totImpuestosOtros = gastosImpuestos.reduce((s,e)=>s+e.monto,0);
   const totOperativos = gastosOperativos.reduce((s,e)=>s+e.monto,0);
   const totGastos = filtExp.reduce((s,e)=>s+e.monto,0);
@@ -5078,13 +5077,12 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
   const totIngresos = filtIng.reduce((s,i) => s + parseFloat(i.monto||0), 0);
 
   // ── IMPUESTOS BANCARIOS POR CUENTA ─────────────
-  // (Agrupa gastos cat="Impuestos bancarios" + "Comisiones bancarias" por proveedor o por banco)
+  // (Agrupa gastos cat="Impuestos bancarios" por proveedor o por banco)
   const impuestosPorBanco = {};
-  [...gastosImpuestosBanco, ...gastosComisionesBanco].forEach(g => {
+  gastosImpuestosBanco.forEach(g => {
     const key = g.proveedor || "Sin asignar";
-    if (!impuestosPorBanco[key]) impuestosPorBanco[key] = {impuestos: 0, comisiones: 0, total: 0};
-    if (g.categoria === "Impuestos bancarios") impuestosPorBanco[key].impuestos += g.monto;
-    else impuestosPorBanco[key].comisiones += g.monto;
+    if (!impuestosPorBanco[key]) impuestosPorBanco[key] = {impuestos: 0, total: 0};
+    impuestosPorBanco[key].impuestos += g.monto;
     impuestosPorBanco[key].total += g.monto;
   });
 
@@ -5276,20 +5274,30 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
       {/* ══════════════════════════════════════════ */}
       {/* 4) TOTAL DE ACTIVOS — desglosado            */}
       {/* ══════════════════════════════════════════ */}
+      <div className="flex justify-between items-center mb-3">
+        <h2 className="text-lg font-bold text-gray-800">💰 Resumen de activos</h2>
+        <button 
+          onClick={() => setMostrarMontos(!mostrarMontos)}
+          className="p-2 hover:bg-gray-100 rounded-lg transition"
+          title={mostrarMontos ? "Ocultar montos" : "Mostrar montos"}
+        >
+          {mostrarMontos ? "👁️" : "👁️‍🗨️"}
+        </button>
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="bg-gradient-to-r from-emerald-500 to-teal-500 rounded-xl p-5 text-white shadow-md">
           <p className="text-xs text-emerald-100 uppercase tracking-wide font-medium">Total activos</p>
-          <p className="text-2xl font-bold mt-1">{fmtMoney(totalActivos)}</p>
+          <p className="text-2xl font-bold mt-1">{mostrarMontos ? fmtMoney(totalActivos) : "••••••"}</p>
           <p className="text-xs text-emerald-100 mt-1">{cuentasActivas.length} cuenta(s) activa(s)</p>
         </div>
         <div className="bg-gradient-to-r from-blue-500 to-cyan-500 rounded-xl p-5 text-white shadow-md">
           <p className="text-xs text-blue-100 uppercase tracking-wide font-medium">🏦 En bancos</p>
-          <p className="text-2xl font-bold mt-1">{fmtMoney(totalEnBancos)}</p>
+          <p className="text-2xl font-bold mt-1">{mostrarMontos ? fmtMoney(totalEnBancos) : "••••••"}</p>
           <p className="text-xs text-blue-100 mt-1">{cuentasBanco.filter(c=>c.activa!==false).length} cuenta(s)</p>
         </div>
         <div className="bg-gradient-to-r from-amber-500 to-yellow-500 rounded-xl p-5 text-white shadow-md">
           <p className="text-xs text-amber-100 uppercase tracking-wide font-medium">💵 Efectivo</p>
-          <p className="text-2xl font-bold mt-1">{fmtMoney(totalEfectivo)}</p>
+          <p className="text-2xl font-bold mt-1">{mostrarMontos ? fmtMoney(totalEfectivo) : "••••••"}</p>
           <p className="text-xs text-amber-100 mt-1">{cuentasEfectivo.filter(c=>c.activa!==false).length} caja(s)</p>
         </div>
       </div>
