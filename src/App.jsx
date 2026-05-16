@@ -5495,13 +5495,40 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
       {modalPDF && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70 p-4 overflow-y-auto">
           <style>{`
+            @page { 
+              size: A4; 
+              margin: 1.2cm;
+            }
             @media print {
               body * { visibility: hidden; }
               .pdf-print-area, .pdf-print-area * { visibility: visible; }
-              .pdf-print-area { position: absolute; left: 0; top: 0; width: 100%; }
+              .pdf-print-area { 
+                position: absolute; 
+                left: 0; 
+                top: 0; 
+                width: 100%; 
+                padding: 0 !important;
+                box-shadow: none !important;
+              }
               .no-print { display: none !important; }
+              .pdf-section { 
+                page-break-inside: avoid; 
+                break-inside: avoid;
+              }
+              .pdf-footer {
+                page-break-before: auto;
+              }
             }
-            .pdf-print-area { width: 21cm; min-height: 29.7cm; padding: 1.5cm; background: white; box-sizing: border-box; }
+            .pdf-print-area { 
+              width: 21cm; 
+              padding: 1.5cm; 
+              background: white; 
+              box-sizing: border-box; 
+            }
+            .pdf-section { 
+              page-break-inside: avoid; 
+              break-inside: avoid;
+            }
           `}</style>
           
           <div className="bg-white rounded-lg shadow-2xl max-w-4xl w-full my-8">
@@ -5542,7 +5569,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
               </div>
 
               {/* RESUMEN DE ACTIVOS */}
-              <section style={{marginBottom: '20px'}}>
+              <section className="pdf-section" style={{marginBottom: '20px', pageBreakInside: 'avoid'}}>
                 <h2 style={{fontSize: '14px', fontWeight: 'bold', color: '#059669', backgroundColor: '#d1fae5', padding: '6px 10px', margin: '0 0 10px 0', borderRadius: '4px'}}>💰 RESUMEN DE ACTIVOS</h2>
                 <table style={{width: '100%', fontSize: '11px', borderCollapse: 'collapse'}}>
                   <tbody>
@@ -5563,7 +5590,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
               </section>
 
               {/* CUENTAS Y EFECTIVO - DETALLE */}
-              <section style={{marginBottom: '20px'}}>
+              <section className="pdf-section" style={{marginBottom: '20px', pageBreakInside: 'avoid'}}>
                 <h2 style={{fontSize: '14px', fontWeight: 'bold', color: '#0891b2', backgroundColor: '#cffafe', padding: '6px 10px', margin: '0 0 10px 0', borderRadius: '4px'}}>🏦 CUENTAS Y EFECTIVO (Detalle)</h2>
                 <table style={{width: '100%', fontSize: '11px', borderCollapse: 'collapse'}}>
                   <thead>
@@ -5586,7 +5613,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
               </section>
 
               {/* FACTURACIÓN */}
-              <section style={{marginBottom: '20px'}}>
+              <section className="pdf-section" style={{marginBottom: '20px', pageBreakInside: 'avoid'}}>
                 <h2 style={{fontSize: '14px', fontWeight: 'bold', color: '#1d4ed8', backgroundColor: '#dbeafe', padding: '6px 10px', margin: '0 0 10px 0', borderRadius: '4px'}}>📊 FACTURACIÓN</h2>
                 <table style={{width: '100%', fontSize: '11px', borderCollapse: 'collapse'}}>
                   <tbody>
@@ -5615,7 +5642,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
               </section>
 
               {/* COBRANZAS */}
-              <section style={{marginBottom: '20px'}}>
+              <section className="pdf-section" style={{marginBottom: '20px', pageBreakInside: 'avoid'}}>
                 <h2 style={{fontSize: '14px', fontWeight: 'bold', color: '#15803d', backgroundColor: '#dcfce7', padding: '6px 10px', margin: '0 0 10px 0', borderRadius: '4px'}}>✓ COBRANZAS</h2>
                 <table style={{width: '100%', fontSize: '11px', borderCollapse: 'collapse'}}>
                   <tbody>
@@ -5632,7 +5659,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
               </section>
 
               {/* GASTOS */}
-              <section style={{marginBottom: '20px'}}>
+              <section className="pdf-section" style={{marginBottom: '20px', pageBreakInside: 'avoid'}}>
                 <h2 style={{fontSize: '14px', fontWeight: 'bold', color: '#b91c1c', backgroundColor: '#fee2e2', padding: '6px 10px', margin: '0 0 10px 0', borderRadius: '4px'}}>💸 GASTOS DEL PERÍODO</h2>
                 <table style={{width: '100%', fontSize: '11px', borderCollapse: 'collapse'}}>
                   <tbody>
@@ -5658,7 +5685,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
               </section>
 
               {/* IMPUESTOS A PAGAR */}
-              <section style={{marginBottom: '20px'}}>
+              <section className="pdf-section" style={{marginBottom: '20px', pageBreakInside: 'avoid'}}>
                 <h2 style={{fontSize: '14px', fontWeight: 'bold', color: '#c2410c', backgroundColor: '#ffedd5', padding: '6px 10px', margin: '0 0 10px 0', borderRadius: '4px'}}>🏛️ IMPUESTOS (a pagar próximo mes)</h2>
                 <table style={{width: '100%', fontSize: '11px', borderCollapse: 'collapse'}}>
                   <tbody>
@@ -5683,7 +5710,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
               </section>
 
               {/* IMPUESTOS BANCARIOS POR BANCO */}
-              <section style={{marginBottom: '20px'}}>
+              <section className="pdf-section" style={{marginBottom: '20px', pageBreakInside: 'avoid'}}>
                 <h2 style={{fontSize: '14px', fontWeight: 'bold', color: '#a16207', backgroundColor: '#fef3c7', padding: '6px 10px', margin: '0 0 10px 0', borderRadius: '4px'}}>🏛️ IMPUESTOS Y COMISIONES BANCARIAS</h2>
                 <table style={{width: '100%', fontSize: '11px', borderCollapse: 'collapse'}}>
                   <tbody>
@@ -5705,7 +5732,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
 
               {/* SALDOS PENDIENTES */}
               {byClient.filter(c=>c.facturado-c.cobrado>0).length > 0 && (
-                <section style={{marginBottom: '20px'}}>
+                <section className="pdf-section" style={{marginBottom: '20px', pageBreakInside: 'avoid'}}>
                   <h2 style={{fontSize: '14px', fontWeight: 'bold', color: '#dc2626', backgroundColor: '#fee2e2', padding: '6px 10px', margin: '0 0 10px 0', borderRadius: '4px'}}>⚠️ SALDOS PENDIENTES DE COBRO</h2>
                   <table style={{width: '100%', fontSize: '11px', borderCollapse: 'collapse'}}>
                     <thead>
@@ -5729,7 +5756,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
               )}
 
               {/* FOOTER */}
-              <div style={{marginTop: '40px', paddingTop: '15px', borderTop: '2px solid #e5e7eb', textAlign: 'center'}}>
+              <div className="pdf-footer" style={{marginTop: '40px', paddingTop: '15px', borderTop: '2px solid #e5e7eb', textAlign: 'center'}}>
                 <p style={{fontSize: '10px', color: '#6b7280', margin: 0}}>
                   Sistema RadioFact v3.3 · LA VANGUARDIA NOTICIAS · CUIT 30-71644424-0
                 </p>
