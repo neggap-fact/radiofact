@@ -1,4 +1,4 @@
-// RadioFact v3.0 — Dashboard mejorado + Finance/Reports unificados
+// // Versión Fase 3.3 — Dashboard Finanzas + Compras + IVA Discriminable — 2026-05-16
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./supabase";
 
