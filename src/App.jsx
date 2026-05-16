@@ -5031,6 +5031,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
   const [modalCuentas,setModalCuentas]=useState(false);
   const [modalMovEfectivo,setModalMovEfectivo]=useState(false);
   const [mostrarMontos,setMostrarMontos]=useState(true);
+  const [modalPDF,setModalPDF]=useState(false);
 
   // ── FILTROS DE PERÍODO ─────────────────────────
   const filtInv=invoices.filter(i=>(!fMonth||i.month===Number(fMonth))&&(!fYear||i.year===Number(fYear)));
@@ -5128,6 +5129,32 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
 
   return(
     <div className="space-y-4">
+      {/* ── HEADER CON OJITO ──────────────────────── */}
+      <div className="flex items-center justify-between bg-gradient-to-r from-blue-50 to-emerald-50 rounded-xl p-3 border border-gray-200">
+        <div>
+          <h2 className="text-lg font-bold text-gray-800">💰 Finanzas</h2>
+          <p className="text-xs text-gray-500 mt-0.5">{fMonth?MONTHS[Number(fMonth)-1]:""} {fYear}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => setModalPDF(true)}
+            className="flex items-center gap-2 px-4 py-2 hover:bg-white rounded-lg transition border border-gray-200 bg-red-50 text-red-700"
+            title="Descargar resumen en PDF"
+          >
+            <span className="text-lg">📄</span>
+            <span className="text-xs font-medium">PDF</span>
+          </button>
+          <button 
+            onClick={() => setMostrarMontos(!mostrarMontos)}
+            className="flex items-center gap-2 px-4 py-2 hover:bg-white rounded-lg transition border border-gray-200"
+            title={mostrarMontos ? "Ocultar todos los valores" : "Mostrar todos los valores"}
+          >
+            <span className="text-2xl">{mostrarMontos ? "👁️" : "👁️‍🗨️"}</span>
+            <span className="text-xs font-medium text-gray-600">{mostrarMontos ? "Ocultar" : "Mostrar"}</span>
+          </button>
+        </div>
+      </div>
+
       {/* ── FILTRO DE PERÍODO ────────────────────── */}
       <div className="flex items-center gap-3">
         <select value={fMonth} onChange={e=>setFMonth(e.target.value)} className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
@@ -5137,7 +5164,6 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
         <select value={fYear} onChange={e=>setFYear(e.target.value)} className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
           {[2024,2025,2026].map(y=><option key={y}>{y}</option>)}
         </select>
-        {fMonth&&<span className="text-xs font-medium text-gray-500">{MONTHS[Number(fMonth)-1]} {fYear}</span>}
       </div>
 
       {/* ══════════════════════════════════════════ */}
@@ -5346,31 +5372,39 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
           </div>
         </div>
         <div className="border-t border-gray-200 pt-3 mt-3 flex items-center justify-between">
-          <p className="text-sm font-medium text-gray-700">TOTAL gastos + impuestos del período:</p>
-          <p className="text-2xl font-bold text-red-600">{fmtMoney(totGastos + totImpuestosTotal - totImpBanco)}</p>
+          <p className="text-sm font-medium text-gray-700">TOTAL gastos del período:</p>
+          <p className="text-2xl font-bold text-red-600">{fmtMoney(totGastos - totImpBanco)}</p>
         </div>
-        <p className="text-xs text-gray-400 mt-1">* No se duplican los impuestos bancarios (ya cuentan dentro de gastos del mes)</p>
+        <p className="text-xs text-gray-400 mt-1">* No incluye IVA ni IIBB (se muestran por separado abajo)</p>
       </div>
 
       {/* ══════════════════════════════════════════ */}
       {/* 6) IMPUESTOS BANCARIOS POR CUENTA          */}
       {/* ══════════════════════════════════════════ */}
-      {Object.keys(impuestosPorBanco).length > 0 && (
+      {(Object.keys(impuestosPorBanco).length > 0 || cuentasBanco.length > 0) && (
         <div className="bg-white rounded-xl border border-amber-200 p-4">
           <h3 className="text-sm font-semibold text-amber-700 mb-3">🏛️ Impuestos y comisiones bancarias</h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {Object.entries(impuestosPorBanco).map(([banco, valores]) => (
-              <div key={banco} className="bg-amber-50 rounded-lg p-3 border border-amber-100">
-                <p className="text-xs font-medium text-amber-800">{banco}</p>
-                <p className="text-lg font-bold text-amber-700 mt-1">{fmtMoney(valores.total)}</p>
-                <div className="text-xs text-amber-600 mt-1 space-y-0.5">
-                  {valores.impuestos > 0 && <p>• {fmtMoney(valores.impuestos)}</p>}
-                </div>
+            {/* Mostrar Credicoop */}
+            <div className="bg-amber-50 rounded-lg p-3 border border-amber-100">
+              <p className="text-xs font-medium text-amber-800">Credicoop Corriente LVN</p>
+              <p className="text-lg font-bold text-amber-700 mt-1">{fmtMoney(impuestosPorBanco["Credicoop Corriente LVN"]?.total || 0)}</p>
+              <div className="text-xs text-amber-600 mt-1 space-y-0.5">
+                {impuestosPorBanco["Credicoop Corriente LVN"]?.impuestos > 0 && <p>• {fmtMoney(impuestosPorBanco["Credicoop Corriente LVN"]?.impuestos)}</p>}
               </div>
-            ))}
+            </div>
+            {/* Mostrar Santander */}
+            <div className="bg-amber-50 rounded-lg p-3 border border-amber-100">
+              <p className="text-xs font-medium text-amber-800">Banco Santander LVN</p>
+              <p className="text-lg font-bold text-amber-700 mt-1">{fmtMoney(impuestosPorBanco["Banco Santander LVN"]?.total || 0)}</p>
+              <div className="text-xs text-amber-600 mt-1 space-y-0.5">
+                {impuestosPorBanco["Banco Santander LVN"]?.impuestos > 0 && <p>• {fmtMoney(impuestosPorBanco["Banco Santander LVN"]?.impuestos)}</p>}
+              </div>
+            </div>
+            {/* TOTAL */}
             <div className="bg-amber-100 rounded-lg p-3 border-2 border-amber-300">
               <p className="text-xs font-medium text-amber-900">TOTAL</p>
-              <p className="text-lg font-bold text-amber-900 mt-1">{fmtMoney(Object.values(impuestosPorBanco).reduce((s,v)=>s+v.total,0))}</p>
+              <p className="text-lg font-bold text-amber-900 mt-1">{fmtMoney((impuestosPorBanco["Credicoop Corriente LVN"]?.total || 0) + (impuestosPorBanco["Banco Santander LVN"]?.total || 0))}</p>
               <p className="text-xs text-amber-700 mt-1">Impuestos bancarios</p>
             </div>
           </div>
@@ -5406,13 +5440,14 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
         </div>
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-200">
-            <tr>{["Cliente","Facturas","Última factura","Neto","IVA","Total","Cobrado","Saldo"].map(h=><th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">{h}</th>)}</tr>
+            <tr>{["Cliente","Facturas","Última factura","Neto","IVA","Total","Cobrado","Saldo","Acciones"].map(h=><th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">{h}</th>)}</tr>
           </thead>
           <tbody>
             {byClient.map(c=>{
               const ultFecha = c.facturas && c.facturas.length > 0 
                 ? new Date(c.facturas[c.facturas.length - 1].fecha_emision || c.facturas[c.facturas.length - 1].createdAt)
                 : null;
+              const tieneDeuda = c.facturado - c.cobrado > 0;
               return(
               <tr key={c.id} className="border-b border-gray-50 hover:bg-gray-50">
                 <td className="px-4 py-3 text-sm">
@@ -5425,7 +5460,27 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
                 <td className="px-4 py-3 text-xs font-medium text-orange-600">{fmtMoney(c.iva)}</td>
                 <td className="px-4 py-3 text-xs font-semibold">{fmtMoney(c.facturado)}</td>
                 <td className="px-4 py-3 text-xs text-green-700">{fmtMoney(c.cobrado)}</td>
-                <td className="px-4 py-3 text-xs font-semibold text-red-600">{c.facturado-c.cobrado>0?fmtMoney(c.facturado-c.cobrado):"—"}</td>
+                <td className="px-4 py-3 text-xs font-semibold text-red-600">{tieneDeuda?fmtMoney(c.facturado-c.cobrado):"—"}</td>
+                <td className="px-4 py-3 text-xs flex gap-1">
+                  {tieneDeuda && (
+                    <>
+                      <button 
+                        onClick={() => alert("Ver facturas de " + c.razonSocial + " - Implementar navegación a Facturación")}
+                        className="px-2 py-1 bg-blue-50 text-blue-600 rounded text-xs hover:bg-blue-100 border border-blue-200"
+                        title="Ver facturas pendientes"
+                      >
+                        👁️
+                      </button>
+                      <button 
+                        onClick={() => alert("Reenviar aviso de cobro a " + c.razonSocial + " - Implementar envío de email")}
+                        className="px-2 py-1 bg-orange-50 text-orange-600 rounded text-xs hover:bg-orange-100 border border-orange-200"
+                        title="Reenviar aviso de factura impaga"
+                      >
+                        📧
+                      </button>
+                    </>
+                  )}
+                </td>
               </tr>
             );
             })}
@@ -5441,6 +5496,96 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
           setCuentas={setCuentasBancarias}
           onClose={() => setModalCuentas(false)}
         />
+      )}
+
+      {/* ── MODAL PDF RESUMEN ──────────────────────── */}
+      {modalPDF && (
+        <Modal title="📄 Resumen Financiero PDF" onClose={() => setModalPDF(false)} wide>
+          <div className="space-y-6 max-h-96 overflow-y-auto p-6 bg-white">
+            {/* HEADER */}
+            <div className="text-center border-b pb-4">
+              <h1 className="text-2xl font-bold text-gray-800">RADIOFACT</h1>
+              <p className="text-xs text-gray-500">Resumen Financiero</p>
+              <p className="text-sm font-medium text-gray-700 mt-2">Período: {fMonth?MONTHS[Number(fMonth)-1]:""} {fYear}</p>
+            </div>
+
+            {/* ACTIVOS */}
+            <div>
+              <h2 className="text-sm font-bold text-emerald-700 mb-2">💰 ACTIVOS</h2>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="border p-2 rounded">
+                  <p className="text-gray-600">En bancos:</p>
+                  <p className="font-bold">{fmtMoney(totalEnBancos)}</p>
+                </div>
+                <div className="border p-2 rounded">
+                  <p className="text-gray-600">Efectivo:</p>
+                  <p className="font-bold">{fmtMoney(totalEfectivo)}</p>
+                </div>
+                <div className="border-2 border-emerald-300 p-2 rounded col-span-2">
+                  <p className="text-gray-700 font-medium">Total Activos:</p>
+                  <p className="text-lg font-bold text-emerald-700">{fmtMoney(totalActivos)}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* FACTURACIÓN */}
+            <div>
+              <h2 className="text-sm font-bold text-blue-700 mb-2">📊 FACTURACIÓN</h2>
+              <div className="space-y-1 text-xs">
+                <div className="flex justify-between border-b py-1"><span>PV 3 (RadioFact):</span><span className="font-medium">{fmtMoney(totPV3)}</span></div>
+                <div className="flex justify-between border-b py-1"><span>PV 1 (ARCA Web):</span><span className="font-medium">{fmtMoney(totPV1)}</span></div>
+                <div className="flex justify-between border-b py-1"><span>Total Facturado:</span><span className="font-bold text-blue-700">{fmtMoney(totFact)}</span></div>
+                <div className="flex justify-between border-b py-1"><span>Neto:</span><span className="font-medium">{fmtMoney(totNeto)}</span></div>
+              </div>
+            </div>
+
+            {/* COBRANZAS */}
+            <div>
+              <h2 className="text-sm font-bold text-green-700 mb-2">✓ COBRANZAS</h2>
+              <div className="space-y-1 text-xs">
+                <div className="flex justify-between border-b py-1"><span>Cobrado:</span><span className="font-bold text-green-700">{fmtMoney(totCob)}</span></div>
+                <div className="flex justify-between border-b py-1"><span>Pendiente:</span><span className="font-bold text-red-600">{fmtMoney(totAd)}</span></div>
+              </div>
+            </div>
+
+            {/* GASTOS */}
+            <div>
+              <h2 className="text-sm font-bold text-red-700 mb-2">💸 GASTOS</h2>
+              <div className="space-y-1 text-xs">
+                <div className="flex justify-between border-b py-1"><span>Gastos operativos:</span><span className="font-medium">{fmtMoney(totOperativos)}</span></div>
+                <div className="flex justify-between border-b py-1"><span>Impuestos bancarios:</span><span className="font-medium">{fmtMoney(totImpBanco)}</span></div>
+                <div className="flex justify-between border-b py-1"><span>Total Gastos:</span><span className="font-bold text-red-600">{fmtMoney(totGastos - totImpBanco)}</span></div>
+              </div>
+            </div>
+
+            {/* IMPUESTOS */}
+            <div>
+              <h2 className="text-sm font-bold text-orange-700 mb-2">🏛️ IMPUESTOS</h2>
+              <div className="space-y-1 text-xs">
+                <div className="flex justify-between border-b py-1"><span>IVA de ventas:</span><span className="font-medium">{fmtMoney(totIva)}</span></div>
+                <div className="flex justify-between border-b py-1"><span>IVA de compras:</span><span className="font-medium">{fmtMoney(ivaComprasEstimado)}</span></div>
+                <div className="flex justify-between border-b py-1"><span className="font-bold">IVA a pagar:</span><span className="font-bold text-orange-700">{fmtMoney(ivaPagar)}</span></div>
+                <div className="flex justify-between py-1"><span>IIBB (3%):</span><span className="font-medium">{fmtMoney(totIibb)}</span></div>
+              </div>
+            </div>
+
+            {/* BOTONES */}
+            <div className="flex gap-3 pt-4 border-t">
+              <button 
+                onClick={() => window.print()}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
+              >
+                🖨️ Imprimir / Guardar como PDF
+              </button>
+              <button 
+                onClick={() => setModalPDF(false)}
+                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {/* ── MODAL MOVIMIENTO DE EFECTIVO ────────────── */}
