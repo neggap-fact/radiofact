@@ -976,7 +976,6 @@ export default function App() {
   const unread = notifications.filter(n=>!n.read).length;
 
   const pages = [
-    {id:"dashboard",label:"Dashboard",icon:Icons.dashboard},
     {id:"clients",label:"Clientes",icon:Icons.clients},
     {id:"contracts",label:"Contratos",icon:Icons.contracts},
     {id:"billing",label:"Facturación",icon:Icons.billing},
@@ -5358,22 +5357,23 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
       {/* ══════════════════════════════════════════ */}
       {Object.keys(impuestosPorBanco).length > 0 && (
         <div className="bg-white rounded-xl border border-amber-200 p-4">
-          <h3 className="text-sm font-semibold text-amber-700 mb-3">🏛️ Impuestos y comisiones por banco</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <h3 className="text-sm font-semibold text-amber-700 mb-3">🏛️ Impuestos y comisiones bancarias</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {Object.entries(impuestosPorBanco).map(([banco, valores]) => (
               <div key={banco} className="bg-amber-50 rounded-lg p-3 border border-amber-100">
                 <p className="text-xs font-medium text-amber-800">{banco}</p>
                 <p className="text-lg font-bold text-amber-700 mt-1">{fmtMoney(valores.total)}</p>
                 <div className="text-xs text-amber-600 mt-1 space-y-0.5">
-                  {valores.impuestos > 0 && <p>• Impuestos: {fmtMoney(valores.impuestos)}</p>}
-                  {valores.comisiones > 0 && <p>• Comisiones: {fmtMoney(valores.comisiones)}</p>}
+                  {valores.impuestos > 0 && <p>• {fmtMoney(valores.impuestos)}</p>}
                 </div>
               </div>
             ))}
+            <div className="bg-amber-100 rounded-lg p-3 border-2 border-amber-300">
+              <p className="text-xs font-medium text-amber-900">TOTAL</p>
+              <p className="text-lg font-bold text-amber-900 mt-1">{fmtMoney(Object.values(impuestosPorBanco).reduce((s,v)=>s+v.total,0))}</p>
+              <p className="text-xs text-amber-700 mt-1">Impuestos bancarios</p>
+            </div>
           </div>
-          <p className="text-xs text-gray-400 mt-3">
-            💡 Para cargar nuevos: ir a <b>Gastos → Nuevo gasto</b> y elegir categoría "Impuestos bancarios" o "Comisiones bancarias", poniendo el banco en el campo Proveedor.
-          </p>
         </div>
       )}
 
@@ -5406,49 +5406,33 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
         </div>
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-200">
-            <tr>{["Cliente","Facturas","Neto","IVA","Total","Cobrado","Saldo"].map(h=><th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">{h}</th>)}</tr>
+            <tr>{["Cliente","Facturas","Última factura","Neto","IVA","Total","Cobrado","Saldo"].map(h=><th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">{h}</th>)}</tr>
           </thead>
           <tbody>
-            {byClient.map(c=>(
+            {byClient.map(c=>{
+              const ultFecha = c.facturas && c.facturas.length > 0 
+                ? new Date(c.facturas[c.facturas.length - 1].fecha_emision || c.facturas[c.facturas.length - 1].createdAt)
+                : null;
+              return(
               <tr key={c.id} className="border-b border-gray-50 hover:bg-gray-50">
                 <td className="px-4 py-3 text-sm">
                   <div className="font-medium">{c.razonSocial}</div>
                   {c.alias && <div className="text-xs text-gray-400">{c.alias}</div>}
                 </td>
                 <td className="px-4 py-3 text-xs text-center text-gray-500">{c.facturas.length}</td>
+                <td className="px-4 py-3 text-xs text-gray-500">{ultFecha ? ultFecha.toLocaleDateString("es-AR") : "—"}</td>
                 <td className="px-4 py-3 text-xs text-gray-600">{fmtMoney(c.neto)}</td>
                 <td className="px-4 py-3 text-xs font-medium text-orange-600">{fmtMoney(c.iva)}</td>
                 <td className="px-4 py-3 text-xs font-semibold">{fmtMoney(c.facturado)}</td>
                 <td className="px-4 py-3 text-xs text-green-700">{fmtMoney(c.cobrado)}</td>
                 <td className="px-4 py-3 text-xs font-semibold text-red-600">{c.facturado-c.cobrado>0?fmtMoney(c.facturado-c.cobrado):"—"}</td>
               </tr>
-            ))}
+            );
+            })}
           </tbody>
         </table>
         {byClient.length===0&&<div className="text-center py-8 text-gray-400 text-sm">Sin datos del período seleccionado</div>}
       </div>
-
-      {/* ── INGRESOS BANCARIOS DEL PERÍODO ────────── */}
-      {filtIng.length > 0 && (
-        <div className="bg-white rounded-xl border border-emerald-200 p-4">
-          <h3 className="text-sm font-semibold text-emerald-700 mb-3">📥 Ingresos bancarios del período ({filtIng.length})</h3>
-          <div className="max-h-64 overflow-y-auto space-y-1">
-            {filtIng.map(i => (
-              <div key={i.id} className="flex items-center justify-between py-1.5 border-b border-emerald-50 last:border-0">
-                <div>
-                  <p className="text-xs font-medium text-gray-700">{i.origen || i.descripcion}</p>
-                  <p className="text-xs text-gray-400">{i.descripcion} · {i.fecha} · Comp: {i.comprobante || "—"}</p>
-                </div>
-                <p className="text-xs font-bold text-emerald-700">{fmtMoney(i.monto)}</p>
-              </div>
-            ))}
-            <div className="pt-2 mt-2 border-t border-emerald-200 flex items-center justify-between">
-              <p className="text-xs font-medium text-emerald-700">Total ingresos:</p>
-              <p className="text-sm font-bold text-emerald-700">{fmtMoney(totIngresos)}</p>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── MODAL CUENTAS ──────────────────────────── */}
       {modalCuentas && (
