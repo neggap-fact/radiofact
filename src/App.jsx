@@ -5323,11 +5323,6 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
             <p className="text-base font-bold text-amber-700 mt-1">{fmtMoney(totImpBanco)}</p>
             <p className="text-xs text-amber-400">{gastosImpuestosBanco.length} mov.</p>
           </div>
-          <div className="bg-yellow-50 rounded-lg p-3">
-            <p className="text-xs text-yellow-700">Comisiones bancarias</p>
-            <p className="text-base font-bold text-yellow-700 mt-1">{fmtMoney(totComBanco)}</p>
-            <p className="text-xs text-yellow-500">{gastosComisionesBanco.length} mov.</p>
-          </div>
         </div>
         <div className="border-t border-gray-200 pt-3 mt-3 flex items-center justify-between">
           <p className="text-sm font-medium text-gray-700">TOTAL gastos + impuestos del período:</p>
