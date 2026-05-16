@@ -941,6 +941,8 @@ export default function App() {
         es_tarjeta:      g.es_tarjeta === true,
         tarjeta_id:      g.tarjeta_id || null,
         socio:           g.socio || "",
+        iva_discriminable: g.iva_discriminable === true,
+        monto_iva:       parseFloat(g.monto_iva) || 0,
       })));
     });
     // Cargar cuentas bancarias
@@ -976,13 +978,13 @@ export default function App() {
   const unread = notifications.filter(n=>!n.read).length;
 
   const pages = [
+    {id:"finance",label:"Finanzas",icon:Icons.finance},
     {id:"clients",label:"Clientes",icon:Icons.clients},
     {id:"contracts",label:"Contratos",icon:Icons.contracts},
     {id:"billing",label:"Facturación",icon:Icons.billing},
     {id:"factura-directa",label:"Factura Directa",icon:Icons.pdf},
     {id:"notas-credito",label:"Notas de Crédito",icon:Icons.creditNote},
     {id:"expenses",label:"Gastos",icon:Icons.expenses},
-    {id:"finance",label:"Finanzas",icon:Icons.finance},
     {id:"proveedores",label:"Proveedores",icon:Icons.users},
     ...(currentUser.role==="webmaster"?[{id:"users",label:"Usuarios",icon:Icons.users}]:[]),
     {id:"settings",label:"Configuración",icon:Icons.settings},
@@ -3897,6 +3899,8 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
       es_tarjeta:       d.es_tarjeta === true,
       tarjeta_id:       d.tarjeta_id || null,
       socio:            d.socio || null,
+      iva_discriminable: d.iva_discriminable === true,
+      monto_iva:        parseFloat(d.monto_iva) || 0,
     };
     const esUUID = d.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(d.id);
     if (esUUID) {
@@ -5032,6 +5036,9 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
   const [modalMovEfectivo,setModalMovEfectivo]=useState(false);
   const [mostrarMontos,setMostrarMontos]=useState(true);
   const [modalPDF,setModalPDF]=useState(false);
+  
+  // Helper: formatear monto respetando si está oculto
+  const fmt = (val) => mostrarMontos ? fmtMoney(val) : "••••••";
 
   // ── FILTROS DE PERÍODO ─────────────────────────
   const filtInv=invoices.filter(i=>(!fMonth||i.month===Number(fMonth))&&(!fYear||i.year===Number(fYear)));
@@ -5094,11 +5101,13 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
   const totIngresos = filtIng.reduce((s,i) => s + parseFloat(i.monto||0), 0);
 
   // ── IMPUESTOS BANCARIOS POR CUENTA ─────────────
-  // (Agrupa gastos cat="Impuestos bancarios" por proveedor o por banco)
-  const impuestosPorBanco = {};
+  // Detecta el banco buscando palabras clave en el proveedor
+  const impuestosPorBanco = { credicoop: {nombre:"Credicoop Corriente LVN", total: 0, impuestos: 0}, santander: {nombre:"Banco Santander LVN", total: 0, impuestos: 0}, otros: {nombre:"Otros", total: 0, impuestos: 0} };
   gastosImpuestosBanco.forEach(g => {
-    const key = g.proveedor || "Sin asignar";
-    if (!impuestosPorBanco[key]) impuestosPorBanco[key] = {impuestos: 0, total: 0};
+    const prov = (g.proveedor || "").toLowerCase();
+    let key = "otros";
+    if (prov.includes("credicoop")) key = "credicoop";
+    else if (prov.includes("santander")) key = "santander";
     impuestosPorBanco[key].impuestos += g.monto;
     impuestosPorBanco[key].total += g.monto;
   });
@@ -5167,7 +5176,28 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
       </div>
 
       {/* ══════════════════════════════════════════ */}
-      {/* 1) CUENTAS BANCARIAS Y EFECTIVO            */}
+      {/* 1) RESUMEN DE ACTIVOS — ARRIBA              */}
+      {/* ══════════════════════════════════════════ */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="bg-gradient-to-r from-emerald-500 to-teal-500 rounded-xl p-5 text-white shadow-md">
+          <p className="text-xs text-emerald-100 uppercase tracking-wide font-medium">TOTAL ACTIVOS</p>
+          <p className="text-2xl font-bold mt-1">{fmt(totalActivos)}</p>
+          <p className="text-xs text-emerald-100 mt-1">{cuentasActivas.length} cuenta(s) activa(s)</p>
+        </div>
+        <div className="bg-gradient-to-r from-blue-500 to-cyan-500 rounded-xl p-5 text-white shadow-md">
+          <p className="text-xs text-blue-100 uppercase tracking-wide font-medium">🏦 EN BANCOS</p>
+          <p className="text-2xl font-bold mt-1">{fmt(totalEnBancos)}</p>
+          <p className="text-xs text-blue-100 mt-1">{cuentasBanco.filter(c=>c.activa!==false).length} cuenta(s)</p>
+        </div>
+        <div className="bg-gradient-to-r from-amber-500 to-yellow-500 rounded-xl p-5 text-white shadow-md">
+          <p className="text-xs text-amber-100 uppercase tracking-wide font-medium">💵 EFECTIVO</p>
+          <p className="text-2xl font-bold mt-1">{fmt(totalEfectivo)}</p>
+          <p className="text-xs text-amber-100 mt-1">{cuentasEfectivo.filter(c=>c.activa!==false).length} caja(s)</p>
+        </div>
+      </div>
+
+      {/* ══════════════════════════════════════════ */}
+      {/* 2) CUENTAS BANCARIAS Y EFECTIVO            */}
       {/* ══════════════════════════════════════════ */}
       <div className="bg-white rounded-xl border border-emerald-200 p-4">
         <div className="flex items-center justify-between mb-3">
@@ -5222,7 +5252,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
                     <span className="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded">Inactiva</span>
                   )}
                 </div>
-                <p className={`text-lg font-bold ${amountClass}`}>{fmtMoney(c.saldo_actual)}</p>
+                <p className={`text-lg font-bold ${amountClass}`}>{fmt(c.saldo_actual)}</p>
                 <div className={`flex gap-1 mt-2 pt-2 border-t ${borderClass}`}>
                   <button
                     onClick={() => desactivarCuenta(c)}
@@ -5254,22 +5284,22 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
           <div className="bg-blue-50 rounded-lg p-3 border-l-4 border-blue-500">
             <p className="text-xs text-gray-500">Facturado TOTAL</p>
-            <p className="text-xl font-bold text-blue-700 mt-1">{fmtMoney(totFact)}</p>
-            <p className="text-xs text-gray-400 mt-0.5">neto {fmtMoney(totNeto)} + IVA {fmtMoney(totIva)}</p>
+            <p className="text-xl font-bold text-blue-700 mt-1">{fmt(totFact)}</p>
+            <p className="text-xs text-gray-400 mt-0.5">neto {fmt(totNeto)} + IVA {fmt(totIva)}</p>
           </div>
           <div className="bg-orange-50 rounded-lg p-3 border-l-4 border-orange-500">
             <p className="text-xs text-gray-500">IVA a declarar</p>
-            <p className="text-xl font-bold text-orange-600 mt-1">{fmtMoney(totIva)}</p>
+            <p className="text-xl font-bold text-orange-600 mt-1">{fmt(totIva)}</p>
             <p className="text-xs text-gray-400 mt-0.5">débito fiscal</p>
           </div>
           <div className="bg-red-50 rounded-lg p-3 border-l-4 border-red-500">
             <p className="text-xs text-gray-500">IVA a pagar</p>
-            <p className="text-xl font-bold text-red-600 mt-1">{fmtMoney(ivaPagar)}</p>
-            <p className="text-xs text-gray-400 mt-0.5">{fmtMoney(totIva)} (ventas) - {fmtMoney(ivaComprasEstimado)} (compras)</p>
+            <p className="text-xl font-bold text-red-600 mt-1">{fmt(ivaPagar)}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{fmt(totIva)} (ventas) - {fmt(ivaComprasEstimado)} (compras)</p>
           </div>
           <div className="bg-purple-50 rounded-lg p-3 border-l-4 border-purple-500">
             <p className="text-xs text-gray-500">IIBB Santa Cruz 3%</p>
-            <p className="text-xl font-bold text-purple-600 mt-1">{fmtMoney(totIibb)}</p>
+            <p className="text-xl font-bold text-purple-600 mt-1">{fmt(totIibb)}</p>
             <p className="text-xs text-gray-400 mt-0.5">sobre base imponible</p>
           </div>
         </div>
@@ -5282,8 +5312,8 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
               </div>
               <span className="text-xs bg-blue-200 text-blue-700 px-2 py-0.5 rounded-full">{facPV3.length}</span>
             </div>
-            <p className="text-lg font-bold text-blue-800 mt-2">{fmtMoney(totPV3)}</p>
-            <p className="text-xs text-blue-500 mt-1">Cobrado: {fmtMoney(cobPV3)} · Pendiente: {fmtMoney(totPV3 - cobPV3)}</p>
+            <p className="text-lg font-bold text-blue-800 mt-2">{fmt(totPV3)}</p>
+            <p className="text-xs text-blue-500 mt-1">Cobrado: {fmt(cobPV3)} · Pendiente: {fmt(totPV3 - cobPV3)}</p>
           </div>
           <div className="bg-purple-50 rounded-lg p-3 border border-purple-200">
             <div className="flex items-start justify-between">
@@ -5293,8 +5323,8 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
               </div>
               <span className="text-xs bg-purple-200 text-purple-700 px-2 py-0.5 rounded-full">{facPV1.length}</span>
             </div>
-            <p className="text-lg font-bold text-purple-800 mt-2">{fmtMoney(totPV1)}</p>
-            <p className="text-xs text-purple-500 mt-1">Cobrado: {fmtMoney(cobPV1)} · Pendiente: {fmtMoney(totPV1 - cobPV1)}</p>
+            <p className="text-lg font-bold text-purple-800 mt-2">{fmt(totPV1)}</p>
+            <p className="text-xs text-purple-500 mt-1">Cobrado: {fmt(cobPV1)} · Pendiente: {fmt(totPV1 - cobPV1)}</p>
           </div>
         </div>
       </div>
@@ -5307,45 +5337,14 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="bg-green-50 rounded-lg p-3 border-l-4 border-green-500">
             <p className="text-xs text-gray-500">Cobrado</p>
-            <p className="text-xl font-bold text-green-700 mt-1">{fmtMoney(totCob)}</p>
+            <p className="text-xl font-bold text-green-700 mt-1">{fmt(totCob)}</p>
             <p className="text-xs text-gray-400 mt-0.5">{filtInv.filter(i=>i.estado==="Pagada").length} factura(s) cobrada(s)</p>
           </div>
           <div className="bg-red-50 rounded-lg p-3 border-l-4 border-red-500">
             <p className="text-xs text-gray-500">Adeudado / Por cobrar</p>
-            <p className="text-xl font-bold text-red-600 mt-1">{fmtMoney(totAd)}</p>
+            <p className="text-xl font-bold text-red-600 mt-1">{fmt(totAd)}</p>
             <p className="text-xs text-gray-400 mt-0.5">{filtInv.filter(i=>i.estado!=="Pagada"&&i.estado!=="Anulada").length} pendiente(s)</p>
           </div>
-        </div>
-      </div>
-
-      {/* ══════════════════════════════════════════ */}
-      {/* 4) TOTAL DE ACTIVOS — desglosado            */}
-      {/* ══════════════════════════════════════════ */}
-      <div className="flex justify-between items-center mb-3">
-        <h2 className="text-lg font-bold text-gray-800">💰 Resumen de activos</h2>
-        <button 
-          onClick={() => setMostrarMontos(!mostrarMontos)}
-          className="p-2 hover:bg-gray-100 rounded-lg transition"
-          title={mostrarMontos ? "Ocultar montos" : "Mostrar montos"}
-        >
-          {mostrarMontos ? "👁️" : "👁️‍🗨️"}
-        </button>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div className="bg-gradient-to-r from-emerald-500 to-teal-500 rounded-xl p-5 text-white shadow-md">
-          <p className="text-xs text-emerald-100 uppercase tracking-wide font-medium">Total activos</p>
-          <p className="text-2xl font-bold mt-1">{mostrarMontos ? fmtMoney(totalActivos) : "••••••"}</p>
-          <p className="text-xs text-emerald-100 mt-1">{cuentasActivas.length} cuenta(s) activa(s)</p>
-        </div>
-        <div className="bg-gradient-to-r from-blue-500 to-cyan-500 rounded-xl p-5 text-white shadow-md">
-          <p className="text-xs text-blue-100 uppercase tracking-wide font-medium">🏦 En bancos</p>
-          <p className="text-2xl font-bold mt-1">{mostrarMontos ? fmtMoney(totalEnBancos) : "••••••"}</p>
-          <p className="text-xs text-blue-100 mt-1">{cuentasBanco.filter(c=>c.activa!==false).length} cuenta(s)</p>
-        </div>
-        <div className="bg-gradient-to-r from-amber-500 to-yellow-500 rounded-xl p-5 text-white shadow-md">
-          <p className="text-xs text-amber-100 uppercase tracking-wide font-medium">💵 Efectivo</p>
-          <p className="text-2xl font-bold mt-1">{mostrarMontos ? fmtMoney(totalEfectivo) : "••••••"}</p>
-          <p className="text-xs text-amber-100 mt-1">{cuentasEfectivo.filter(c=>c.activa!==false).length} caja(s)</p>
         </div>
       </div>
 
@@ -5354,57 +5353,51 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
       {/* ══════════════════════════════════════════ */}
       <div className="bg-white rounded-xl border border-gray-200 p-4">
         <h3 className="text-sm font-semibold text-gray-700 mb-3">💸 Gastos e impuestos del período</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
           <div className="bg-gray-50 rounded-lg p-3">
             <p className="text-xs text-gray-500">Gastos operativos</p>
-            <p className="text-base font-bold text-gray-800 mt-1">{fmtMoney(totOperativos)}</p>
+            <p className="text-base font-bold text-gray-800 mt-1">{fmt(totOperativos)}</p>
             <p className="text-xs text-gray-400">{gastosOperativos.length} ítem(s)</p>
           </div>
           <div className="bg-orange-50 rounded-lg p-3">
-            <p className="text-xs text-orange-600">Impuestos (IVA+IIBB+otros)</p>
-            <p className="text-base font-bold text-orange-700 mt-1">{fmtMoney(totImpuestosTotal)}</p>
-            <p className="text-xs text-orange-400">IVA {fmtMoney(totIva)} + IIBB {fmtMoney(totIibb)} + Otros {fmtMoney(totImpuestosOtros)}</p>
+            <p className="text-xs text-orange-600">Impuestos pagados (categoría)</p>
+            <p className="text-base font-bold text-orange-700 mt-1">{fmt(totImpuestosOtros)}</p>
+            <p className="text-xs text-orange-400">{gastosImpuestos.length} mov.</p>
           </div>
           <div className="bg-amber-50 rounded-lg p-3">
             <p className="text-xs text-amber-600">Impuestos bancarios</p>
-            <p className="text-base font-bold text-amber-700 mt-1">{fmtMoney(totImpBanco)}</p>
+            <p className="text-base font-bold text-amber-700 mt-1">{fmt(totImpBanco)}</p>
             <p className="text-xs text-amber-400">{gastosImpuestosBanco.length} mov.</p>
           </div>
         </div>
         <div className="border-t border-gray-200 pt-3 mt-3 flex items-center justify-between">
           <p className="text-sm font-medium text-gray-700">TOTAL gastos del período:</p>
-          <p className="text-2xl font-bold text-red-600">{fmtMoney(totGastos - totImpBanco)}</p>
+          <p className="text-2xl font-bold text-red-600">{fmt(totGastos)}</p>
         </div>
-        <p className="text-xs text-gray-400 mt-1">* No incluye IVA ni IIBB (se muestran por separado abajo)</p>
+        <p className="text-xs text-gray-400 mt-1">* Incluye gastos operativos + impuestos pagados + impuestos bancarios. NO incluye IVA ni IIBB (se muestran abajo)</p>
       </div>
 
       {/* ══════════════════════════════════════════ */}
       {/* 6) IMPUESTOS BANCARIOS POR CUENTA          */}
       {/* ══════════════════════════════════════════ */}
-      {(Object.keys(impuestosPorBanco).length > 0 || cuentasBanco.length > 0) && (
+      {(impuestosPorBanco.credicoop.total > 0 || impuestosPorBanco.santander.total > 0 || impuestosPorBanco.otros.total > 0) && (
         <div className="bg-white rounded-xl border border-amber-200 p-4">
           <h3 className="text-sm font-semibold text-amber-700 mb-3">🏛️ Impuestos y comisiones bancarias</h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {/* Mostrar Credicoop */}
+            {/* Credicoop */}
             <div className="bg-amber-50 rounded-lg p-3 border border-amber-100">
               <p className="text-xs font-medium text-amber-800">Credicoop Corriente LVN</p>
-              <p className="text-lg font-bold text-amber-700 mt-1">{fmtMoney(impuestosPorBanco["Credicoop Corriente LVN"]?.total || 0)}</p>
-              <div className="text-xs text-amber-600 mt-1 space-y-0.5">
-                {impuestosPorBanco["Credicoop Corriente LVN"]?.impuestos > 0 && <p>• {fmtMoney(impuestosPorBanco["Credicoop Corriente LVN"]?.impuestos)}</p>}
-              </div>
+              <p className="text-lg font-bold text-amber-700 mt-1">{fmt(impuestosPorBanco.credicoop.total)}</p>
             </div>
-            {/* Mostrar Santander */}
+            {/* Santander */}
             <div className="bg-amber-50 rounded-lg p-3 border border-amber-100">
               <p className="text-xs font-medium text-amber-800">Banco Santander LVN</p>
-              <p className="text-lg font-bold text-amber-700 mt-1">{fmtMoney(impuestosPorBanco["Banco Santander LVN"]?.total || 0)}</p>
-              <div className="text-xs text-amber-600 mt-1 space-y-0.5">
-                {impuestosPorBanco["Banco Santander LVN"]?.impuestos > 0 && <p>• {fmtMoney(impuestosPorBanco["Banco Santander LVN"]?.impuestos)}</p>}
-              </div>
+              <p className="text-lg font-bold text-amber-700 mt-1">{fmt(impuestosPorBanco.santander.total)}</p>
             </div>
             {/* TOTAL */}
             <div className="bg-amber-100 rounded-lg p-3 border-2 border-amber-300">
               <p className="text-xs font-medium text-amber-900">TOTAL</p>
-              <p className="text-lg font-bold text-amber-900 mt-1">{fmtMoney((impuestosPorBanco["Credicoop Corriente LVN"]?.total || 0) + (impuestosPorBanco["Banco Santander LVN"]?.total || 0))}</p>
+              <p className="text-lg font-bold text-amber-900 mt-1">{fmt(impuestosPorBanco.credicoop.total + impuestosPorBanco.santander.total + impuestosPorBanco.otros.total)}</p>
               <p className="text-xs text-amber-700 mt-1">Impuestos bancarios</p>
             </div>
           </div>
@@ -5425,7 +5418,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
                 <p className="text-sm font-medium">{c.razonSocial}{c.alias ? ` — ${c.alias}` : ""}</p>
                 <p className="text-xs text-gray-400">{c.facturas.filter(i=>i.estado!=="Pagada").length} factura(s) impaga(s)</p>
               </div>
-              <span className="font-bold text-red-600">{fmtMoney(c.facturado-c.cobrado)}</span>
+              <span className="font-bold text-red-600">{fmt(c.facturado-c.cobrado)}</span>
             </div>
           ))}
         </div>
@@ -5456,11 +5449,11 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
                 </td>
                 <td className="px-4 py-3 text-xs text-center text-gray-500">{c.facturas.length}</td>
                 <td className="px-4 py-3 text-xs text-gray-500">{ultFecha ? ultFecha.toLocaleDateString("es-AR") : "—"}</td>
-                <td className="px-4 py-3 text-xs text-gray-600">{fmtMoney(c.neto)}</td>
-                <td className="px-4 py-3 text-xs font-medium text-orange-600">{fmtMoney(c.iva)}</td>
-                <td className="px-4 py-3 text-xs font-semibold">{fmtMoney(c.facturado)}</td>
-                <td className="px-4 py-3 text-xs text-green-700">{fmtMoney(c.cobrado)}</td>
-                <td className="px-4 py-3 text-xs font-semibold text-red-600">{tieneDeuda?fmtMoney(c.facturado-c.cobrado):"—"}</td>
+                <td className="px-4 py-3 text-xs text-gray-600">{fmt(c.neto)}</td>
+                <td className="px-4 py-3 text-xs font-medium text-orange-600">{fmt(c.iva)}</td>
+                <td className="px-4 py-3 text-xs font-semibold">{fmt(c.facturado)}</td>
+                <td className="px-4 py-3 text-xs text-green-700">{fmt(c.cobrado)}</td>
+                <td className="px-4 py-3 text-xs font-semibold text-red-600">{tieneDeuda?fmt(c.facturado-c.cobrado):"—"}</td>
                 <td className="px-4 py-3 text-xs flex gap-1">
                   {tieneDeuda && (
                     <>
@@ -5498,94 +5491,255 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
         />
       )}
 
-      {/* ── MODAL PDF RESUMEN ──────────────────────── */}
+      {/* ── MODAL PDF RESUMEN A4 ──────────────────────── */}
       {modalPDF && (
-        <Modal title="📄 Resumen Financiero PDF" onClose={() => setModalPDF(false)} wide>
-          <div className="space-y-6 max-h-96 overflow-y-auto p-6 bg-white">
-            {/* HEADER */}
-            <div className="text-center border-b pb-4">
-              <h1 className="text-2xl font-bold text-gray-800">RADIOFACT</h1>
-              <p className="text-xs text-gray-500">Resumen Financiero</p>
-              <p className="text-sm font-medium text-gray-700 mt-2">Período: {fMonth?MONTHS[Number(fMonth)-1]:""} {fYear}</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70 p-4 overflow-y-auto">
+          <style>{`
+            @media print {
+              body * { visibility: hidden; }
+              .pdf-print-area, .pdf-print-area * { visibility: visible; }
+              .pdf-print-area { position: absolute; left: 0; top: 0; width: 100%; }
+              .no-print { display: none !important; }
+            }
+            .pdf-print-area { width: 21cm; min-height: 29.7cm; padding: 1.5cm; background: white; box-sizing: border-box; }
+          `}</style>
+          
+          <div className="bg-white rounded-lg shadow-2xl max-w-4xl w-full my-8">
+            {/* Botones (no se imprimen) */}
+            <div className="no-print flex justify-between items-center p-4 border-b bg-gray-50 rounded-t-lg sticky top-0">
+              <h3 className="text-lg font-semibold text-gray-800">📄 Vista previa del PDF</h3>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => window.print()}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium flex items-center gap-2"
+                >
+                  🖨️ Imprimir / Guardar como PDF
+                </button>
+                <button 
+                  onClick={() => setModalPDF(false)}
+                  className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm"
+                >
+                  ✕ Cerrar
+                </button>
+              </div>
             </div>
 
-            {/* ACTIVOS */}
-            <div>
-              <h2 className="text-sm font-bold text-emerald-700 mb-2">💰 ACTIVOS</h2>
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div className="border p-2 rounded">
-                  <p className="text-gray-600">En bancos:</p>
-                  <p className="font-bold">{fmtMoney(totalEnBancos)}</p>
+            {/* Contenido del PDF (A4) */}
+            <div className="pdf-print-area mx-auto" style={{fontFamily: 'Arial, sans-serif', color: '#1f2937'}}>
+              {/* HEADER */}
+              <div style={{borderBottom: '3px solid #1e40af', paddingBottom: '15px', marginBottom: '25px'}}>
+                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                  <div>
+                    <h1 style={{fontSize: '28px', fontWeight: 'bold', color: '#1e40af', margin: 0}}>RadioFact</h1>
+                    <p style={{fontSize: '12px', color: '#6b7280', margin: '4px 0 0 0'}}>Sistema de Gestión Financiera</p>
+                  </div>
+                  <div style={{textAlign: 'right'}}>
+                    <p style={{fontSize: '14px', fontWeight: 'bold', color: '#1f2937', margin: 0}}>Resumen Financiero</p>
+                    <p style={{fontSize: '12px', color: '#6b7280', margin: '4px 0 0 0'}}>Período: {fMonth?MONTHS[Number(fMonth)-1]:""} {fYear}</p>
+                    <p style={{fontSize: '10px', color: '#9ca3af', margin: '4px 0 0 0'}}>Generado: {new Date().toLocaleDateString("es-AR")} {new Date().toLocaleTimeString("es-AR")}</p>
+                  </div>
                 </div>
-                <div className="border p-2 rounded">
-                  <p className="text-gray-600">Efectivo:</p>
-                  <p className="font-bold">{fmtMoney(totalEfectivo)}</p>
-                </div>
-                <div className="border-2 border-emerald-300 p-2 rounded col-span-2">
-                  <p className="text-gray-700 font-medium">Total Activos:</p>
-                  <p className="text-lg font-bold text-emerald-700">{fmtMoney(totalActivos)}</p>
-                </div>
               </div>
-            </div>
 
-            {/* FACTURACIÓN */}
-            <div>
-              <h2 className="text-sm font-bold text-blue-700 mb-2">📊 FACTURACIÓN</h2>
-              <div className="space-y-1 text-xs">
-                <div className="flex justify-between border-b py-1"><span>PV 3 (RadioFact):</span><span className="font-medium">{fmtMoney(totPV3)}</span></div>
-                <div className="flex justify-between border-b py-1"><span>PV 1 (ARCA Web):</span><span className="font-medium">{fmtMoney(totPV1)}</span></div>
-                <div className="flex justify-between border-b py-1"><span>Total Facturado:</span><span className="font-bold text-blue-700">{fmtMoney(totFact)}</span></div>
-                <div className="flex justify-between border-b py-1"><span>Neto:</span><span className="font-medium">{fmtMoney(totNeto)}</span></div>
+              {/* RESUMEN DE ACTIVOS */}
+              <section style={{marginBottom: '20px'}}>
+                <h2 style={{fontSize: '14px', fontWeight: 'bold', color: '#059669', backgroundColor: '#d1fae5', padding: '6px 10px', margin: '0 0 10px 0', borderRadius: '4px'}}>💰 RESUMEN DE ACTIVOS</h2>
+                <table style={{width: '100%', fontSize: '11px', borderCollapse: 'collapse'}}>
+                  <tbody>
+                    <tr style={{borderBottom: '1px solid #e5e7eb'}}>
+                      <td style={{padding: '6px'}}>🏦 En bancos:</td>
+                      <td style={{padding: '6px', textAlign: 'right', fontWeight: '600'}}>{fmtMoney(totalEnBancos)}</td>
+                    </tr>
+                    <tr style={{borderBottom: '1px solid #e5e7eb'}}>
+                      <td style={{padding: '6px'}}>💵 Efectivo:</td>
+                      <td style={{padding: '6px', textAlign: 'right', fontWeight: '600'}}>{fmtMoney(totalEfectivo)}</td>
+                    </tr>
+                    <tr style={{backgroundColor: '#d1fae5'}}>
+                      <td style={{padding: '8px 6px', fontWeight: 'bold'}}>TOTAL ACTIVOS</td>
+                      <td style={{padding: '8px 6px', textAlign: 'right', fontWeight: 'bold', color: '#059669', fontSize: '13px'}}>{fmtMoney(totalActivos)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </section>
+
+              {/* CUENTAS Y EFECTIVO - DETALLE */}
+              <section style={{marginBottom: '20px'}}>
+                <h2 style={{fontSize: '14px', fontWeight: 'bold', color: '#0891b2', backgroundColor: '#cffafe', padding: '6px 10px', margin: '0 0 10px 0', borderRadius: '4px'}}>🏦 CUENTAS Y EFECTIVO (Detalle)</h2>
+                <table style={{width: '100%', fontSize: '11px', borderCollapse: 'collapse'}}>
+                  <thead>
+                    <tr style={{backgroundColor: '#f3f4f6'}}>
+                      <th style={{padding: '6px', textAlign: 'left'}}>Nombre</th>
+                      <th style={{padding: '6px', textAlign: 'left'}}>Banco</th>
+                      <th style={{padding: '6px', textAlign: 'right'}}>Saldo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cuentasActivas.map(c => (
+                      <tr key={c.id} style={{borderBottom: '1px solid #e5e7eb'}}>
+                        <td style={{padding: '6px'}}>{c.tipo_efectivo ? '💵' : '🏦'} {c.nombre}</td>
+                        <td style={{padding: '6px', color: '#6b7280'}}>{c.banco}</td>
+                        <td style={{padding: '6px', textAlign: 'right', fontWeight: '600'}}>{fmtMoney(c.saldo_actual)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+
+              {/* FACTURACIÓN */}
+              <section style={{marginBottom: '20px'}}>
+                <h2 style={{fontSize: '14px', fontWeight: 'bold', color: '#1d4ed8', backgroundColor: '#dbeafe', padding: '6px 10px', margin: '0 0 10px 0', borderRadius: '4px'}}>📊 FACTURACIÓN</h2>
+                <table style={{width: '100%', fontSize: '11px', borderCollapse: 'collapse'}}>
+                  <tbody>
+                    <tr style={{borderBottom: '1px solid #e5e7eb'}}>
+                      <td style={{padding: '6px'}}>📻 PV 3 (RadioFact - vía ARCA SDK):</td>
+                      <td style={{padding: '6px', textAlign: 'right', fontWeight: '600'}}>{fmtMoney(totPV3)}</td>
+                    </tr>
+                    <tr style={{borderBottom: '1px solid #e5e7eb'}}>
+                      <td style={{padding: '6px'}}>📋 PV 1 (ARCA Web manual):</td>
+                      <td style={{padding: '6px', textAlign: 'right', fontWeight: '600'}}>{fmtMoney(totPV1)}</td>
+                    </tr>
+                    <tr style={{borderBottom: '1px solid #e5e7eb'}}>
+                      <td style={{padding: '6px'}}>Neto:</td>
+                      <td style={{padding: '6px', textAlign: 'right'}}>{fmtMoney(totNeto)}</td>
+                    </tr>
+                    <tr style={{borderBottom: '1px solid #e5e7eb'}}>
+                      <td style={{padding: '6px'}}>IVA débito fiscal:</td>
+                      <td style={{padding: '6px', textAlign: 'right'}}>{fmtMoney(totIva)}</td>
+                    </tr>
+                    <tr style={{backgroundColor: '#dbeafe'}}>
+                      <td style={{padding: '8px 6px', fontWeight: 'bold'}}>TOTAL FACTURADO</td>
+                      <td style={{padding: '8px 6px', textAlign: 'right', fontWeight: 'bold', color: '#1d4ed8', fontSize: '13px'}}>{fmtMoney(totFact)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </section>
+
+              {/* COBRANZAS */}
+              <section style={{marginBottom: '20px'}}>
+                <h2 style={{fontSize: '14px', fontWeight: 'bold', color: '#15803d', backgroundColor: '#dcfce7', padding: '6px 10px', margin: '0 0 10px 0', borderRadius: '4px'}}>✓ COBRANZAS</h2>
+                <table style={{width: '100%', fontSize: '11px', borderCollapse: 'collapse'}}>
+                  <tbody>
+                    <tr style={{borderBottom: '1px solid #e5e7eb'}}>
+                      <td style={{padding: '6px'}}>✅ Cobrado:</td>
+                      <td style={{padding: '6px', textAlign: 'right', fontWeight: '600', color: '#15803d'}}>{fmtMoney(totCob)}</td>
+                    </tr>
+                    <tr style={{borderBottom: '1px solid #e5e7eb'}}>
+                      <td style={{padding: '6px'}}>⏳ Pendiente / Por cobrar:</td>
+                      <td style={{padding: '6px', textAlign: 'right', fontWeight: '600', color: '#dc2626'}}>{fmtMoney(totAd)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </section>
+
+              {/* GASTOS */}
+              <section style={{marginBottom: '20px'}}>
+                <h2 style={{fontSize: '14px', fontWeight: 'bold', color: '#b91c1c', backgroundColor: '#fee2e2', padding: '6px 10px', margin: '0 0 10px 0', borderRadius: '4px'}}>💸 GASTOS DEL PERÍODO</h2>
+                <table style={{width: '100%', fontSize: '11px', borderCollapse: 'collapse'}}>
+                  <tbody>
+                    <tr style={{borderBottom: '1px solid #e5e7eb'}}>
+                      <td style={{padding: '6px'}}>Gastos operativos:</td>
+                      <td style={{padding: '6px', textAlign: 'right'}}>{fmtMoney(totOperativos)}</td>
+                    </tr>
+                    <tr style={{borderBottom: '1px solid #e5e7eb'}}>
+                      <td style={{padding: '6px'}}>Impuestos pagados (categoría):</td>
+                      <td style={{padding: '6px', textAlign: 'right'}}>{fmtMoney(totImpuestosOtros)}</td>
+                    </tr>
+                    <tr style={{borderBottom: '1px solid #e5e7eb'}}>
+                      <td style={{padding: '6px'}}>Impuestos bancarios:</td>
+                      <td style={{padding: '6px', textAlign: 'right'}}>{fmtMoney(totImpBanco)}</td>
+                    </tr>
+                    <tr style={{backgroundColor: '#fee2e2'}}>
+                      <td style={{padding: '8px 6px', fontWeight: 'bold'}}>TOTAL GASTOS</td>
+                      <td style={{padding: '8px 6px', textAlign: 'right', fontWeight: 'bold', color: '#b91c1c', fontSize: '13px'}}>{fmtMoney(totGastos)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p style={{fontSize: '9px', color: '#9ca3af', marginTop: '5px', fontStyle: 'italic'}}>* No incluye IVA ni IIBB (se muestran abajo separados)</p>
+              </section>
+
+              {/* IMPUESTOS A PAGAR */}
+              <section style={{marginBottom: '20px'}}>
+                <h2 style={{fontSize: '14px', fontWeight: 'bold', color: '#c2410c', backgroundColor: '#ffedd5', padding: '6px 10px', margin: '0 0 10px 0', borderRadius: '4px'}}>🏛️ IMPUESTOS (a pagar próximo mes)</h2>
+                <table style={{width: '100%', fontSize: '11px', borderCollapse: 'collapse'}}>
+                  <tbody>
+                    <tr style={{borderBottom: '1px solid #e5e7eb'}}>
+                      <td style={{padding: '6px'}}>IVA débito fiscal (ventas):</td>
+                      <td style={{padding: '6px', textAlign: 'right'}}>{fmtMoney(totIva)}</td>
+                    </tr>
+                    <tr style={{borderBottom: '1px solid #e5e7eb'}}>
+                      <td style={{padding: '6px'}}>IVA crédito fiscal (compras):</td>
+                      <td style={{padding: '6px', textAlign: 'right'}}>-{fmtMoney(ivaComprasEstimado)}</td>
+                    </tr>
+                    <tr style={{backgroundColor: '#fff7ed', borderBottom: '1px solid #e5e7eb'}}>
+                      <td style={{padding: '8px 6px', fontWeight: 'bold'}}>IVA a pagar:</td>
+                      <td style={{padding: '8px 6px', textAlign: 'right', fontWeight: 'bold', color: '#c2410c'}}>{fmtMoney(ivaPagar)}</td>
+                    </tr>
+                    <tr style={{borderBottom: '1px solid #e5e7eb'}}>
+                      <td style={{padding: '6px'}}>IIBB Santa Cruz (3% s/neto):</td>
+                      <td style={{padding: '6px', textAlign: 'right', fontWeight: '600'}}>{fmtMoney(totIibb)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </section>
+
+              {/* IMPUESTOS BANCARIOS POR BANCO */}
+              <section style={{marginBottom: '20px'}}>
+                <h2 style={{fontSize: '14px', fontWeight: 'bold', color: '#a16207', backgroundColor: '#fef3c7', padding: '6px 10px', margin: '0 0 10px 0', borderRadius: '4px'}}>🏛️ IMPUESTOS Y COMISIONES BANCARIAS</h2>
+                <table style={{width: '100%', fontSize: '11px', borderCollapse: 'collapse'}}>
+                  <tbody>
+                    <tr style={{borderBottom: '1px solid #e5e7eb'}}>
+                      <td style={{padding: '6px'}}>Credicoop Corriente LVN:</td>
+                      <td style={{padding: '6px', textAlign: 'right'}}>{fmtMoney(impuestosPorBanco.credicoop.total)}</td>
+                    </tr>
+                    <tr style={{borderBottom: '1px solid #e5e7eb'}}>
+                      <td style={{padding: '6px'}}>Banco Santander LVN:</td>
+                      <td style={{padding: '6px', textAlign: 'right'}}>{fmtMoney(impuestosPorBanco.santander.total)}</td>
+                    </tr>
+                    <tr style={{backgroundColor: '#fef3c7'}}>
+                      <td style={{padding: '8px 6px', fontWeight: 'bold'}}>TOTAL:</td>
+                      <td style={{padding: '8px 6px', textAlign: 'right', fontWeight: 'bold', color: '#a16207'}}>{fmtMoney(impuestosPorBanco.credicoop.total + impuestosPorBanco.santander.total + impuestosPorBanco.otros.total)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </section>
+
+              {/* SALDOS PENDIENTES */}
+              {byClient.filter(c=>c.facturado-c.cobrado>0).length > 0 && (
+                <section style={{marginBottom: '20px'}}>
+                  <h2 style={{fontSize: '14px', fontWeight: 'bold', color: '#dc2626', backgroundColor: '#fee2e2', padding: '6px 10px', margin: '0 0 10px 0', borderRadius: '4px'}}>⚠️ SALDOS PENDIENTES DE COBRO</h2>
+                  <table style={{width: '100%', fontSize: '11px', borderCollapse: 'collapse'}}>
+                    <thead>
+                      <tr style={{backgroundColor: '#f3f4f6'}}>
+                        <th style={{padding: '6px', textAlign: 'left'}}>Cliente</th>
+                        <th style={{padding: '6px', textAlign: 'center'}}>Fact.</th>
+                        <th style={{padding: '6px', textAlign: 'right'}}>Saldo</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {byClient.filter(c=>c.facturado-c.cobrado>0).map(c => (
+                        <tr key={c.id} style={{borderBottom: '1px solid #e5e7eb'}}>
+                          <td style={{padding: '6px'}}>{c.razonSocial}</td>
+                          <td style={{padding: '6px', textAlign: 'center'}}>{c.facturas.length}</td>
+                          <td style={{padding: '6px', textAlign: 'right', color: '#dc2626', fontWeight: '600'}}>{fmtMoney(c.facturado - c.cobrado)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </section>
+              )}
+
+              {/* FOOTER */}
+              <div style={{marginTop: '40px', paddingTop: '15px', borderTop: '2px solid #e5e7eb', textAlign: 'center'}}>
+                <p style={{fontSize: '10px', color: '#6b7280', margin: 0}}>
+                  Sistema RadioFact v3.3 · LA VANGUARDIA NOTICIAS · CUIT 30-71644424-0
+                </p>
+                <p style={{fontSize: '9px', color: '#9ca3af', margin: '4px 0 0 0'}}>
+                  © {new Date().getFullYear()} RadioFact. Todos los derechos reservados. · Generado automáticamente
+                </p>
               </div>
-            </div>
-
-            {/* COBRANZAS */}
-            <div>
-              <h2 className="text-sm font-bold text-green-700 mb-2">✓ COBRANZAS</h2>
-              <div className="space-y-1 text-xs">
-                <div className="flex justify-between border-b py-1"><span>Cobrado:</span><span className="font-bold text-green-700">{fmtMoney(totCob)}</span></div>
-                <div className="flex justify-between border-b py-1"><span>Pendiente:</span><span className="font-bold text-red-600">{fmtMoney(totAd)}</span></div>
-              </div>
-            </div>
-
-            {/* GASTOS */}
-            <div>
-              <h2 className="text-sm font-bold text-red-700 mb-2">💸 GASTOS</h2>
-              <div className="space-y-1 text-xs">
-                <div className="flex justify-between border-b py-1"><span>Gastos operativos:</span><span className="font-medium">{fmtMoney(totOperativos)}</span></div>
-                <div className="flex justify-between border-b py-1"><span>Impuestos bancarios:</span><span className="font-medium">{fmtMoney(totImpBanco)}</span></div>
-                <div className="flex justify-between border-b py-1"><span>Total Gastos:</span><span className="font-bold text-red-600">{fmtMoney(totGastos - totImpBanco)}</span></div>
-              </div>
-            </div>
-
-            {/* IMPUESTOS */}
-            <div>
-              <h2 className="text-sm font-bold text-orange-700 mb-2">🏛️ IMPUESTOS</h2>
-              <div className="space-y-1 text-xs">
-                <div className="flex justify-between border-b py-1"><span>IVA de ventas:</span><span className="font-medium">{fmtMoney(totIva)}</span></div>
-                <div className="flex justify-between border-b py-1"><span>IVA de compras:</span><span className="font-medium">{fmtMoney(ivaComprasEstimado)}</span></div>
-                <div className="flex justify-between border-b py-1"><span className="font-bold">IVA a pagar:</span><span className="font-bold text-orange-700">{fmtMoney(ivaPagar)}</span></div>
-                <div className="flex justify-between py-1"><span>IIBB (3%):</span><span className="font-medium">{fmtMoney(totIibb)}</span></div>
-              </div>
-            </div>
-
-            {/* BOTONES */}
-            <div className="flex gap-3 pt-4 border-t">
-              <button 
-                onClick={() => window.print()}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
-              >
-                🖨️ Imprimir / Guardar como PDF
-              </button>
-              <button 
-                onClick={() => setModalPDF(false)}
-                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm"
-              >
-                Cerrar
-              </button>
             </div>
           </div>
-        </Modal>
+        </div>
       )}
 
       {/* ── MODAL MOVIMIENTO DE EFECTIVO ────────────── */}
