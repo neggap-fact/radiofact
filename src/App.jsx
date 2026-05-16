@@ -40,7 +40,7 @@ const BACKEND_URL = "https://radiofact-backend-production.up.railway.app";
 const DEBUG_MODE = false; // Cambiar a false para emitir facturas reales a ARCA
 
 const MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
-const EXPENSE_CATS = ["Sueldos","Gastos Fijos","Gastos Variables","Gastos Externos","Proveedores","Servicios","Impuestos","Impuestos bancarios","Comisiones bancarias","Alquiler","Otros"];
+const EXPENSE_CATS = ["Sueldos","Compras","Gastos Fijos","Gastos Variables","Gastos Externos","Proveedores","Impuestos","Impuestos bancarios","Otros"];
 
 function fmtMoney(n) {
   return new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:0}).format(n||0);
@@ -383,7 +383,7 @@ export default function App() {
   const [cuentasBancarias, setCuentasBancarias] = useState([]);
   const [tarjetasCredito, setTarjetasCredito] = useState([]);
   const [notifications, setNotifications] = useState([]);
-  const [page, setPage] = useState("dashboard");
+  const [page, setPage] = useState("finance");
   const [config, setConfig] = useState({
     empresa:"LA VANGUARDIA NOTICIAS",cuit:"30-71644424-0",
     domicilio:"Gobernador Gregores 1370, Caleta Olivia",email:"info@lavanguardianoticias.com.ar",
@@ -4240,9 +4240,15 @@ function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[],tarjetas
           </div>
         </div>
         <div className="col-span-2"><Field label="Notas" value={form.notas} onChange={f("notas")}/></div>
-        <div className="col-span-2 flex items-center gap-2">
-          <input type="checkbox" checked={form.pagado} onChange={e=>setForm(p=>({...p,pagado:e.target.checked}))} id="ex-pag"/>
-          <label htmlFor="ex-pag" className="text-sm text-gray-600">Pagado</label>
+        <div className="col-span-2 flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <input type="checkbox" checked={form.pagado} onChange={e=>setForm(p=>({...p,pagado:e.target.checked}))} id="ex-pag"/>
+            <label htmlFor="ex-pag" className="text-sm text-gray-600">Pagado</label>
+          </div>
+          <div className="flex items-center gap-2">
+            <input type="checkbox" checked={form.iva_discriminable} onChange={e=>setForm(p=>({...p,iva_discriminable:e.target.checked}))} id="ex-iva"/>
+            <label htmlFor="ex-iva" className="text-sm text-gray-600">💵 Discriminar IVA (deducible)</label>
+          </div>
         </div>
       </div>
       <ModalFooter onClose={onClose} onSave={()=>onSave(form)}/>
@@ -5025,6 +5031,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
   const [fYear,setFYear]=useState(String(today.getFullYear()));
   const [modalCuentas,setModalCuentas]=useState(false);
   const [modalMovEfectivo,setModalMovEfectivo]=useState(false);
+  const [mostrarMontos,setMostrarMontos]=useState(true);
 
   // ── FILTROS DE PERÍODO ─────────────────────────
   const filtInv=invoices.filter(i=>(!fMonth||i.month===Number(fMonth))&&(!fYear||i.year===Number(fYear)));
@@ -5054,17 +5061,26 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
   const totalEnBancos = cuentasBanco.filter(c => c.activa !== false).reduce((s,c) => s + (parseFloat(c.saldo_actual)||0), 0);
 
   // ── GASTOS DISCRIMINADOS ───────────────────────
-  const gastosImpuestosBanco = filtExp.filter(e=>e.categoria==="Impuestos bancarios");
-  const gastosComisionesBanco = filtExp.filter(e=>e.categoria==="Comisiones bancarias");
+  const gastosImpuestosBanco = filtExp.filter(e=>["Impuestos bancarios"].includes(e.categoria));
   const gastosImpuestos = filtExp.filter(e=>e.categoria==="Impuestos");
-  const gastosOperativos = filtExp.filter(e=>!["Impuestos bancarios","Comisiones bancarias","Impuestos"].includes(e.categoria));
+  const gastosOperativos = filtExp.filter(e=>!["Impuestos bancarios","Impuestos"].includes(e.categoria));
 
   const totImpBanco = gastosImpuestosBanco.reduce((s,e)=>s+e.monto,0);
-  const totComBanco = gastosComisionesBanco.reduce((s,e)=>s+e.monto,0);
   const totImpuestosOtros = gastosImpuestos.reduce((s,e)=>s+e.monto,0);
   const totOperativos = gastosOperativos.reduce((s,e)=>s+e.monto,0);
   const totGastos = filtExp.reduce((s,e)=>s+e.monto,0);
   const totImpuestosTotal = totIva + totIibb + totImpuestosOtros + totImpBanco;
+
+  // ── IVA DISCRIMINABLE (DEDUCIBLE) ──────────────
+  // Suma todos los gastos marcados con iva_discriminable=TRUE
+  // Estima IVA 21% para cada uno (puede haber 10.5% pero simplificamos)
+  const gastosConIvaDiscriminable = filtExp.filter(e => e.iva_discriminable === true);
+  const ivaComprasEstimado = gastosConIvaDiscriminable.reduce((s,e) => {
+    // Estimamos IVA 21% sobre el monto (monto bruto / 121 * 21)
+    const ivaEst = Math.round((parseFloat(e.monto)||0) / 121 * 21);
+    return s + ivaEst;
+  }, 0);
+  const ivaPagar = Math.max(0, totIva - ivaComprasEstimado); // No puede ser negativo sin crédito
 
   // ── ACTIVOS ────────────────────────────────────
   const cuentasActivas = cuentasBancarias.filter(c => c.activa !== false);
@@ -5078,13 +5094,12 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
   const totIngresos = filtIng.reduce((s,i) => s + parseFloat(i.monto||0), 0);
 
   // ── IMPUESTOS BANCARIOS POR CUENTA ─────────────
-  // (Agrupa gastos cat="Impuestos bancarios" + "Comisiones bancarias" por proveedor o por banco)
+  // (Agrupa gastos cat="Impuestos bancarios" por proveedor o por banco)
   const impuestosPorBanco = {};
-  [...gastosImpuestosBanco, ...gastosComisionesBanco].forEach(g => {
+  gastosImpuestosBanco.forEach(g => {
     const key = g.proveedor || "Sin asignar";
-    if (!impuestosPorBanco[key]) impuestosPorBanco[key] = {impuestos: 0, comisiones: 0, total: 0};
-    if (g.categoria === "Impuestos bancarios") impuestosPorBanco[key].impuestos += g.monto;
-    else impuestosPorBanco[key].comisiones += g.monto;
+    if (!impuestosPorBanco[key]) impuestosPorBanco[key] = {impuestos: 0, total: 0};
+    impuestosPorBanco[key].impuestos += g.monto;
     impuestosPorBanco[key].total += g.monto;
   });
 
@@ -5222,6 +5237,11 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
             <p className="text-xl font-bold text-orange-600 mt-1">{fmtMoney(totIva)}</p>
             <p className="text-xs text-gray-400 mt-0.5">débito fiscal</p>
           </div>
+          <div className="bg-red-50 rounded-lg p-3 border-l-4 border-red-500">
+            <p className="text-xs text-gray-500">IVA a pagar</p>
+            <p className="text-xl font-bold text-red-600 mt-1">{fmtMoney(ivaPagar)}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{fmtMoney(totIva)} (ventas) - {fmtMoney(ivaComprasEstimado)} (compras)</p>
+          </div>
           <div className="bg-purple-50 rounded-lg p-3 border-l-4 border-purple-500">
             <p className="text-xs text-gray-500">IIBB Santa Cruz 3%</p>
             <p className="text-xl font-bold text-purple-600 mt-1">{fmtMoney(totIibb)}</p>
@@ -5276,20 +5296,30 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
       {/* ══════════════════════════════════════════ */}
       {/* 4) TOTAL DE ACTIVOS — desglosado            */}
       {/* ══════════════════════════════════════════ */}
+      <div className="flex justify-between items-center mb-3">
+        <h2 className="text-lg font-bold text-gray-800">💰 Resumen de activos</h2>
+        <button 
+          onClick={() => setMostrarMontos(!mostrarMontos)}
+          className="p-2 hover:bg-gray-100 rounded-lg transition"
+          title={mostrarMontos ? "Ocultar montos" : "Mostrar montos"}
+        >
+          {mostrarMontos ? "👁️" : "👁️‍🗨️"}
+        </button>
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="bg-gradient-to-r from-emerald-500 to-teal-500 rounded-xl p-5 text-white shadow-md">
           <p className="text-xs text-emerald-100 uppercase tracking-wide font-medium">Total activos</p>
-          <p className="text-2xl font-bold mt-1">{fmtMoney(totalActivos)}</p>
+          <p className="text-2xl font-bold mt-1">{mostrarMontos ? fmtMoney(totalActivos) : "••••••"}</p>
           <p className="text-xs text-emerald-100 mt-1">{cuentasActivas.length} cuenta(s) activa(s)</p>
         </div>
         <div className="bg-gradient-to-r from-blue-500 to-cyan-500 rounded-xl p-5 text-white shadow-md">
           <p className="text-xs text-blue-100 uppercase tracking-wide font-medium">🏦 En bancos</p>
-          <p className="text-2xl font-bold mt-1">{fmtMoney(totalEnBancos)}</p>
+          <p className="text-2xl font-bold mt-1">{mostrarMontos ? fmtMoney(totalEnBancos) : "••••••"}</p>
           <p className="text-xs text-blue-100 mt-1">{cuentasBanco.filter(c=>c.activa!==false).length} cuenta(s)</p>
         </div>
         <div className="bg-gradient-to-r from-amber-500 to-yellow-500 rounded-xl p-5 text-white shadow-md">
           <p className="text-xs text-amber-100 uppercase tracking-wide font-medium">💵 Efectivo</p>
-          <p className="text-2xl font-bold mt-1">{fmtMoney(totalEfectivo)}</p>
+          <p className="text-2xl font-bold mt-1">{mostrarMontos ? fmtMoney(totalEfectivo) : "••••••"}</p>
           <p className="text-xs text-amber-100 mt-1">{cuentasEfectivo.filter(c=>c.activa!==false).length} caja(s)</p>
         </div>
       </div>
@@ -5314,11 +5344,6 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
             <p className="text-xs text-amber-600">Impuestos bancarios</p>
             <p className="text-base font-bold text-amber-700 mt-1">{fmtMoney(totImpBanco)}</p>
             <p className="text-xs text-amber-400">{gastosImpuestosBanco.length} mov.</p>
-          </div>
-          <div className="bg-yellow-50 rounded-lg p-3">
-            <p className="text-xs text-yellow-700">Comisiones bancarias</p>
-            <p className="text-base font-bold text-yellow-700 mt-1">{fmtMoney(totComBanco)}</p>
-            <p className="text-xs text-yellow-500">{gastosComisionesBanco.length} mov.</p>
           </div>
         </div>
         <div className="border-t border-gray-200 pt-3 mt-3 flex items-center justify-between">
