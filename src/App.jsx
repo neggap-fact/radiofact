@@ -337,11 +337,20 @@ function ConfirmEmisionModal({ titulo, resumen, items, onConfirm, onCancel, load
   );
 }
 
-const INIT_USERS = [
-  {id:"u1",name:"Webmaster",email:"admin@radio.com",password:"admin123",role:"webmaster",active:true},
-  {id:"u2",name:"María López",email:"maria@radio.com",password:"maria123",role:"admin",active:true},
-  {id:"u3",name:"Carlos Ruiz",email:"carlos@radio.com",password:"carlos123",role:"operator",active:true},
-];
+// INIT_USERS eliminado en v3.4 — los usuarios vienen de Supabase Auth + usuarios_perfil
+
+// Helper de permisos por rol. Se usa en todo el App para chequear qué puede hacer cada usuario.
+// Roles válidos: webmaster | editor | socio | operador
+function puede(rol, accion) {
+  if (!rol) return false;
+  const permisos = {
+    webmaster: ["editar_todo", "emitir_facturas", "aprobar_facturas", "gestionar_usuarios", "ver_finanzas", "crear_borradores"],
+    editor:    ["editar_todo", "emitir_facturas", "ver_finanzas", "crear_borradores"],
+    socio:     ["crear_borradores", "ver_finanzas"],
+    operador:  [], // solo lectura
+  };
+  return (permisos[rol] || []).includes(accion);
+}
 const INIT_CLIENTS = [
   {id:"c1",razonSocial:"Supermercado El Sol S.A.",cuit:"30-71234567-1",domicilio:"Av. San Martín 1200, Caleta Olivia",condicionIVA:"Responsable Inscripto",tipoFactura:"A",email:"administracion@elsol.com.ar",telefono:"297-4112233",active:true},
   {id:"c2",razonSocial:"Farmacia Central",cuit:"20-25678901-4",domicilio:"Rivadavia 450, Caleta Olivia",condicionIVA:"Monotributista",tipoFactura:"B",email:"farmaciacentral@gmail.com",telefono:"297-4889900",active:true},
@@ -369,7 +378,8 @@ const INIT_EXPENSES = [
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
-  const [users, setUsers] = useState(INIT_USERS);
+  const [users, setUsers] = useState([]);
+  const [loadingAuth, setLoadingAuth] = useState(true);
   const [clients, setClients] = useState([]);
   const [contracts, setContracts] = useState(INIT_CONTRACTS);
   const [invoices, setInvoices] = useState([]);
@@ -895,9 +905,37 @@ export default function App() {
         // d.expenses ya no se restaura — ahora vienen de Supabase
         if(d.config) setConfig(d.config);
       }
-      const savedUser = localStorage.getItem("radiofact-session");
-      if(savedUser) setCurrentUser(JSON.parse(savedUser));
+      // savedUser de localStorage ya no se usa — la sesión la maneja Supabase Auth
     }catch(e){}
+
+    // ───── Supabase Auth: cargar sesión activa al iniciar ─────
+    async function cargarSesion() {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        await hidratarUsuario(session.user);
+      }
+      setLoadingAuth(false);
+    }
+    cargarSesion();
+
+    // Listener para cambios de sesión (login, logout, refresh token)
+    const { data: listener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === "SIGNED_IN" && session?.user) {
+        await hidratarUsuario(session.user);
+      } else if (event === "SIGNED_OUT") {
+        setCurrentUser(null);
+      }
+    });
+
+    // Cargar todos los usuarios para la pantalla de gestión (solo se usa si rol=webmaster)
+    supabase.from("usuarios_perfil").select("*").then(({ data }) => {
+      if (data) setUsers(data.map(u => ({
+        id: u.id,
+        name: u.nombre,
+        role: u.rol,
+        active: u.activo,
+      })));
+    });
 
     // Cargar saldos iniciales
     supabase.from("saldos_iniciales").select("*").then(({ data }) => {
@@ -955,6 +993,12 @@ export default function App() {
       if (data) setTarjetasCredito(data);
     });
 
+    // Cleanup del listener de auth al desmontar
+    return () => {
+      if (typeof listener?.subscription?.unsubscribe === "function") {
+        listener.subscription.unsubscribe();
+      }
+    };
   },[]);
 
   useEffect(()=>{
@@ -962,19 +1006,70 @@ export default function App() {
     save({users,contracts,config}); // expenses ya no va a localStorage
   },[users,contracts,config]);
 
-  const handleLogin = ()=>{
-    const u = users.find(u=>u.email===loginForm.email&&u.password===loginForm.password&&u.active);
-    if(u){
-      setCurrentUser(u);
-      setLoginError("");
-      localStorage.setItem("radiofact-session", JSON.stringify(u));
+  // Toma un user de auth.users y le agrega su perfil (rol, nombre, activo) desde usuarios_perfil
+  async function hidratarUsuario(authUser) {
+    const { data: perfil, error } = await supabase
+      .from("usuarios_perfil")
+      .select("nombre, rol, activo")
+      .eq("id", authUser.id)
+      .single();
+
+    if (error || !perfil) {
+      console.error("No se encontró perfil del usuario:", error);
+      await supabase.auth.signOut();
+      setLoginError("Tu usuario no tiene perfil asignado. Contactá al webmaster.");
+      return;
     }
-    else setLoginError("Email o contraseña incorrectos.");
+
+    if (!perfil.activo) {
+      await supabase.auth.signOut();
+      setLoginError("Tu usuario está desactivado. Contactá al webmaster.");
+      return;
+    }
+
+    setCurrentUser({
+      id: authUser.id,
+      email: authUser.email,
+      name: perfil.nombre,
+      role: perfil.rol,
+      active: perfil.activo,
+    });
+  }
+
+  const handleLogin = async () => {
+    setLoginError("");
+    const { error } = await supabase.auth.signInWithPassword({
+      email: loginForm.email,
+      password: loginForm.password,
+    });
+    if (error) {
+      // Mensajes amigables según el error de Supabase
+      if (error.message.includes("Invalid login credentials")) {
+        setLoginError("Email o contraseña incorrectos.");
+      } else if (error.message.includes("Email not confirmed")) {
+        setLoginError("Email no confirmado. Contactá al webmaster.");
+      } else {
+        setLoginError(error.message);
+      }
+    }
+    // Si login OK, el listener onAuthStateChange se encarga de hidratar
   };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    // El listener pone currentUser=null automáticamente
+  };
+
+  if (loadingAuth) return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="text-gray-400 text-sm">Cargando…</div>
+    </div>
+  );
 
   if(!currentUser) return <LoginScreen form={loginForm} setForm={setLoginForm} onLogin={handleLogin} error={loginError}/>;
 
-  const canEdit = currentUser.role!=="operator";
+  // canEdit ahora considera los 4 roles nuevos. "operador" es solo lectura.
+  const canEdit = currentUser.role !== "operador";
   const unread = notifications.filter(n=>!n.read).length;
 
   const pages = [
@@ -1013,7 +1108,7 @@ export default function App() {
               <div className="text-xs text-gray-400 capitalize">{currentUser.role}</div>
             </div>
           </div>
-          <button onClick={()=>{setCurrentUser(null);localStorage.removeItem("radiofact-session");}} className="w-full flex items-center gap-2 text-xs text-gray-500 hover:text-red-600 px-1 py-1">
+          <button onClick={handleLogout} className="w-full flex items-center gap-2 text-xs text-gray-500 hover:text-red-600 px-1 py-1">
             <Icon d={Icons.logout} size={13}/>Cerrar sesión
           </button>
         </div>
@@ -5497,7 +5592,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
           <style>{`
             @page { 
               size: A4; 
-              margin: 2cm;
+              margin: 1.2cm;
             }
             @media print {
               body * { visibility: hidden; }
@@ -5517,17 +5612,11 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
               }
               .pdf-footer {
                 page-break-before: auto;
-                margin-top: 30px !important;
               }
-              /* Forzar que tablas no se corten feo */
-              table { page-break-inside: auto; }
-              tr { page-break-inside: avoid; page-break-after: auto; }
-              thead { display: table-header-group; }
-              h2 { page-break-after: avoid; }
             }
             .pdf-print-area { 
               width: 21cm; 
-              padding: 2cm; 
+              padding: 1.5cm; 
               background: white; 
               box-sizing: border-box; 
             }
@@ -5865,60 +5954,45 @@ function MovimientoEfectivoModal({ cuentasEfectivo, setCuentasBancarias, onClose
 
 
 function Users({users,setUsers,currentUser}){
-  const [modal,setModal]=useState(null);
-  const empty={name:"",email:"",password:"",role:"operator",active:true};
-  const save=(data)=>{
-    if(data.id) setUsers(prev=>prev.map(u=>u.id===data.id?data:u));
-    else setUsers(prev=>[...prev,{...data,id:`u-${Date.now()}`}]);
-    setModal(null);
+  // v3.4: Vista de solo lectura. La gestión completa (crear, editar, desactivar)
+  // se implementa en Entrega 3 con conexión a Supabase Auth y usuarios_perfil.
+  const ROLE_COLORS={
+    webmaster:"bg-purple-50 text-purple-700",
+    editor:   "bg-blue-50 text-blue-700",
+    socio:    "bg-amber-50 text-amber-700",
+    operador: "bg-gray-100 text-gray-600",
   };
-  const ROLE_COLORS={webmaster:"bg-purple-50 text-purple-700",admin:"bg-blue-50 text-blue-700",operator:"bg-gray-100 text-gray-600"};
-  const ROLE_LABELS={webmaster:"Webmaster",admin:"Administrador",operator:"Operador"};
+  const ROLE_LABELS={
+    webmaster:"Webmaster",
+    editor:   "Editor",
+    socio:    "Socio",
+    operador: "Operador",
+  };
   return(
     <div className="space-y-4">
-      <div className="flex justify-end">
-        <button onClick={()=>setModal(empty)} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"><Icon d={Icons.plus} size={14}/>Nuevo usuario</button>
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
+        <p className="font-semibold mb-1">📋 Gestión de usuarios — Vista temporal</p>
+        <p className="text-xs">Por ahora solo lectura. La creación, edición y desactivación de usuarios desde esta pantalla se habilita en la próxima entrega. Mientras tanto, gestionar desde Supabase → Authentication → Users.</p>
       </div>
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-200">
-            <tr>{["Nombre","Email","Rol","Estado",""].map(h=><th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">{h}</th>)}</tr>
+            <tr>{["Nombre","Rol","Estado"].map(h=><th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">{h}</th>)}</tr>
           </thead>
           <tbody>
             {users.map(u=>(
               <tr key={u.id} className="border-b border-gray-50 hover:bg-gray-50">
-                <td className="px-4 py-3 font-medium">{u.name}</td>
-                <td className="px-4 py-3 text-gray-500 text-xs">{u.email}</td>
-                <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-xs font-medium ${ROLE_COLORS[u.role]}`}>{ROLE_LABELS[u.role]}</span></td>
+                <td className="px-4 py-3 font-medium">{u.name}{u.id===currentUser.id&&<span className="ml-2 text-xs text-gray-400">(vos)</span>}</td>
+                <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-xs font-medium ${ROLE_COLORS[u.role]||"bg-gray-100 text-gray-600"}`}>{ROLE_LABELS[u.role]||u.role}</span></td>
                 <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-xs ${u.active?"bg-green-50 text-green-700":"bg-gray-100 text-gray-400"}`}>{u.active?"Activo":"Inactivo"}</span></td>
-                <td className="px-4 py-3">{u.id!==currentUser.id&&<button onClick={()=>setModal(u)} className="text-gray-400 hover:text-blue-600"><Icon d={Icons.edit} size={14}/></button>}</td>
               </tr>
             ))}
+            {users.length===0&&(
+              <tr><td colSpan={3} className="px-4 py-6 text-center text-gray-400 text-sm">No hay usuarios cargados.</td></tr>
+            )}
           </tbody>
         </table>
       </div>
-      {modal&&(
-        <Modal title={modal.id?"Editar usuario":"Nuevo usuario"} onClose={()=>setModal(null)}>
-          <div className="space-y-3">
-            <Field label="Nombre" value={modal.name} onChange={e=>setModal(p=>({...p,name:e.target.value}))}/>
-            <Field label="Email" value={modal.email} onChange={e=>setModal(p=>({...p,email:e.target.value}))} type="email"/>
-            <Field label="Contraseña" value={modal.password} onChange={e=>setModal(p=>({...p,password:e.target.value}))} type="password"/>
-            <div>
-              <label className="text-xs font-medium text-gray-600">Rol</label>
-              <select value={modal.role} onChange={e=>setModal(p=>({...p,role:e.target.value}))} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
-                <option value="webmaster">Webmaster</option>
-                <option value="admin">Administrador</option>
-                <option value="operator">Operador</option>
-              </select>
-            </div>
-            <div className="flex items-center gap-2">
-              <input type="checkbox" checked={modal.active} onChange={e=>setModal(p=>({...p,active:e.target.checked}))} id="u-act"/>
-              <label htmlFor="u-act" className="text-sm text-gray-600">Usuario activo</label>
-            </div>
-            <ModalFooter onClose={()=>setModal(null)} onSave={()=>save(modal)}/>
-          </div>
-        </Modal>
-      )}
     </div>
   );
 }
