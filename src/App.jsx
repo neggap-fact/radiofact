@@ -908,40 +908,28 @@ export default function App() {
       // savedUser de localStorage ya no se usa — la sesión la maneja Supabase Auth
     }catch(e){}
 
-    // ───── Supabase Auth: cargar sesión activa al iniciar ─────
-    let mounted = true;
-    
-    async function cargarSesion() {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!mounted) return;
-        
-        if (session?.user) {
-          await hidratarUsuario(session.user);
-        }
-      } catch (err) {
-        console.error("Error al cargar sesión:", err);
-      } finally {
-        if (mounted) setLoadingAuth(false);
+    // ───── Supabase Auth: cargar sesión activa al iniciar (versión simple) ─────
+    supabase.auth.getSession().then(({ data }) => {
+      if (data?.session?.user) {
+        hidratarUsuario(data.session.user).finally(() => setLoadingAuth(false));
+      } else {
+        setLoadingAuth(false);
       }
-    }
-    
-    cargarSesion();
+    }).catch((err) => {
+      console.error("Error al cargar sesión:", err);
+      setLoadingAuth(false);
+    });
 
-    // Listener para cambios de sesión (login, logout)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (!mounted) return;
-      
-      if (event === "SIGNED_IN" && session?.user) {
-        await hidratarUsuario(session.user);
-      } else if (event === "SIGNED_OUT") {
+    // Listener para cambios de sesión (solo SIGNED_OUT — el SIGNED_IN lo manejamos en handleLogin)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT") {
         setCurrentUser(null);
       }
     });
 
     // Cargar todos los usuarios para la pantalla de gestión (solo se usa si rol=webmaster)
     supabase.from("usuarios_perfil").select("*").then(({ data }) => {
-      if (!mounted || !data) return;
+      if (!data) return;
       setUsers(data.map(u => ({
         id: u.id,
         name: u.nombre,
@@ -1006,9 +994,8 @@ export default function App() {
       if (data) setTarjetasCredito(data);
     });
 
-    // Cleanup del listener de auth y variable mounted al desmontar
+    // Cleanup del listener de auth al desmontar
     return () => {
-      mounted = false;
       if (subscription?.unsubscribe) {
         subscription.unsubscribe();
       }
@@ -1052,12 +1039,11 @@ export default function App() {
 
   const handleLogin = async () => {
     setLoginError("");
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email: loginForm.email,
       password: loginForm.password,
     });
     if (error) {
-      // Mensajes amigables según el error de Supabase
       if (error.message.includes("Invalid login credentials")) {
         setLoginError("Email o contraseña incorrectos.");
       } else if (error.message.includes("Email not confirmed")) {
@@ -1065,8 +1051,12 @@ export default function App() {
       } else {
         setLoginError(error.message);
       }
+      return;
     }
-    // Si login OK, el listener onAuthStateChange se encarga de hidratar
+    // Login OK: hidratar directamente (no esperamos al listener)
+    if (data?.user) {
+      await hidratarUsuario(data.user);
+    }
   };
 
   const handleLogout = async () => {
