@@ -1,4 +1,4 @@
-// RadioFact v3.0 — Dashboard mejorado + Finance/Reports unificados
+// RadioFact v3.4 — Supabase Auth + Sistema de usuarios y permisos
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./supabase";
 
@@ -909,17 +909,29 @@ export default function App() {
     }catch(e){}
 
     // ───── Supabase Auth: cargar sesión activa al iniciar ─────
+    let mounted = true;
+    
     async function cargarSesion() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        await hidratarUsuario(session.user);
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!mounted) return;
+        
+        if (session?.user) {
+          await hidratarUsuario(session.user);
+        }
+      } catch (err) {
+        console.error("Error al cargar sesión:", err);
+      } finally {
+        if (mounted) setLoadingAuth(false);
       }
-      setLoadingAuth(false);
     }
+    
     cargarSesion();
 
-    // Listener para cambios de sesión (login, logout, refresh token)
-    const { data: listener } = supabase.auth.onAuthStateChange(async (event, session) => {
+    // Listener para cambios de sesión (login, logout)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!mounted) return;
+      
       if (event === "SIGNED_IN" && session?.user) {
         await hidratarUsuario(session.user);
       } else if (event === "SIGNED_OUT") {
@@ -929,7 +941,8 @@ export default function App() {
 
     // Cargar todos los usuarios para la pantalla de gestión (solo se usa si rol=webmaster)
     supabase.from("usuarios_perfil").select("*").then(({ data }) => {
-      if (data) setUsers(data.map(u => ({
+      if (!mounted || !data) return;
+      setUsers(data.map(u => ({
         id: u.id,
         name: u.nombre,
         role: u.rol,
@@ -993,10 +1006,11 @@ export default function App() {
       if (data) setTarjetasCredito(data);
     });
 
-    // Cleanup del listener de auth al desmontar
+    // Cleanup del listener de auth y variable mounted al desmontar
     return () => {
-      if (typeof listener?.subscription?.unsubscribe === "function") {
-        listener.subscription.unsubscribe();
+      mounted = false;
+      if (subscription?.unsubscribe) {
+        subscription.unsubscribe();
       }
     };
   },[]);
@@ -1056,8 +1070,8 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    setCurrentUser(null);
     await supabase.auth.signOut();
-    // El listener pone currentUser=null automáticamente
   };
 
   if (loadingAuth) return (
@@ -1090,7 +1104,7 @@ export default function App() {
       <aside className="w-52 bg-white border-r border-gray-200 flex flex-col flex-shrink-0">
         <div className="p-4 border-b border-gray-100">
           <div className="text-sm font-bold text-blue-700">📻 RadioFact</div>
-          <div className="text-xs text-gray-400 mt-0.5">Sistema de Gestión</div>
+          <div className="text-xs text-gray-400 mt-0.5">v3.4 — Supabase Auth</div>
         </div>
         <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
           {pages.map(p=>(
