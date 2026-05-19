@@ -277,17 +277,17 @@ function ConfirmDeleteModal({ titulo, mensaje, advertencia, requireTyping = fals
     </div>
   );
 }
-function ConfirmEmisionModal({ titulo, resumen, items, onConfirm, onCancel, loading }) {
+function ConfirmEmisionModal({ titulo, subtitulo, resumen, items, onConfirm, onCancel, loading, confirmLabel, loadingLabel, iconColor = "amber" }) {
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-5 space-y-4">
         <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
-            <Icon d={Icons.alert} size={20} className="text-amber-600" />
+          <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${iconColor === "blue" ? "bg-blue-100" : "bg-amber-100"}`}>
+            <Icon d={Icons.alert} size={20} className={iconColor === "blue" ? "text-blue-600" : "text-amber-600"} />
           </div>
           <div className="flex-1 min-w-0">
             <h3 className="font-semibold text-base">{titulo}</h3>
-            <p className="text-xs text-gray-500 mt-1">Esta acción es irreversible. Una vez emitida, la factura queda registrada en ARCA.</p>
+            <p className="text-xs text-gray-500 mt-1">{subtitulo || "Esta acción es irreversible. Una vez emitida, la factura queda registrada en ARCA."}</p>
           </div>
         </div>
 
@@ -329,7 +329,7 @@ function ConfirmEmisionModal({ titulo, resumen, items, onConfirm, onCancel, load
             disabled={loading}
             className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            {loading ? "⏳ Emitiendo..." : "Confirmar y emitir"}
+            {loading ? (loadingLabel || "⏳ Emitiendo...") : (confirmLabel || "Confirmar y emitir")}
           </button>
         </div>
       </div>
@@ -6780,7 +6780,12 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
           disabled={emitiendo || resultado?.exito}
           className="w-full bg-blue-600 text-white py-3 rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
         >
-          {emitiendo ? "⏳ Emitiendo factura..." : resultado?.exito ? "✅ Factura emitida" : <><Icon d={Icons.send} size={16}/>Emitir Factura a ARCA</>}
+          {emitiendo
+            ? (currentUser?.role === "webmaster" ? "⏳ Emitiendo factura..." : "⏳ Enviando para aprobación...")
+            : resultado?.exito
+              ? (resultado.pendiente ? "✅ Enviada para aprobación" : "✅ Factura emitida")
+              : <><Icon d={Icons.send} size={16}/>{currentUser?.role === "webmaster" ? "Emitir Factura a ARCA" : "Enviar para aprobación"}</>
+          }
         </button>
       )}
       {resultado?.exito && (
@@ -6789,23 +6794,32 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
         </button>
       )}
 
-      {showConfirm && (
-        <ConfirmEmisionModal
-          titulo="¿Emitir factura a ARCA?"
-          resumen={{
-            "Cliente": form.razonSocial,
-            "CUIT": form.cuit,
-            "Tipo": `Factura ${form.tipoFactura}`,
-            "Detalle": form.detalle.length > 50 ? form.detalle.slice(0,50)+"..." : form.detalle,
-            "Neto": fmtMoney(neto),
-            "IVA 10.5%": fmtMoney(iva),
-            "Total": fmtMoney(total),
-          }}
-          loading={emitiendo}
-          onCancel={() => { if (!emitiendo) setShowConfirm(false); }}
-          onConfirm={emitir}
-        />
-      )}
+      {showConfirm && (() => {
+        const esWebmaster = currentUser?.role === "webmaster";
+        return (
+          <ConfirmEmisionModal
+            titulo={esWebmaster ? "¿Emitir factura a ARCA?" : "¿Enviar factura para aprobación?"}
+            subtitulo={esWebmaster
+              ? "Esta acción es irreversible. Una vez emitida, la factura queda registrada en ARCA."
+              : "La factura será enviada al webmaster para su aprobación. Recién al aprobarla se emitirá a ARCA."}
+            iconColor={esWebmaster ? "amber" : "blue"}
+            resumen={{
+              "Cliente": form.razonSocial,
+              "CUIT": form.cuit,
+              "Tipo": `Factura ${form.tipoFactura}`,
+              "Detalle": form.detalle.length > 50 ? form.detalle.slice(0,50)+"..." : form.detalle,
+              "Neto": fmtMoney(neto),
+              "IVA 10.5%": fmtMoney(iva),
+              "Total": fmtMoney(total),
+            }}
+            loading={emitiendo}
+            confirmLabel={esWebmaster ? "Confirmar y emitir" : "Confirmar y enviar"}
+            loadingLabel={esWebmaster ? "⏳ Emitiendo..." : "⏳ Enviando..."}
+            onCancel={() => { if (!emitiendo) setShowConfirm(false); }}
+            onConfirm={emitir}
+          />
+        );
+      })()}
     </div>
   );
 }
