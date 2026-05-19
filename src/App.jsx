@@ -4408,7 +4408,7 @@ function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[],tarjetas
 // ========================================
 
 function CuentasBancariasModal({cuentas,setCuentas,onClose}){
-  const emptyC={nombre:"",banco:"Santander",tipo:"cta_corriente",numero_cuenta:"",cbu:"",saldo_actual:"",saldo_inicial:"",activa:true,notas:""};
+  const emptyC={nombre:"",banco:"Santander",tipo:"cta_corriente",numero_cuenta:"",cbu:"",saldo_actual:"",saldo_inicial:"",activa:true,notas:"",tipo_efectivo:false};
   const [form,setForm]=useState(emptyC);
   const [editId,setEditId]=useState(null);
   const [loading,setLoading]=useState(false);
@@ -4428,6 +4428,7 @@ function CuentasBancariasModal({cuentas,setCuentas,onClose}){
       fecha_saldo_actual:todayStr(),
       activa:true,
       notas:form.notas||"",
+      tipo_efectivo:!!form.tipo_efectivo,
     };
     if(editId){
       const {error}=await supabase.from("cuentas_bancarias").update(payload).eq("id",editId);
@@ -4441,7 +4442,7 @@ function CuentasBancariasModal({cuentas,setCuentas,onClose}){
     setForm(emptyC);setEditId(null);setLoading(false);
   };
 
-  const editar=(p)=>{setForm({nombre:p.nombre,banco:p.banco,tipo:p.tipo,numero_cuenta:p.numero_cuenta||"",cbu:p.cbu||"",saldo_actual:p.saldo_actual||"",saldo_inicial:p.saldo_inicial||"",activa:p.activa,notas:p.notas||""});setEditId(p.id);};
+  const editar=(p)=>{setForm({nombre:p.nombre,banco:p.banco,tipo:p.tipo,numero_cuenta:p.numero_cuenta||"",cbu:p.cbu||"",saldo_actual:p.saldo_actual||"",saldo_inicial:p.saldo_inicial||"",activa:p.activa,notas:p.notas||"",tipo_efectivo:p.tipo_efectivo===true});setEditId(p.id);};
 
   const toggleActiva=async(p)=>{
     await supabase.from("cuentas_bancarias").update({activa:!p.activa}).eq("id",p.id);
@@ -4475,6 +4476,19 @@ function CuentasBancariasModal({cuentas,setCuentas,onClose}){
         <Field label="Saldo inicial" value={form.saldo_inicial} onChange={f("saldo_inicial")} type="number"/>
         <Field label="Saldo actual" value={form.saldo_actual} onChange={f("saldo_actual")} type="number"/>
         <div className="col-span-3"><Field label="Notas" value={form.notas} onChange={f("notas")} placeholder="Descripción, sucursal, etc."/></div>
+        <div className="col-span-3 flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          <input
+            type="checkbox"
+            id="cta-es-efectivo"
+            checked={!!form.tipo_efectivo}
+            onChange={e=>setForm(p=>({...p,tipo_efectivo:e.target.checked}))}
+            className="w-4 h-4"
+          />
+          <label htmlFor="cta-es-efectivo" className="text-sm text-amber-900 cursor-pointer select-none">
+            💵 <span className="font-medium">Es caja de efectivo</span>
+            <span className="text-xs text-amber-700 ml-2">(habilita movimientos manuales de efectivo)</span>
+          </label>
+        </div>
         <div className="col-span-3 flex gap-2 justify-end">
           {editId&&<button onClick={()=>{setForm(emptyC);setEditId(null);}} className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-100">Cancelar</button>}
           <button onClick={guardar} disabled={loading} className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
@@ -4488,8 +4502,8 @@ function CuentasBancariasModal({cuentas,setCuentas,onClose}){
             {cuentas.map(p=>(
               <div key={p.id} className={`flex items-center gap-3 rounded-lg px-3 py-2 border ${p.activa!==false?"bg-white border-gray-200":"bg-gray-50 border-gray-100 opacity-60"}`}>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-800">{p.nombre}</p>
-                  <p className="text-xs text-gray-400">{p.banco} — {p.tipo}{p.numero_cuenta?" — "+p.numero_cuenta:""}</p>
+                  <p className="text-sm font-medium text-gray-800">{p.tipo_efectivo?"💵 ":"🏦 "}{p.nombre}</p>
+                  <p className="text-xs text-gray-400">{p.tipo_efectivo?"Caja de efectivo":`${p.banco} — ${p.tipo}${p.numero_cuenta?" — "+p.numero_cuenta:""}`}</p>
                   <p className="text-xs font-semibold text-emerald-600">Saldo: {fmtMoney(p.saldo_actual)}</p>
                 </div>
                 <button onClick={()=>toggleActiva(p)} className={`text-xs px-2 py-0.5 rounded-full border ${p.activa!==false?"bg-green-50 text-green-700 border-green-200":"bg-gray-100 text-gray-500 border-gray-200"}`}>
