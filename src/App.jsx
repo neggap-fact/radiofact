@@ -581,6 +581,10 @@ export default function App() {
       fch_serv_desde: inv.fch_serv_desde ? `${inv.fch_serv_desde.slice(0,4)}-${inv.fch_serv_desde.slice(4,6)}-${inv.fch_serv_desde.slice(6,8)}` : null,
       fch_serv_hasta: inv.fch_serv_hasta ? `${inv.fch_serv_hasta.slice(0,4)}-${inv.fch_serv_hasta.slice(4,6)}-${inv.fch_serv_hasta.slice(6,8)}` : null,
       fch_vto_pago:   inv.fch_vto_pago   ? `${inv.fch_vto_pago.slice(0,4)}-${inv.fch_vto_pago.slice(4,6)}-${inv.fch_vto_pago.slice(6,8)}` : null,
+      // v3.4 Entrega 2A: tracking de aprobaciones
+      creado_por:       inv.creado_por       || null,
+      aprobado_por:     inv.aprobado_por     || null,
+      fecha_aprobacion: inv.fecha_aprobacion || null,
     };
     console.log("Guardando factura en Supabase:", payload);
     const {data, error} = await supabase.from("facturas").insert(payload).select();
@@ -1075,6 +1079,11 @@ export default function App() {
   // canEdit ahora considera los 4 roles nuevos. "operador" es solo lectura.
   const canEdit = currentUser.role !== "operador";
   const unread = notifications.filter(n=>!n.read).length;
+  
+  // v3.4 Entrega 2A: contador de facturas/NC pendientes de aprobación (solo webmaster)
+  const pendingApprovalCount = currentUser.role === "webmaster"
+    ? invoices.filter(i => i.estado === "Pendiente aprobación").length
+    : 0;
 
   const pages = [
     {id:"finance",label:"Finanzas",icon:Icons.finance},
@@ -1083,6 +1092,7 @@ export default function App() {
     {id:"billing",label:"Facturación",icon:Icons.billing},
     {id:"factura-directa",label:"Factura Directa",icon:Icons.pdf},
     {id:"notas-credito",label:"Notas de Crédito",icon:Icons.creditNote},
+    ...(currentUser.role==="webmaster"?[{id:"aprobaciones",label:"Aprobaciones",icon:Icons.check,badge:pendingApprovalCount}]:[]),
     {id:"expenses",label:"Gastos",icon:Icons.expenses},
     {id:"proveedores",label:"Proveedores",icon:Icons.users},
     ...(currentUser.role==="webmaster"?[{id:"users",label:"Usuarios",icon:Icons.users}]:[]),
@@ -1100,7 +1110,13 @@ export default function App() {
           {pages.map(p=>(
             <button key={p.id} onClick={()=>setPage(p.id)}
               className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all ${page===p.id?"bg-blue-50 text-blue-700":"text-gray-600 hover:bg-gray-50"}`}>
-              <Icon d={p.icon} size={15}/>{p.label}
+              <Icon d={p.icon} size={15}/>
+              <span className="flex-1 text-left">{p.label}</span>
+              {p.badge > 0 && (
+                <span className="ml-auto bg-red-500 text-white text-xs font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1.5">
+                  {p.badge}
+                </span>
+              )}
             </button>
           ))}
         </nav>
@@ -1131,8 +1147,8 @@ export default function App() {
           {page==="clients"&&<Clients clients={clients} setClients={setClients} contracts={contracts} invoices={invoices} currentUser={currentUser} canEdit={canEdit} registrarEmailEnHistorial={registrarEmailEnHistorial}/>}
           {page==="contracts"&&<Contracts contracts={contracts} setContracts={setContracts} clients={clients} invoices={invoices} currentUser={currentUser} canEdit={canEdit}/>}
           {/* FIX 1: agregado guardarFacturaSupabase como prop */}
-          {page==="billing"&&<Billing clients={clients} contracts={contracts} setContracts={setContracts} invoices={invoices} setInvoices={setInvoices} notifications={notifications} setNotifications={setNotifications} config={config} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase} emitirNotaCredito={emitirNotaCredito} registrarEmailEnHistorial={registrarEmailEnHistorial} marcarEmailEnviadoSupabase={marcarEmailEnviadoSupabase} actualizarEmailsCliente={actualizarEmailsCliente} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias}/>}
-          {page==="factura-directa"&&<FacturaDirecta clients={clients} setClients={setClients} invoices={invoices} setInvoices={setInvoices} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase}/>}
+          {page==="billing"&&<Billing clients={clients} contracts={contracts} setContracts={setContracts} invoices={invoices} setInvoices={setInvoices} notifications={notifications} setNotifications={setNotifications} config={config} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase} emitirNotaCredito={emitirNotaCredito} registrarEmailEnHistorial={registrarEmailEnHistorial} marcarEmailEnviadoSupabase={marcarEmailEnviadoSupabase} actualizarEmailsCliente={actualizarEmailsCliente} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias} currentUser={currentUser}/>}
+          {page==="factura-directa"&&<FacturaDirecta clients={clients} setClients={setClients} invoices={invoices} setInvoices={setInvoices} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase} currentUser={currentUser}/>}
           {page==="notas-credito"&&<CreditNotes
             creditNotes={creditNotes}
             invoices={invoices}
@@ -1149,6 +1165,7 @@ export default function App() {
               setEmailNCModal({ nc, factura, cliente: cli });
             }}
           />}
+          {page==="aprobaciones"&&currentUser.role==="webmaster"&&<Aprobaciones invoices={invoices} setInvoices={setInvoices} clients={clients} contracts={contracts} users={users} currentUser={currentUser} guardarFacturaSupabase={guardarFacturaSupabase} setNotifications={setNotifications}/>}
           {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} currentUser={currentUser} canEdit={canEdit} plantillas={plantillasGastos} setPlantillas={setPlantillasGastos} proveedores={proveedores} setProveedores={setProveedores} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias} tarjetasCredito={tarjetasCredito} setTarjetasCredito={setTarjetasCredito}/>}
           {page==="proveedores"&&<ProveedoresPage proveedores={proveedores} setProveedores={setProveedores} canEdit={canEdit}/>}
           {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses} ingresosBancarios={ingresosBancarios} setIngresosBancarios={setIngresosBancarios} saldosIniciales={saldosIniciales} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias}/>}
@@ -2583,7 +2600,7 @@ function ModalCobro({inv,onSave,onClose}){
   );
 }
 
-function Billing({clients,contracts,setContracts,invoices,setInvoices,notifications,setNotifications,config,canEdit,descargarPDF,guardarFacturaSupabase,emitirNotaCredito,registrarEmailEnHistorial,marcarEmailEnviadoSupabase,actualizarEmailsCliente,cuentasBancarias=[],setCuentasBancarias}){
+function Billing({clients,contracts,setContracts,invoices,setInvoices,notifications,setNotifications,config,canEdit,descargarPDF,guardarFacturaSupabase,emitirNotaCredito,registrarEmailEnHistorial,marcarEmailEnviadoSupabase,actualizarEmailsCliente,cuentasBancarias=[],setCuentasBancarias,currentUser}){
   const today=new Date();
   const [selMonth,setSelMonth]=useState(today.getMonth()+1);
   const [selYear,setSelYear]=useState(today.getFullYear());
@@ -2782,15 +2799,36 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
     };
   };
   const approveAndEmit = async (contractIds, texts = {}, fechasArca = {}, keepOpen = false) => {
+    // v3.4 Entrega 2A: Flujo dual según rol
+    // - webmaster: emite a ARCA como siempre
+    // - resto (editor, socio, operador): guarda como "Pendiente aprobación" sin llamar a ARCA
+    const esWebmaster = currentUser?.role === "webmaster";
+
     const results = [];
     for (const ctId of contractIds) {
       const ct = contracts.find(c => c.id === ctId);
       const client = clients.find(c => c.id === ct.clientId);
+      const fch = fechasArca[ctId] || {};
+
+      // ───── NO webmaster: guardar como Pendiente aprobación ─────
+      if (!esWebmaster) {
+        const inv = buildInvoice(ct, texts[ctId] || "", fch);
+        inv.estado = "Pendiente aprobación";
+        inv.clientCuit = client.cuit;
+        inv.creado_por = currentUser.id;
+        // Guardar fechas de servicio como vinieron del ReviewModal
+        if (fch.fch_serv_desde) inv.fch_serv_desde = fch.fch_serv_desde;
+        if (fch.fch_serv_hasta) inv.fch_serv_hasta = fch.fch_serv_hasta;
+        if (fch.fch_vto_pago)   inv.fch_vto_pago   = fch.fch_vto_pago;
+        const uuid = await guardarFacturaSupabase(inv, ct.clientId);
+        if (uuid) inv.id = uuid;
+        results.push(inv);
+        continue;
+      }
+
+      // ───── Webmaster: flujo normal a ARCA ─────
       const cuitLimpio = client.cuit.replace(/-/g, "");
       const tipoFactura = client.tipoFactura === "A" ? 1 : 6;
-
-      // Fechas calculadas/editadas en el ReviewModal (formato YYYYMMDD)
-      const fch = fechasArca[ctId] || {};
 
       // Registrar la operación ANTES de llamar a ARCA (auditoría + UUID por intento)
       const requestPayload = {
@@ -2836,6 +2874,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
           inv.estado = "Emitida";
           inv.fecha = data.datos.fecha;
           inv.clientCuit = client.cuit;
+          inv.creado_por = currentUser.id;
           await guardarFacturaSupabase(inv, ct.clientId).then(uuid => {
             if (uuid) inv.id = uuid;
           });
@@ -2856,6 +2895,11 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
     setInvoices(prev => [...prev, ...results]);
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
     if (!keepOpen) setReviewModal(null);
+
+    // Aviso al usuario no-webmaster
+    if (!esWebmaster && results.length > 0) {
+      alert(`✓ ${results.length} factura(s) enviada(s) al webmaster para aprobación.`);
+    }
     return results;
   };
 
@@ -6001,6 +6045,216 @@ function Users({users,setUsers,currentUser}){
   );
 }
 
+// ─────────────────────────────────────────────────────────────
+// v3.4 Entrega 2A: Pantalla de Aprobaciones (solo webmaster)
+// Muestra facturas en estado "Pendiente aprobación" y permite
+// aprobar (emite a ARCA) o rechazar (vuelve a Borrador)
+// ─────────────────────────────────────────────────────────────
+function Aprobaciones({invoices,setInvoices,clients,contracts,users,currentUser,guardarFacturaSupabase,setNotifications}){
+  const [procesando,setProcesando] = useState(null);
+  const [rechazoModal,setRechazoModal] = useState(null);
+
+  const pendientes = invoices.filter(i => i.estado === "Pendiente aprobación");
+
+  const fmtMonto = (n) => `$${Number(n||0).toLocaleString("es-AR",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+  const getCreador = (uid) => users.find(u => u.id === uid)?.name || "Usuario desconocido";
+
+  // APROBAR: dispara el flujo ARCA con la factura ya guardada como pendiente
+  const handleAprobar = async (inv) => {
+    if (!confirm(`¿Aprobar y emitir a ARCA la factura de ${inv.clientName} por ${fmtMonto(inv.total)}?`)) return;
+    setProcesando(inv.id);
+
+    try {
+      const client = clients.find(c => c.id === inv.clientId);
+      if (!client) {
+        alert("❌ No se encontró el cliente.");
+        setProcesando(null);
+        return;
+      }
+
+      const cuitLimpio = client.cuit.replace(/-/g, "");
+      const tipoFactura = client.tipoFactura === "A" ? 1 : 6;
+
+      let data;
+      if (DEBUG_MODE) {
+        const fakeNum = Math.floor(Math.random()*900)+100;
+        data = { exito: true, datos: { cae: `DEBUG${Date.now()}`, cae_vencimiento: "20260430", numero: fakeNum, fecha: todayStr().replace(/-/g,"") }};
+        console.log("🔧 DEBUG MODE: Aprobación simulada, no se envió a ARCA");
+      } else {
+        const requestPayload = {
+          cuit_cliente: parseInt(cuitLimpio),
+          tipo_doc: 80,
+          tipo_factura: tipoFactura,
+          punto_venta: 3,
+          monto_neto: inv.neto,
+          monto_iva: inv.iva,
+          monto_total: inv.total,
+          concepto: 2,
+          fch_serv_desde: inv.fch_serv_desde || undefined,
+          fch_serv_hasta: inv.fch_serv_hasta || undefined,
+          fch_vto_pago:   inv.fch_vto_pago   || undefined,
+          cliente: client.razonSocial,
+          contrato_id: inv.contractId,
+        };
+        const res = await fetch(`${BACKEND_URL}/facturar`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestPayload),
+        });
+        data = await res.json();
+      }
+
+      if (data.exito) {
+        // Actualizar la factura existente con los datos de ARCA
+        const updates = {
+          estado: "Emitida",
+          cae: data.datos.cae,
+          cae_vencimiento: data.datos.cae_vencimiento || null,
+          numero_comprobante: data.datos.numero,
+          fecha_emision: data.datos.fecha
+            ? `${data.datos.fecha.slice(0,4)}-${data.datos.fecha.slice(4,6)}-${data.datos.fecha.slice(6,8)}`
+            : todayStr(),
+          aprobado_por: currentUser.id,
+          fecha_aprobacion: new Date().toISOString(),
+        };
+
+        const { error } = await supabase.from("facturas").update(updates).eq("id", inv.id);
+        if (error) {
+          console.error("Error al actualizar factura aprobada:", error);
+          alert(`⚠️ Factura emitida en ARCA pero hubo un error guardando en BD: ${error.message}`);
+        }
+
+        // Actualizar el state local
+        setInvoices(prev => prev.map(i =>
+          i.id === inv.id
+            ? {
+                ...i,
+                ...updates,
+                numero: `${client.tipoFactura}-0003-${String(data.datos.numero).padStart(8,"0")}`,
+                fecha: data.datos.fecha,
+              }
+            : i
+        ));
+        alert(`✓ Factura aprobada y emitida. CAE: ${data.datos.cae}`);
+      } else {
+        alert(`⚠️ ARCA rechazó la emisión: ${data.error || "Error desconocido"}`);
+      }
+    } catch (err) {
+      console.error("Error en aprobación:", err);
+      alert(`❌ Error de conexión: ${err.message}`);
+    } finally {
+      setProcesando(null);
+    }
+  };
+
+  // RECHAZAR: vuelve a Borrador con motivo
+  const handleRechazar = async (inv, motivo) => {
+    setProcesando(inv.id);
+    try {
+      const updates = {
+        estado: "Borrador",
+        // Nota: motivo lo guardamos en detalle como prefijo si quieren rastrearlo
+      };
+      const detalleConMotivo = motivo
+        ? `[Rechazada: ${motivo}] ${inv.detalle || ""}`
+        : inv.detalle;
+      updates.detalle = detalleConMotivo;
+
+      const { error } = await supabase.from("facturas").update(updates).eq("id", inv.id);
+      if (error) {
+        alert(`❌ Error al rechazar: ${error.message}`);
+        return;
+      }
+      setInvoices(prev => prev.map(i =>
+        i.id === inv.id ? { ...i, estado: "Borrador", detalle: detalleConMotivo } : i
+      ));
+      setRechazoModal(null);
+      alert(`✓ Factura rechazada. El creador puede editarla y reenviarla.`);
+    } catch (err) {
+      alert(`❌ Error: ${err.message}`);
+    } finally {
+      setProcesando(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+        <div className="text-sm font-semibold text-amber-900">📋 Facturas pendientes de aprobación</div>
+        <div className="text-xs text-amber-700 mt-1">
+          Estas facturas fueron creadas por usuarios sin permiso de emisión. Aprobá para emitir a ARCA, o rechazá para que el creador las edite.
+        </div>
+      </div>
+
+      {pendientes.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
+          <div className="text-gray-400 text-sm">No hay facturas pendientes de aprobación.</div>
+        </div>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 border-b border-gray-200">
+              <tr>
+                {["Cliente","Período","Neto","IVA","Total","Creada por","Acciones"].map(h => (
+                  <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {pendientes.map(inv => (
+                <tr key={inv.id} className="border-b border-gray-50 hover:bg-gray-50">
+                  <td className="px-4 py-3 font-medium">{inv.clientName}</td>
+                  <td className="px-4 py-3 text-gray-600">{inv.periodo}</td>
+                  <td className="px-4 py-3 text-gray-600">{fmtMonto(inv.neto)}</td>
+                  <td className="px-4 py-3 text-gray-600">{fmtMonto(inv.iva)}</td>
+                  <td className="px-4 py-3 font-semibold">{fmtMonto(inv.total)}</td>
+                  <td className="px-4 py-3 text-xs text-gray-500">{getCreador(inv.creado_por)}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleAprobar(inv)}
+                        disabled={procesando === inv.id}
+                        className="bg-green-600 text-white px-3 py-1 rounded text-xs font-medium hover:bg-green-700 disabled:opacity-50">
+                        {procesando === inv.id ? "..." : "✓ Aprobar"}
+                      </button>
+                      <button
+                        onClick={() => setRechazoModal(inv)}
+                        disabled={procesando === inv.id}
+                        className="bg-red-100 text-red-700 px-3 py-1 rounded text-xs font-medium hover:bg-red-200 disabled:opacity-50">
+                        ✗ Rechazar
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {rechazoModal && (
+        <Modal title={`Rechazar factura de ${rechazoModal.clientName}`} onClose={() => setRechazoModal(null)}>
+          <div className="space-y-3">
+            <p className="text-sm text-gray-600">
+              La factura volverá a estado "Borrador" para que el creador la edite y reenvíe.
+            </p>
+            <Field
+              label="Motivo del rechazo (opcional)"
+              value={rechazoModal.motivo || ""}
+              onChange={(e) => setRechazoModal(p => ({ ...p, motivo: e.target.value }))}
+            />
+            <ModalFooter
+              onClose={() => setRechazoModal(null)}
+              onSave={() => handleRechazar(rechazoModal, rechazoModal.motivo)}
+              saveLabel="Confirmar rechazo"
+            />
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 function Settings({config,setConfig,canEdit}){
   const [form,setForm]=useState(config);
   const f=k=>e=>setForm(p=>({...p,[k]:e.target.value}));
@@ -6069,7 +6323,7 @@ function EstadoBadge({estado}){
 }
 
 // FIX 3: corregido el JSX de FacturaDirecta - {form.email && ...} movido dentro del div space-y-2
-function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, descargarPDF, guardarFacturaSupabase}) {
+function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, descargarPDF, guardarFacturaSupabase, currentUser}) {
   const hoy = new Date();
   const todayISO = hoy.toISOString().split("T")[0];
   const empty = {
@@ -6167,6 +6421,78 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
     setEmitiendo(true);
     setResultado(null);
 
+    // v3.4 Entrega 2A: Flujo dual según rol
+    const esWebmaster = currentUser?.role === "webmaster";
+
+    // ───── NO webmaster: guardar como Pendiente aprobación (no llama a ARCA) ─────
+    if (!esWebmaster) {
+      try {
+        let clientId = form.clienteId !== "nuevo" ? form.clienteId : null;
+        if (form.clienteId === "nuevo") {
+          const {data:newClient, error:clientError} = await supabase.from("clientes").insert({
+            razon_social: form.razonSocial,
+            cuit: form.cuit,
+            domicilio: form.domicilio || "",
+            condicion_iva: form.condicionIVA,
+            tipo_factura: form.tipoFactura,
+            email: form.email || "",
+            telefono: "",
+            activo: true,
+          }).select().single();
+          if (clientError) console.error("Error al guardar cliente:", clientError);
+          if (newClient) {
+            clientId = newClient.id;
+            setClients(prev=>[...prev,{
+              id:newClient.id,razonSocial:form.razonSocial,cuit:form.cuit,
+              domicilio:form.domicilio||"",condicionIVA:form.condicionIVA,
+              tipoFactura:form.tipoFactura,email:form.email||"",
+              telefono:"",active:true
+            }]);
+          }
+        }
+
+        const inv = {
+          id: `inv-directa-pend-${Date.now()}`,
+          contractId: null,
+          clientId: clientId,
+          clientName: form.razonSocial,
+          clientEmail: form.email,
+          clientCuit: form.cuit,
+          tipoFactura: form.tipoFactura,
+          numero: null,
+          month: new Date().getMonth()+1,
+          year: new Date().getFullYear(),
+          periodo: form.tipoPeriodo === "mes"
+            ? `${MONTHS[parseInt(form.mes)-1]} ${form.anio}`
+            : `${MONTHS[new Date().getMonth()]} ${new Date().getFullYear()}`,
+          detalle: form.detalle,
+          neto, iva, total,
+          estado: "Pendiente aprobación",
+          cae: null,
+          fecha: todayStr().replace(/-/g,""),
+          fechaPago: "",
+          emailEnviado: false,
+          creado_por: currentUser.id,
+          fch_serv_desde: form.tipoPeriodo === "rango" ? form.fechaDesde.replace(/-/g,"") : form.tipoPeriodo === "dia" ? form.fechaDia.replace(/-/g,"") : null,
+          fch_serv_hasta: form.tipoPeriodo === "rango" ? form.fechaHasta.replace(/-/g,"") : form.tipoPeriodo === "dia" ? form.fechaDia.replace(/-/g,"") : null,
+        };
+
+        const uuid = await guardarFacturaSupabase(inv, clientId);
+        if (uuid) inv.id = uuid;
+        setInvoices(prev => [inv, ...prev]);
+        setResultado({ exito: true, pendiente: true, inv });
+        setForm(empty);
+      } catch (e) {
+        setResultado({ exito: false, error: e.message });
+      } finally {
+        setEmitiendo(false);
+        submittingRef.current = false;
+        setShowConfirm(false);
+      }
+      return;
+    }
+
+    // ───── Webmaster: flujo normal a ARCA ─────
     // Registrar la operación en Supabase ANTES de llamar a ARCA.
     // Esto deja un log de auditoría y un UUID por intento.
     const cuitLimpio = form.cuit.replace(/-/g,"");
@@ -6253,6 +6579,7 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
           fecha: data.datos.fecha,
           fechaPago: "",
           emailEnviado: false,
+          creado_por: currentUser.id,
         };
 
         await guardarFacturaSupabase(inv, clientId).then(uuid => {
@@ -6378,8 +6705,16 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
       </div>
 
       {resultado && (
-        <div className={`rounded-xl border p-4 ${resultado.exito?"bg-green-50 border-green-200":"bg-red-50 border-red-200"}`}>
+        <div className={`rounded-xl border p-4 ${resultado.exito?(resultado.pendiente?"bg-amber-50 border-amber-200":"bg-green-50 border-green-200"):"bg-red-50 border-red-200"}`}>
           {resultado.exito ? (
+            resultado.pendiente ? (
+              <div className="space-y-2">
+                <p className="font-semibold text-amber-800">📋 Factura enviada para aprobación</p>
+                <p className="text-sm text-amber-700">Cliente: <strong>{resultado.inv.clientName}</strong></p>
+                <p className="text-sm text-amber-700">Total: <strong>${Number(resultado.inv.total).toLocaleString("es-AR",{minimumFractionDigits:2})}</strong></p>
+                <p className="text-xs text-amber-600 mt-2">El webmaster recibirá la solicitud y al aprobarla se emitirá a ARCA.</p>
+              </div>
+            ) : (
             // FIX 3: {form.email && ...} ahora está DENTRO del div space-y-2
             <div className="space-y-2">
               <p className="font-semibold text-green-800">✅ Factura emitida correctamente</p>
@@ -6408,6 +6743,7 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
                 </div>
               )}
             </div>
+            )
           ) : (
             <div>
               <p className="font-semibold text-red-800">❌ Error al emitir</p>
