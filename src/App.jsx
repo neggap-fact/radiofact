@@ -40,7 +40,7 @@ const BACKEND_URL = "https://radiofact-backend-production.up.railway.app";
 const DEBUG_MODE = false; // Cambiar a false para emitir facturas reales a ARCA
 
 const MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
-const EXPENSE_CATS = ["Sueldos","Compras","Gastos Fijos","Gastos Variables","Gastos Externos","Proveedores","Impuestos","Impuestos bancarios","Otros"];
+const EXPENSE_CATS = ["Sueldos","Compras","Gastos Fijos","Gastos Variables","Gastos Externos","Proveedores","Impuestos","Gastos bancarios","Otros"];
 
 function fmtMoney(n) {
   return new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:0}).format(n||0);
@@ -5225,11 +5225,11 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
   const totalEnBancos = cuentasBanco.filter(c => c.activa !== false).reduce((s,c) => s + (parseFloat(c.saldo_actual)||0), 0);
 
   // ── GASTOS DISCRIMINADOS ───────────────────────
-  const gastosImpuestosBanco = filtExp.filter(e=>["Impuestos bancarios"].includes(e.categoria));
+  const gastosBancarios = filtExp.filter(e=>["Gastos bancarios"].includes(e.categoria));
   const gastosImpuestos = filtExp.filter(e=>e.categoria==="Impuestos");
-  const gastosOperativos = filtExp.filter(e=>!["Impuestos bancarios","Impuestos"].includes(e.categoria));
+  const gastosOperativos = filtExp.filter(e=>!["Gastos bancarios","Impuestos"].includes(e.categoria));
 
-  const totImpBanco = gastosImpuestosBanco.reduce((s,e)=>s+e.monto,0);
+  const totImpBanco = gastosBancarios.reduce((s,e)=>s+e.monto,0);
   const totImpuestosOtros = gastosImpuestos.reduce((s,e)=>s+e.monto,0);
   const totOperativos = gastosOperativos.reduce((s,e)=>s+e.monto,0);
   const totGastos = filtExp.reduce((s,e)=>s+e.monto,0);
@@ -5260,7 +5260,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
   // ── IMPUESTOS BANCARIOS POR CUENTA ─────────────
   // Detecta el banco buscando palabras clave en el proveedor
   const impuestosPorBanco = { credicoop: {nombre:"Credicoop Corriente LVN", total: 0, impuestos: 0}, santander: {nombre:"Banco Santander LVN", total: 0, impuestos: 0}, otros: {nombre:"Otros", total: 0, impuestos: 0} };
-  gastosImpuestosBanco.forEach(g => {
+  gastosBancarios.forEach(g => {
     const prov = (g.proveedor || "").toLowerCase();
     let key = "otros";
     if (prov.includes("credicoop")) key = "credicoop";
@@ -5522,9 +5522,9 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
             <p className="text-xs text-orange-400">{gastosImpuestos.length} mov.</p>
           </div>
           <div className="bg-amber-50 rounded-lg p-3">
-            <p className="text-xs text-amber-600">Impuestos bancarios</p>
+            <p className="text-xs text-amber-600">Gastos bancarios</p>
             <p className="text-base font-bold text-amber-700 mt-1">{fmt(totImpBanco)}</p>
-            <p className="text-xs text-amber-400">{gastosImpuestosBanco.length} mov.</p>
+            <p className="text-xs text-amber-400">{gastosBancarios.length} mov.</p>
           </div>
         </div>
         <div className="border-t border-gray-200 pt-3 mt-3 flex items-center justify-between">
@@ -5555,7 +5555,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
             <div className="bg-amber-100 rounded-lg p-3 border-2 border-amber-300">
               <p className="text-xs font-medium text-amber-900">TOTAL</p>
               <p className="text-lg font-bold text-amber-900 mt-1">{fmt(impuestosPorBanco.credicoop.total + impuestosPorBanco.santander.total + impuestosPorBanco.otros.total)}</p>
-              <p className="text-xs text-amber-700 mt-1">Impuestos bancarios</p>
+              <p className="text-xs text-amber-700 mt-1">Gastos bancarios</p>
             </div>
           </div>
         </div>
@@ -5829,7 +5829,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
                       <td style={{padding: '6px', textAlign: 'right'}}>{fmtMoney(totImpuestosOtros)}</td>
                     </tr>
                     <tr style={{borderBottom: '1px solid #e5e7eb'}}>
-                      <td style={{padding: '6px'}}>Impuestos bancarios:</td>
+                      <td style={{padding: '6px'}}>Gastos bancarios:</td>
                       <td style={{padding: '6px', textAlign: 'right'}}>{fmtMoney(totImpBanco)}</td>
                     </tr>
                     <tr style={{backgroundColor: '#fee2e2'}}>
