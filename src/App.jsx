@@ -1,4 +1,4 @@
-// RadioFact v3.4 — Supabase Auth + Sistema de usuarios y permisos
+// RadioFact v3.5 — Sistema de aprobaciones + Mejoras de seguridad
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./supabase";
 
@@ -394,6 +394,8 @@ export default function App() {
   const [tarjetasCredito, setTarjetasCredito] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [page, setPage] = useState("finance");
+  // v3.5: pre-filtro de cliente para Billing (al navegar desde Finanzas → "Ver facturas de X")
+  const [clientePreFiltro, setClientePreFiltro] = useState("");
   const [config, setConfig] = useState({
     empresa:"LA VANGUARDIA NOTICIAS",cuit:"30-71644424-0",
     domicilio:"Gobernador Gregores 1370, Caleta Olivia",email:"info@lavanguardianoticias.com.ar",
@@ -1068,6 +1070,87 @@ export default function App() {
     await supabase.auth.signOut();
   };
 
+  // ──────────────────────────────────────────────────────────────
+  // v3.5 — Auto-logout por inactividad
+  // 8 minutos sin actividad → cierre. Aviso modal a los 7 min con
+  // countdown de 60 segundos. Cualquier evento del usuario resetea.
+  // ──────────────────────────────────────────────────────────────
+  const INACTIVITY_LIMIT_MS = 8 * 60 * 1000;          // 8 minutos
+  const INACTIVITY_WARNING_MS = 7 * 60 * 1000;        // aviso a los 7 min
+  const [showInactivityWarning, setShowInactivityWarning] = useState(false);
+  const [inactivityCountdown, setInactivityCountdown] = useState(60);
+  const inactivityTimerRef = useRef(null);
+  const warningTimerRef = useRef(null);
+  const countdownIntervalRef = useRef(null);
+
+  const resetInactivityTimer = useCallback(() => {
+    // Limpiar timers anteriores
+    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+    if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
+    if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+
+    // Si el modal está abierto y hubo actividad, cerralo
+    if (showInactivityWarning) {
+      setShowInactivityWarning(false);
+      setInactivityCountdown(60);
+    }
+
+    // Solo activar si hay usuario logueado
+    if (!currentUser) return;
+
+    // Timer del aviso (7 min)
+    warningTimerRef.current = setTimeout(() => {
+      setShowInactivityWarning(true);
+      setInactivityCountdown(60);
+      // Countdown visual de 60s
+      countdownIntervalRef.current = setInterval(() => {
+        setInactivityCountdown(prev => {
+          if (prev <= 1) {
+            clearInterval(countdownIntervalRef.current);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }, INACTIVITY_WARNING_MS);
+
+    // Timer del logout (8 min)
+    inactivityTimerRef.current = setTimeout(() => {
+      handleLogout();
+    }, INACTIVITY_LIMIT_MS);
+  }, [currentUser, showInactivityWarning]);
+
+  useEffect(() => {
+    if (!currentUser) {
+      // Si no hay usuario, limpiar todo
+      if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+      if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
+      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+      return;
+    }
+
+    // Eventos que cuentan como actividad
+    const events = ["mousemove", "mousedown", "keydown", "scroll", "touchstart", "click"];
+    const handler = () => resetInactivityTimer();
+    events.forEach(ev => window.addEventListener(ev, handler, { passive: true }));
+
+    // Arrancar el timer la primera vez
+    resetInactivityTimer();
+
+    return () => {
+      events.forEach(ev => window.removeEventListener(ev, handler));
+      if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+      if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
+      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+    };
+  }, [currentUser, resetInactivityTimer]);
+
+  const handleExtenderSesion = () => {
+    setShowInactivityWarning(false);
+    setInactivityCountdown(60);
+    resetInactivityTimer();
+  };
+
   if (loadingAuth) return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="text-gray-400 text-sm">Cargando…</div>
@@ -1104,7 +1187,7 @@ export default function App() {
       <aside className="w-52 bg-white border-r border-gray-200 flex flex-col flex-shrink-0">
         <div className="p-4 border-b border-gray-100">
           <div className="text-sm font-bold text-blue-700">📻 RadioFact</div>
-          <div className="text-xs text-gray-400 mt-0.5">v3.4 — Supabase Auth</div>
+          <div className="text-xs text-gray-400 mt-0.5">v3.5 — Seguridad+</div>
         </div>
         <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
           {pages.map(p=>(
@@ -1147,7 +1230,7 @@ export default function App() {
           {page==="clients"&&<Clients clients={clients} setClients={setClients} contracts={contracts} invoices={invoices} currentUser={currentUser} canEdit={canEdit} registrarEmailEnHistorial={registrarEmailEnHistorial}/>}
           {page==="contracts"&&<Contracts contracts={contracts} setContracts={setContracts} clients={clients} invoices={invoices} currentUser={currentUser} canEdit={canEdit}/>}
           {/* FIX 1: agregado guardarFacturaSupabase como prop */}
-          {page==="billing"&&<Billing clients={clients} contracts={contracts} setContracts={setContracts} invoices={invoices} setInvoices={setInvoices} notifications={notifications} setNotifications={setNotifications} config={config} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase} emitirNotaCredito={emitirNotaCredito} registrarEmailEnHistorial={registrarEmailEnHistorial} marcarEmailEnviadoSupabase={marcarEmailEnviadoSupabase} actualizarEmailsCliente={actualizarEmailsCliente} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias} currentUser={currentUser}/>}
+          {page==="billing"&&<Billing clients={clients} contracts={contracts} setContracts={setContracts} invoices={invoices} setInvoices={setInvoices} notifications={notifications} setNotifications={setNotifications} config={config} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase} emitirNotaCredito={emitirNotaCredito} registrarEmailEnHistorial={registrarEmailEnHistorial} marcarEmailEnviadoSupabase={marcarEmailEnviadoSupabase} actualizarEmailsCliente={actualizarEmailsCliente} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias} currentUser={currentUser} clientePreFiltro={clientePreFiltro} setClientePreFiltro={setClientePreFiltro}/>}
           {page==="factura-directa"&&<FacturaDirecta clients={clients} setClients={setClients} invoices={invoices} setInvoices={setInvoices} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase} currentUser={currentUser}/>}
           {page==="notas-credito"&&<CreditNotes
             creditNotes={creditNotes}
@@ -1168,7 +1251,7 @@ export default function App() {
           {page==="aprobaciones"&&currentUser.role==="webmaster"&&<Aprobaciones invoices={invoices} setInvoices={setInvoices} clients={clients} contracts={contracts} users={users} currentUser={currentUser} guardarFacturaSupabase={guardarFacturaSupabase} setNotifications={setNotifications}/>}
           {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} currentUser={currentUser} canEdit={canEdit} plantillas={plantillasGastos} setPlantillas={setPlantillasGastos} proveedores={proveedores} setProveedores={setProveedores} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias} tarjetasCredito={tarjetasCredito} setTarjetasCredito={setTarjetasCredito}/>}
           {page==="proveedores"&&<ProveedoresPage proveedores={proveedores} setProveedores={setProveedores} canEdit={canEdit}/>}
-          {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses} ingresosBancarios={ingresosBancarios} setIngresosBancarios={setIngresosBancarios} saldosIniciales={saldosIniciales} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias}/>}
+          {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses} ingresosBancarios={ingresosBancarios} setIngresosBancarios={setIngresosBancarios} saldosIniciales={saldosIniciales} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias} setPage={setPage} setClientePreFiltro={setClientePreFiltro}/>}
           {page==="users"&&currentUser.role==="webmaster"&&<Users users={users} setUsers={setUsers} currentUser={currentUser}/>}
           {page==="settings"&&<Settings config={config} setConfig={setConfig} canEdit={canEdit}/>}
           {emailNCModal && (
@@ -1183,6 +1266,43 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {/* v3.5 — Modal de aviso de inactividad */}
+      {showInactivityWarning && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[9999] p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
+                <span className="text-2xl">⏰</span>
+              </div>
+              <div className="flex-1">
+                <h3 className="font-semibold text-base text-gray-800">Sesión por expirar</h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  No detectamos actividad en los últimos 7 minutos. Tu sesión se cerrará automáticamente.
+                </p>
+              </div>
+            </div>
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-center">
+              <p className="text-xs text-amber-700 uppercase tracking-wide">Cierre en</p>
+              <p className="text-4xl font-bold text-amber-900 mt-1">{inactivityCountdown}s</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleLogout}
+                className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+              >
+                Cerrar sesión
+              </button>
+              <button
+                onClick={handleExtenderSesion}
+                className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+              >
+                Seguir conectado
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2600,7 +2720,7 @@ function ModalCobro({inv,onSave,onClose}){
   );
 }
 
-function Billing({clients,contracts,setContracts,invoices,setInvoices,notifications,setNotifications,config,canEdit,descargarPDF,guardarFacturaSupabase,emitirNotaCredito,registrarEmailEnHistorial,marcarEmailEnviadoSupabase,actualizarEmailsCliente,cuentasBancarias=[],setCuentasBancarias,currentUser}){
+function Billing({clients,contracts,setContracts,invoices,setInvoices,notifications,setNotifications,config,canEdit,descargarPDF,guardarFacturaSupabase,emitirNotaCredito,registrarEmailEnHistorial,marcarEmailEnviadoSupabase,actualizarEmailsCliente,cuentasBancarias=[],setCuentasBancarias,currentUser,clientePreFiltro,setClientePreFiltro}){
   const today=new Date();
   const [selMonth,setSelMonth]=useState(today.getMonth()+1);
   const [selYear,setSelYear]=useState(today.getFullYear());
@@ -2653,11 +2773,22 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
     }
     setContracts(prev => prev.map(c => c.id === ct.id ? nuevo : c));
   };
-  const [filtroCliente,setFiltroCliente]=useState("");
+  const [filtroCliente,setFiltroCliente]=useState(clientePreFiltro || "");
+  // v3.5: si vino del Finance con un cliente preseleccionado, lo aplica y lo limpia
+  useEffect(() => {
+    if (clientePreFiltro) {
+      setFiltroCliente(clientePreFiltro);
+      if (typeof setClientePreFiltro === "function") setClientePreFiltro("");
+    }
+  }, [clientePreFiltro, setClientePreFiltro]);
   const [filtroEstado,setFiltroEstado]=useState("");
   const [ocultarAnuladas,setOcultarAnuladas]=useState(true);
+  const [mostrarOcultas,setMostrarOcultas]=useState(false); // v3.5
   const [filtroEmail,setFiltroEmail]=useState("");
   const [filtroBusqueda,setFiltroBusqueda]=useState("");
+  // v3.5: state para modales de edición y borrado de facturas pendientes
+  const [editarFacturaModal,setEditarFacturaModal]=useState(null);
+  const [confirmarBorrarFacturaModal,setConfirmarBorrarFacturaModal]=useState(null);
   const billMonth=selMonth;
   const billYear=selYear;
   const pendingContracts=contracts.filter(ct=>{
@@ -2672,6 +2803,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
   });
   const monthInvoicesBase=invoices.filter(i=>i.month===billMonth&&i.year===billYear);
   const monthInvoices=monthInvoicesBase.filter(i=>{
+    if(!mostrarOcultas && i.oculta === true) return false;
     if(ocultarAnuladas && i.estado === "Anulada") return false;
     if(filtroCliente && i.clientId!==filtroCliente) return false;
     if(filtroEstado && i.estado!==filtroEstado) return false;
@@ -2973,6 +3105,65 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
     setModalCobro(null);
   };
 
+  // ── v3.5: Editar factura pendiente de aprobación ──────────────
+  const guardarEdicionFactura = async (datos) => {
+    if (!editarFacturaModal) return;
+    const inv = editarFacturaModal;
+    const neto = parseFloat(datos.neto) || 0;
+    const iva = inv.tipoFactura === "A" ? +(neto * 0.105).toFixed(2) : +(neto * 0.105).toFixed(2);
+    const total = +(neto + iva).toFixed(2);
+
+    const updates = {
+      detalle: datos.detalle,
+      neto: neto,
+      iva: iva,
+      total: total,
+    };
+    const { error } = await supabase.from("facturas").update(updates).eq("id", inv.id);
+    if (error) {
+      alert(`❌ Error al guardar: ${error.message}`);
+      return;
+    }
+    setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, ...updates } : i));
+    setEditarFacturaModal(null);
+    alert("✓ Factura actualizada.");
+  };
+
+  // ── v3.5: Borrar factura (solo Borrador o Pendiente aprobación) ──
+  const borrarFactura = async (inv) => {
+    if (inv.estado !== "Borrador" && inv.estado !== "Pendiente aprobación") {
+      alert("Solo se pueden borrar facturas en Borrador o Pendiente aprobación.");
+      return;
+    }
+    const { error } = await supabase.from("facturas").delete().eq("id", inv.id);
+    if (error) {
+      alert(`❌ Error al borrar: ${error.message}`);
+      return;
+    }
+    setInvoices(prev => prev.filter(i => i.id !== inv.id));
+    setConfirmarBorrarFacturaModal(null);
+    alert("✓ Factura eliminada.");
+  };
+
+  // ── v3.5: Ocultar/mostrar factura emitida ──────────────────────
+  const toggleOcultarFactura = async (inv) => {
+    const nuevoEstado = !inv.oculta;
+    const { error } = await supabase.from("facturas").update({ oculta: nuevoEstado }).eq("id", inv.id);
+    if (error) {
+      alert(`❌ Error: ${error.message}`);
+      return;
+    }
+    setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, oculta: nuevoEstado } : i));
+  };
+
+  // Helper: ¿puede editar/borrar esta factura?
+  const puedeEditarOBorrar = (inv) => {
+    if (inv.estado !== "Pendiente aprobación" && inv.estado !== "Borrador") return false;
+    if (currentUser.role === "webmaster") return true;
+    if (inv.creado_por === currentUser.id) return true;
+    return false;
+  };
+
   return(
     <div className="space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
@@ -3066,6 +3257,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
           </select>
           <select value={filtroEstado} onChange={e=>setFiltroEstado(e.target.value)} className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none">
             <option value="">Todos los estados</option>
+            <option value="Pendiente aprobación">⏳ Pendiente aprobación</option>
             <option value="Emitida">Emitida</option>
             <option value="Pagada">Pagada</option>
             <option value="Borrador">Borrador</option>
@@ -3087,6 +3279,20 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
               <span className="text-gray-400">({monthInvoicesBase.filter(i=>i.estado==="Anulada").length})</span>
             )}
           </label>
+          {currentUser?.role === "webmaster" && (
+            <label className="flex items-center gap-1.5 px-2 py-1.5 text-xs cursor-pointer select-none hover:bg-gray-50 rounded-lg" title="Mostrar facturas que fueron ocultadas">
+              <input
+                type="checkbox"
+                checked={mostrarOcultas}
+                onChange={e=>setMostrarOcultas(e.target.checked)}
+                className="cursor-pointer"
+              />
+              <span className="text-gray-600">Ver ocultas</span>
+              {monthInvoicesBase.filter(i=>i.oculta===true).length>0 && (
+                <span className="text-gray-400">({monthInvoicesBase.filter(i=>i.oculta===true).length})</span>
+              )}
+            </label>
+          )}
           {(filtroCliente||filtroEstado||filtroEmail||filtroBusqueda)&&<button onClick={()=>{setFiltroCliente("");setFiltroEstado("");setFiltroEmail("");setFiltroBusqueda("");}} className="px-2 py-1.5 text-xs text-red-500 hover:bg-red-50 rounded-lg">✕ Limpiar</button>}
         </div>
         <div className="overflow-x-auto">
@@ -3096,8 +3302,11 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
             </thead>
             <tbody>
               {monthInvoices.map(inv=>(
-                <tr key={inv.id} className={`border-b border-gray-50 hover:bg-gray-50 ${inv.estado === "Anulada" ? "opacity-60 line-through" : ""}`}>
-                  <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">{inv.fecha ? `${inv.fecha.slice(6,8)}/${inv.fecha.slice(4,6)}/${inv.fecha.slice(0,4)}` : fmtDate(inv.month && inv.year ? `${inv.year}-${String(inv.month).padStart(2,"0")}-01` : "")}</td>
+                <tr key={inv.id} className={`border-b border-gray-50 hover:bg-gray-50 ${inv.estado === "Anulada" ? "opacity-60 line-through" : ""} ${inv.oculta ? "opacity-50" : ""}`}>
+                  <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">
+                    {inv.fecha ? `${inv.fecha.slice(6,8)}/${inv.fecha.slice(4,6)}/${inv.fecha.slice(0,4)}` : fmtDate(inv.month && inv.year ? `${inv.year}-${String(inv.month).padStart(2,"0")}-01` : "")}
+                    {inv.oculta && <span className="ml-1 text-[9px] text-gray-400">(oculta)</span>}
+                  </td>
                   <td className="px-3 py-2.5 font-mono text-xs">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span>{inv.numero}</span>
@@ -3156,16 +3365,42 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
                     </button>
                   </td>
                   <td className="px-3 py-2.5">
-                    {canEdit && inv.cae && inv.estado === "Emitida" && !inv.nc_id && (
-                      <button
-                        onClick={()=>setNcModal(inv)}
-                        title="Anular con nota de crédito"
-                        className="text-gray-400 hover:text-red-600"
-                      ><Icon d={Icons.creditNote} size={14}/></button>
-                    )}
-                    {inv.estado === "Anulada" && (
-                      <span className="text-xs text-red-600 font-semibold no-underline" style={{textDecoration:"none"}}>NC</span>
-                    )}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {canEdit && inv.cae && inv.estado === "Emitida" && !inv.nc_id && (
+                        <button
+                          onClick={()=>setNcModal(inv)}
+                          title="Anular con nota de crédito"
+                          className="text-gray-400 hover:text-red-600"
+                        ><Icon d={Icons.creditNote} size={14}/></button>
+                      )}
+                      {inv.estado === "Anulada" && (
+                        <span className="text-xs text-red-600 font-semibold no-underline" style={{textDecoration:"none"}}>NC</span>
+                      )}
+                      {/* v3.5: Editar factura pendiente */}
+                      {puedeEditarOBorrar(inv) && inv.estado === "Pendiente aprobación" && (
+                        <button
+                          onClick={()=>setEditarFacturaModal(inv)}
+                          title="Editar factura pendiente"
+                          className="text-gray-400 hover:text-blue-600"
+                        >✏️</button>
+                      )}
+                      {/* v3.5: Borrar factura en Borrador o Pendiente */}
+                      {puedeEditarOBorrar(inv) && (
+                        <button
+                          onClick={()=>setConfirmarBorrarFacturaModal(inv)}
+                          title={`Borrar factura ${inv.estado}`}
+                          className="text-gray-400 hover:text-red-600"
+                        >🗑️</button>
+                      )}
+                      {/* v3.5: Ocultar/mostrar emitida (no borra, solo oculta del listado) */}
+                      {currentUser.role === "webmaster" && (inv.estado === "Emitida" || inv.estado === "Pagada") && (
+                        <button
+                          onClick={()=>toggleOcultarFactura(inv)}
+                          title={inv.oculta ? "Mostrar en listado" : "Ocultar del listado"}
+                          className="text-gray-400 hover:text-purple-600 text-xs"
+                        >{inv.oculta ? "👁️" : "🚫"}</button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -3185,6 +3420,61 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
         onToggleActive={toggleActiveContract}
         onEmitirIndividual={emitirFacturaIndividual}
       />}
+
+      {/* v3.5: Modal de edición de factura pendiente */}
+      {editarFacturaModal && (
+        <Modal title={`Editar factura pendiente — ${editarFacturaModal.clientName}`} onClose={()=>setEditarFacturaModal(null)}>
+          <div className="space-y-3">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+              <p className="font-semibold mb-1">⚠️ Factura en estado "Pendiente aprobación"</p>
+              <p>Al guardar, sigue siendo pendiente. El webmaster debe aprobarla para que se emita a ARCA.</p>
+            </div>
+            <Field
+              label="Detalle"
+              value={editarFacturaModal.detalle}
+              onChange={(e)=>setEditarFacturaModal(p=>({...p, detalle: e.target.value}))}
+            />
+            <Field
+              label="Monto neto"
+              type="number"
+              value={editarFacturaModal.neto}
+              onChange={(e)=>setEditarFacturaModal(p=>({...p, neto: e.target.value}))}
+            />
+            <div className="text-xs text-gray-500">
+              IVA 10.5% calculado automáticamente. Total: ${(parseFloat(editarFacturaModal.neto||0) * 1.105).toLocaleString("es-AR",{minimumFractionDigits:2})}
+            </div>
+            <ModalFooter
+              onClose={()=>setEditarFacturaModal(null)}
+              onSave={()=>guardarEdicionFactura(editarFacturaModal)}
+              saveLabel="Guardar cambios"
+            />
+          </div>
+        </Modal>
+      )}
+
+      {/* v3.5: Modal de confirmación de borrado */}
+      {confirmarBorrarFacturaModal && (
+        <Modal title="¿Borrar factura?" onClose={()=>setConfirmarBorrarFacturaModal(null)}>
+          <div className="space-y-3">
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-800">
+              <p className="font-semibold mb-1">⚠️ Esta acción no se puede deshacer</p>
+              <p className="text-xs">La factura será eliminada permanentemente de la base de datos.</p>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3 text-sm">
+              <div className="grid grid-cols-2 gap-1 text-xs">
+                <span className="text-gray-500">Cliente:</span><span className="font-medium">{confirmarBorrarFacturaModal.clientName}</span>
+                <span className="text-gray-500">Estado:</span><span className="font-medium">{confirmarBorrarFacturaModal.estado}</span>
+                <span className="text-gray-500">Total:</span><span className="font-medium">${Number(confirmarBorrarFacturaModal.total||0).toLocaleString("es-AR",{minimumFractionDigits:2})}</span>
+                <span className="text-gray-500">Detalle:</span><span className="font-medium">{confirmarBorrarFacturaModal.detalle?.slice(0,40)}</span>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={()=>setConfirmarBorrarFacturaModal(null)} className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200">Cancelar</button>
+              <button onClick={()=>borrarFactura(confirmarBorrarFacturaModal)} className="flex-1 px-4 py-2 text-sm font-semibold text-white bg-red-600 rounded-lg hover:bg-red-700">Sí, borrar</button>
+            </div>
+          </div>
+        </Modal>
+      )}
       {editContractModal && (
         <ContractModal
           data={editContractModal}
@@ -4011,7 +4301,20 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
   const [confirmDelete, setConfirmDelete] = useState(null);
   const isWebmaster = currentUser?.role === "webmaster";
 
-  const empty={descripcion:"",categoria:"Gastos Fijos",monto:"",fecha:todayStr(),proveedor:"",comprobante:"",url_comprobante:"",pagado:true,notas:"",es_tarjeta:false,tarjeta_id:"",socio:""};
+  const empty={descripcion:"",categoria:"Gastos Fijos",subcategoria:"",monto:"",fecha:todayStr(),proveedor:"",comprobante:"",url_comprobante:"",pagado:true,notas:"",es_tarjeta:false,tarjeta_id:"",socio:""};
+  
+  // v3.5: Sub-categorías sugeridas según la categoría principal
+  const SUBCATEGORIAS_SUGERIDAS = {
+    "Gastos bancarios": ["Impuesto Ley 25.413", "Comisión bancaria", "IVA bancario", "Consolidado mensual", "Mantenimiento de cuenta"],
+    "Impuestos": ["IIBB", "Ganancias", "Monotributo", "IVA", "Cargas sociales", "Otros impuestos"],
+    "Sueldos": ["Sueldo mensual", "Aguinaldo", "Vacaciones", "Bonificación", "Adelanto"],
+    "Gastos Fijos": ["Alquiler", "Servicios", "Internet", "Luz", "Gas", "Agua", "Teléfono", "Contador"],
+    "Gastos Variables": ["Combustible", "Viáticos", "Mantenimiento", "Reparaciones", "Insumos"],
+    "Compras": ["Equipamiento", "Software", "Materiales", "Insumos de oficina"],
+    "Gastos Externos": ["Marketing", "Publicidad", "Eventos", "Consultoría"],
+    "Proveedores": ["Servicios técnicos", "Hosting", "Otros servicios"],
+    "Otros": [],
+  };
   
   const filtered=expenses.filter(e=>{
     const d=new Date(e.fecha);
@@ -4032,6 +4335,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
     const payload = {
       descripcion:      d.descripcion,
       categoria:        d.categoria,
+      subcategoria:     d.subcategoria || null,
       monto:            d.monto,
       fecha:            d.fecha,
       proveedor:        d.proveedor || null,
@@ -4200,7 +4504,12 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
               <tr key={e.id} className={`border-b border-gray-50 hover:bg-gray-50 ${e.es_tarjeta ? "bg-blue-50" : ""}`}>
                 <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">{fmtDate(e.fecha)}</td>
                 <td className="px-3 py-2.5 text-xs font-medium">{e.descripcion}</td>
-                <td className="px-3 py-2.5"><span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-xs">{e.categoria}</span></td>
+                <td className="px-3 py-2.5">
+                  <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-xs">{e.categoria}</span>
+                  {e.subcategoria && (
+                    <div className="text-[10px] text-gray-400 mt-0.5 italic">{e.subcategoria}</div>
+                  )}
+                </td>
                 <td className="px-3 py-2.5 text-xs text-gray-500">
                   {e.es_tarjeta ? (
                     <div className="flex flex-col gap-0.5">
@@ -4321,9 +4630,30 @@ function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[],tarjetas
         <div className="col-span-2"><Field label="Descripción" value={form.descripcion} onChange={f("descripcion")}/></div>
         <div>
           <label className="text-xs font-medium text-gray-600">Categoría</label>
-          <select value={form.categoria} onChange={f("categoria")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+          <select value={form.categoria} onChange={(e)=>{
+            const newCat = e.target.value;
+            // Si cambias categoría, limpiar subcategoría
+            setForm(p=>({...p, categoria: newCat, subcategoria: ""}));
+          }} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
             {EXPENSE_CATS.map(c=><option key={c}>{c}</option>)}
           </select>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600">Sub-categoría <span className="text-gray-400">(opcional)</span></label>
+          <input
+            list={`subcats-${form.categoria}`}
+            value={form.subcategoria || ""}
+            onChange={f("subcategoria")}
+            placeholder={SUBCATEGORIAS_SUGERIDAS[form.categoria]?.[0] || "Ej: específica del gasto"}
+            className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"
+          />
+          {SUBCATEGORIAS_SUGERIDAS[form.categoria]?.length > 0 && (
+            <datalist id={`subcats-${form.categoria}`}>
+              {SUBCATEGORIAS_SUGERIDAS[form.categoria].map(sc => (
+                <option key={sc} value={sc} />
+              ))}
+            </datalist>
+          )}
         </div>
         <Field label="Monto ($)" value={form.monto} onChange={f("monto")} type="number"/>
         <Field label="Fecha" value={form.fecha} onChange={f("fecha")} type="date"/>
@@ -5185,13 +5515,13 @@ function EmitirNCModal({ factura, cliente, onClose, onConfirm }) {
   );
 }
 
-function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBancarios,saldosIniciales=[],cuentasBancarias=[],setCuentasBancarias}){
+function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBancarios,saldosIniciales=[],cuentasBancarias=[],setCuentasBancarias,setPage,setClientePreFiltro}){
   const today=new Date();
   const [fMonth,setFMonth]=useState(String(today.getMonth()+1));
   const [fYear,setFYear]=useState(String(today.getFullYear()));
   const [modalCuentas,setModalCuentas]=useState(false);
   const [modalMovEfectivo,setModalMovEfectivo]=useState(false);
-  const [mostrarMontos,setMostrarMontos]=useState(true);
+  const [mostrarMontos,setMostrarMontos]=useState(false);
   const [modalPDF,setModalPDF]=useState(false);
   
   // Helper: formatear monto respetando si está oculto
@@ -5531,7 +5861,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
           <p className="text-sm font-medium text-gray-700">TOTAL gastos del período:</p>
           <p className="text-2xl font-bold text-red-600">{fmt(totGastos)}</p>
         </div>
-        <p className="text-xs text-gray-400 mt-1">* Incluye gastos operativos + impuestos pagados + impuestos bancarios. NO incluye IVA ni IIBB (se muestran abajo)</p>
+        <p className="text-xs text-gray-400 mt-1">💡 Suma los gastos operativos + gastos bancarios + impuestos pagados (del mes anterior). El IVA y el IIBB del mes corriente se pagan el mes entrante.</p>
       </div>
 
       {/* ══════════════════════════════════════════ */}
@@ -5615,7 +5945,10 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
                   {tieneDeuda && (
                     <>
                       <button 
-                        onClick={() => alert("Ver facturas de " + c.razonSocial + " - Implementar navegación a Facturación")}
+                        onClick={() => {
+                          if (typeof setClientePreFiltro === "function") setClientePreFiltro(c.id);
+                          if (typeof setPage === "function") setPage("billing");
+                        }}
                         className="px-2 py-1 bg-blue-50 text-blue-600 rounded text-xs hover:bg-blue-100 border border-blue-200"
                         title="Ver facturas pendientes"
                       >
@@ -6332,7 +6665,13 @@ function Field({label,value,onChange,type="text",placeholder="",onKeyDown}){
 }
 
 function EstadoBadge({estado}){
-  const colors={Borrador:"bg-gray-100 text-gray-600",Emitida:"bg-blue-50 text-blue-700",Pagada:"bg-green-50 text-green-700"};
+  const colors={
+    "Borrador":"bg-gray-100 text-gray-600",
+    "Pendiente aprobación":"bg-amber-100 text-amber-800 border border-amber-300",
+    "Emitida":"bg-blue-50 text-blue-700",
+    "Pagada":"bg-green-50 text-green-700",
+    "Anulada":"bg-red-50 text-red-700",
+  };
   return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${colors[estado]||"bg-gray-100 text-gray-600"}`}>{estado}</span>;
 }
 
