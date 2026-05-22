@@ -42,6 +42,19 @@ const DEBUG_MODE = false; // Cambiar a false para emitir facturas reales a ARCA
 const MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const EXPENSE_CATS = ["Sueldos","Compras","Gastos Fijos","Gastos Variables","Gastos Externos","Proveedores","Impuestos","Gastos bancarios","Otros"];
 
+// v3.5: Sub-categorías sugeridas según la categoría principal (global para ambos componentes)
+const SUBCATEGORIAS_SUGERIDAS = {
+  "Gastos bancarios": ["Impuesto Ley 25.413", "Comisión bancaria", "IVA bancario", "Consolidado mensual", "Mantenimiento de cuenta"],
+  "Impuestos": ["IIBB", "Ganancias", "Monotributo", "IVA", "Cargas sociales", "Otros impuestos"],
+  "Sueldos": ["Sueldo mensual", "Aguinaldo", "Vacaciones", "Bonificación", "Adelanto"],
+  "Gastos Fijos": ["Alquiler", "Servicios", "Internet", "Luz", "Gas", "Agua", "Teléfono", "Contador"],
+  "Gastos Variables": ["Combustible", "Viáticos", "Mantenimiento", "Reparaciones", "Insumos"],
+  "Compras": ["Equipamiento", "Software", "Materiales", "Insumos de oficina"],
+  "Gastos Externos": ["Marketing", "Publicidad", "Eventos", "Consultoría"],
+  "Proveedores": ["Servicios técnicos", "Hosting", "Otros servicios"],
+  "Otros": [],
+};
+
 function fmtMoney(n) {
   return new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:0}).format(n||0);
 }
@@ -393,7 +406,31 @@ export default function App() {
   const [cuentasBancarias, setCuentasBancarias] = useState([]);
   const [tarjetasCredito, setTarjetasCredito] = useState([]);
   const [notifications, setNotifications] = useState([]);
-  const [page, setPage] = useState("finance");
+
+  // v3.5: Navegación con History API (botón Atrás/Adelante del navegador)
+  const getInitialPage = () => {
+    const hash = window.location.hash.replace("#", "");
+    const validPages = ["finance","clients","contracts","billing","factura-directa","notas-credito","aprobaciones","expenses","proveedores","users","settings"];
+    return validPages.includes(hash) ? hash : "finance";
+  };
+  const [page, setPageState] = useState(getInitialPage);
+
+  const setPage = useCallback((newPage) => {
+    setPageState(newPage);
+    window.history.pushState({ page: newPage }, "", `#${newPage}`);
+  }, []);
+
+  useEffect(() => {
+    const handlePopState = (e) => {
+      const pg = e.state?.page || window.location.hash.replace("#","") || "finance";
+      setPageState(pg);
+    };
+    window.addEventListener("popstate", handlePopState);
+    // Setear el hash inicial sin agregar al historial
+    window.history.replaceState({ page: getInitialPage() }, "", `#${getInitialPage()}`);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
   // v3.5: pre-filtro de cliente para Billing (al navegar desde Finanzas → "Ver facturas de X")
   const [clientePreFiltro, setClientePreFiltro] = useState("");
   const [config, setConfig] = useState({
@@ -976,6 +1013,7 @@ export default function App() {
         id:              g.id,
         descripcion:     g.descripcion || "",
         categoria:       g.categoria || "Otros",
+        subcategoria:    g.subcategoria || "",
         monto:           parseFloat(g.monto) || 0,
         fecha:           g.fecha || "",
         proveedor:       g.proveedor || "",
@@ -4299,22 +4337,10 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
   const [fSearch,setFSearch]=useState("");
   const [fTipo,setFTipo]=useState(""); // "todos", "normales", "tarjetas"
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [descargandoPDF, setDescargandoPDF] = useState(false);
   const isWebmaster = currentUser?.role === "webmaster";
 
   const empty={descripcion:"",categoria:"Gastos Fijos",subcategoria:"",monto:"",fecha:todayStr(),proveedor:"",comprobante:"",url_comprobante:"",pagado:true,notas:"",es_tarjeta:false,tarjeta_id:"",socio:""};
-  
-  // v3.5: Sub-categorías sugeridas según la categoría principal
-  const SUBCATEGORIAS_SUGERIDAS = {
-    "Gastos bancarios": ["Impuesto Ley 25.413", "Comisión bancaria", "IVA bancario", "Consolidado mensual", "Mantenimiento de cuenta"],
-    "Impuestos": ["IIBB", "Ganancias", "Monotributo", "IVA", "Cargas sociales", "Otros impuestos"],
-    "Sueldos": ["Sueldo mensual", "Aguinaldo", "Vacaciones", "Bonificación", "Adelanto"],
-    "Gastos Fijos": ["Alquiler", "Servicios", "Internet", "Luz", "Gas", "Agua", "Teléfono", "Contador"],
-    "Gastos Variables": ["Combustible", "Viáticos", "Mantenimiento", "Reparaciones", "Insumos"],
-    "Compras": ["Equipamiento", "Software", "Materiales", "Insumos de oficina"],
-    "Gastos Externos": ["Marketing", "Publicidad", "Eventos", "Consultoría"],
-    "Proveedores": ["Servicios técnicos", "Hosting", "Otros servicios"],
-    "Otros": [],
-  };
   
   const filtered=expenses.filter(e=>{
     const d=new Date(e.fecha);
@@ -4326,6 +4352,63 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
     const matchTipo = fTipo === "" || (fTipo === "normales" && !e.es_tarjeta) || (fTipo === "tarjetas" && e.es_tarjeta);
     return matchMes&&matchAnio&&matchCat&&matchSearch&&matchTipo;
   });
+
+  // v3.5 — Descargar PDF de gastos vía backend Railway
+  const descargarPDFGastos = async () => {
+    if (filtered.length === 0) { alert("No hay gastos para exportar con el filtro actual."); return; }
+    setDescargandoPDF(true);
+    try {
+      const mesNombre = MONTHS[Number(fMonth)-1] || "Todos";
+      const payload = {
+        periodo: fMonth && fYear ? `${mesNombre} ${fYear}` : "Todos los períodos",
+        filtro_categoria: fCat || "Todas las categorías",
+        gastos: filtered.map(e => ({
+          fecha:        e.fecha,
+          descripcion:  e.descripcion,
+          categoria:    e.categoria,
+          subcategoria: e.subcategoria || "",
+          proveedor:    e.proveedor || "",
+          comprobante:  e.comprobante || "",
+          monto:        e.monto,
+          monto_iva:    e.monto_iva || 0,
+          pagado:       e.pagado,
+          es_tarjeta:   e.es_tarjeta || false,
+        })),
+        // Totales por categoría para el resumen
+        totales_por_categoria: EXPENSE_CATS.map(cat => ({
+          categoria: cat,
+          total: filtered.filter(e => e.categoria === cat).reduce((s,e) => s + e.monto, 0),
+          cantidad: filtered.filter(e => e.categoria === cat).length,
+        })).filter(x => x.total > 0),
+        total_general: filtered.reduce((s,e) => s + e.monto, 0),
+        empresa: "La Vanguardia Noticias",
+        generado_en: new Date().toLocaleDateString("es-AR", {day:"2-digit",month:"long",year:"numeric"}),
+      };
+
+      const res = await fetch(`${BACKEND_URL}/pdf-gastos`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Error ${res.status}`);
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `gastos_${fMonth ? MONTHS[Number(fMonth)-1]?.toLowerCase() : "todos"}_${fYear || new Date().getFullYear()}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(`❌ Error al generar PDF: ${e.message}\n\nAsegurate de que el backend de Railway esté activo.`);
+    } finally {
+      setDescargandoPDF(false);
+    }
+  };
 
   const [saving, setSaving] = useState(false);
   
@@ -4460,6 +4543,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
         {canEdit&&<>
           <button onClick={()=>setModalTarjetas(true)} className="flex items-center gap-2 bg-blue-50 border border-blue-300 text-blue-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-blue-100 ml-auto"><Icon d={Icons.card} size={14}/>Tarjetas</button>
           <button onClick={()=>setModalPlantillas(true)} className="flex items-center gap-2 bg-white border border-gray-300 text-gray-600 px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-50"><Icon d={Icons.settings} size={14}/>Plantillas</button>
+          <button onClick={descargarPDFGastos} disabled={descargandoPDF} className="flex items-center gap-2 bg-emerald-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50"><Icon d={Icons.pdf} size={14}/>{descargandoPDF ? "Generando..." : "Descargar PDF"}</button>
           <button onClick={()=>setModal(empty)} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"><Icon d={Icons.plus} size={14}/>Nuevo gasto</button>
         </>}
         {isWebmaster&&filtered.length>0&&(
@@ -4641,19 +4725,17 @@ function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[],tarjetas
         <div>
           <label className="text-xs font-medium text-gray-600">Sub-categoría <span className="text-gray-400">(opcional)</span></label>
           <input
-            list={`subcats-${form.categoria}`}
+            list={`subcats-list`}
             value={form.subcategoria || ""}
             onChange={f("subcategoria")}
-            placeholder={SUBCATEGORIAS_SUGERIDAS[form.categoria]?.[0] || "Ej: específica del gasto"}
+            placeholder={(SUBCATEGORIAS_SUGERIDAS[form.categoria] || [])[0] || "Ej: específica del gasto"}
             className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"
           />
-          {SUBCATEGORIAS_SUGERIDAS[form.categoria]?.length > 0 && (
-            <datalist id={`subcats-${form.categoria}`}>
-              {SUBCATEGORIAS_SUGERIDAS[form.categoria].map(sc => (
-                <option key={sc} value={sc} />
-              ))}
-            </datalist>
-          )}
+          <datalist id="subcats-list">
+            {(SUBCATEGORIAS_SUGERIDAS[form.categoria] || []).map((sc, idx) => (
+              <option key={idx} value={sc} />
+            ))}
+          </datalist>
         </div>
         <Field label="Monto ($)" value={form.monto} onChange={f("monto")} type="number"/>
         <Field label="Fecha" value={form.fecha} onChange={f("fecha")} type="date"/>
