@@ -2887,6 +2887,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
   // v3.5: state para modales de edición y borrado de facturas pendientes
   const [editarFacturaModal,setEditarFacturaModal]=useState(null);
   const [confirmarBorrarFacturaModal,setConfirmarBorrarFacturaModal]=useState(null);
+  const [invDetalleModal,setInvDetalleModal]=useState(null);
   const billMonth=selMonth;
   const billYear=selYear;
   const pendingContracts=contracts.filter(ct=>{
@@ -3521,7 +3522,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
               ?`${inv.fecha.slice(6,8)}/${inv.fecha.slice(4,6)}/${inv.fecha.slice(0,4)}`
               :fmtDate(inv.month&&inv.year?`${inv.year}-${String(inv.month).padStart(2,"0")}-01`:"");
             return(
-              <div key={inv.id} className={`bg-white border border-gray-200 border-l-4 ${borderColor} rounded-lg p-3 shadow-sm ${inv.estado==="Anulada"?"opacity-60":""} ${inv.oculta?"opacity-50":""}`}>
+              <div key={inv.id} onClick={()=>setInvDetalleModal(inv)} className={`bg-white border border-gray-200 border-l-4 ${borderColor} rounded-lg p-3 shadow-sm cursor-pointer hover:bg-gray-50 transition-colors ${inv.estado==="Anulada"?"opacity-60":""} ${inv.oculta?"opacity-50":""}`}>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-500">{fecha}</span>
                   <span className="font-bold text-gray-900">{fmtMoney(inv.neto)}</span>
@@ -3693,6 +3694,74 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
           }}
         />
       )}
+
+      {/* Modal detalle de factura — mobile */}
+      {invDetalleModal&&(()=>{
+        const inv=invDetalleModal;
+        const cli=clients.find(c=>c.id===inv.clientId);
+        const fecha=inv.fecha
+          ?`${inv.fecha.slice(6,8)}/${inv.fecha.slice(4,6)}/${inv.fecha.slice(0,4)}`
+          :fmtDate(inv.month&&inv.year?`${inv.year}-${String(inv.month).padStart(2,"0")}-01`:"");
+        const cerrar=()=>setInvDetalleModal(null);
+        return(
+          <Modal title={`Factura ${inv.numero||"—"}`} onClose={cerrar}>
+            <div className="space-y-4">
+              <div className="bg-gray-50 rounded-lg p-3 space-y-1.5 text-sm">
+                <div className="flex justify-between"><span className="text-gray-500">Cliente</span><span className="font-semibold text-right">{inv.clientName}</span></div>
+                {cli?.alias&&<div className="flex justify-between"><span className="text-gray-500">Alias</span><span className="text-gray-600">{cli.alias}</span></div>}
+                <div className="flex justify-between"><span className="text-gray-500">Fecha</span><span>{fecha}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Neto</span><span>{fmtMoney(inv.neto)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">IVA</span><span className="text-orange-600">{fmtMoney(inv.iva)}</span></div>
+                <div className="flex justify-between items-center"><span className="text-gray-500">Total</span><span className="font-bold text-base">{fmtMoney(inv.total)}</span></div>
+                <div className="flex justify-between items-center"><span className="text-gray-500">Estado</span><EstadoBadge estado={inv.estado}/></div>
+                {inv.cae&&<div className="flex justify-between"><span className="text-gray-500">CAE</span><span className="font-mono text-xs text-gray-400">{inv.cae}</span></div>}
+              </div>
+              <div className="space-y-2">
+                {inv.cae&&(
+                  <button onClick={()=>{descargarPDF(inv);cerrar();}}
+                    className="w-full flex items-center gap-3 px-4 py-3 bg-red-50 text-red-700 rounded-lg text-sm font-medium hover:bg-red-100 transition-colors">
+                    <Icon d={Icons.pdf} size={16}/>Descargar PDF
+                  </button>
+                )}
+                <button onClick={()=>{setEmailModal(inv);cerrar();}}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${inv.emailEnviado?"bg-green-50 text-green-700 hover:bg-green-100":"bg-blue-50 text-blue-700 hover:bg-blue-100"}`}>
+                  <Icon d={Icons.mail} size={16}/>{inv.emailEnviado?"Reenviar por email":"Enviar por email"}
+                </button>
+                {canEdit&&inv.estado==="Emitida"&&inv.cae&&(
+                  <button onClick={()=>{setModalCobro(inv);cerrar();}}
+                    className="w-full flex items-center gap-3 px-4 py-3 bg-green-50 text-green-700 rounded-lg text-sm font-medium hover:bg-green-100 transition-colors">
+                    <Icon d={Icons.cash} size={16}/>Marcar como cobrada
+                  </button>
+                )}
+                {canEdit&&inv.cae&&inv.estado==="Emitida"&&!inv.nc_id&&(
+                  <button onClick={()=>{setNcModal(inv);cerrar();}}
+                    className="w-full flex items-center gap-3 px-4 py-3 bg-orange-50 text-orange-700 rounded-lg text-sm font-medium hover:bg-orange-100 transition-colors">
+                    <Icon d={Icons.creditNote} size={16}/>Anular con nota de crédito
+                  </button>
+                )}
+                {puedeEditarOBorrar(inv)&&inv.estado==="Pendiente aprobación"&&(
+                  <button onClick={()=>{setEditarFacturaModal(inv);cerrar();}}
+                    className="w-full flex items-center gap-3 px-4 py-3 bg-amber-50 text-amber-700 rounded-lg text-sm font-medium hover:bg-amber-100 transition-colors">
+                    <Icon d={Icons.edit} size={16}/>Editar factura pendiente
+                  </button>
+                )}
+                {puedeEditarOBorrar(inv)&&(
+                  <button onClick={()=>{setConfirmarBorrarFacturaModal(inv);cerrar();}}
+                    className="w-full flex items-center gap-3 px-4 py-3 bg-red-50 text-red-700 rounded-lg text-sm font-medium hover:bg-red-100 transition-colors">
+                    <Icon d={Icons.trash} size={16}/>Borrar factura
+                  </button>
+                )}
+                {currentUser.role==="webmaster"&&(inv.estado==="Emitida"||inv.estado==="Pagada")&&(
+                  <button onClick={()=>{toggleOcultarFactura(inv);cerrar();}}
+                    className="w-full flex items-center gap-3 px-4 py-3 bg-gray-50 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-100 transition-colors">
+                    {inv.oculta?"👁️ Mostrar en listado":"🚫 Ocultar del listado"}
+                  </button>
+                )}
+              </div>
+            </div>
+          </Modal>
+        );
+      })()}
     </div>
   );
 }
@@ -4600,6 +4669,15 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
   };
 
   const totFiltered=filtered.reduce((s,e)=>s+e.monto,0);
+  const baseFiltered=expenses.filter(e=>{
+    const d=new Date(e.fecha);
+    const matchMes=!fMonth||d.getMonth()+1===Number(fMonth);
+    const matchAnio=!fYear||d.getFullYear()===Number(fYear);
+    const q=fSearch.toLowerCase();
+    const matchSearch=!fSearch||(e.descripcion||"").toLowerCase().includes(q)||(e.proveedor||"").toLowerCase().includes(q)||(e.categoria||"").toLowerCase().includes(q);
+    const matchTipo=fTipo===""||( fTipo==="normales"&&!e.es_tarjeta)||(fTipo==="tarjetas"&&e.es_tarjeta);
+    return matchMes&&matchAnio&&matchSearch&&matchTipo;
+  });
   const totPagado=filtered.filter(e=>e.pagado).reduce((s,e)=>s+e.monto,0);
   const totPendiente=filtered.filter(e=>!e.pagado).reduce((s,e)=>s+e.monto,0);
   
@@ -4609,7 +4687,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
     return { tarjeta: tarj, total };
   }).filter(x => x.total > 0);
 
-  const byCat=EXPENSE_CATS.map(cat=>({cat,total:filtered.filter(e=>e.categoria===cat).reduce((s,e)=>s+e.monto,0)})).filter(x=>x.total>0).sort((a,b)=>b.total-a.total);
+  const byCat=EXPENSE_CATS.map(cat=>({cat,total:baseFiltered.filter(e=>e.categoria===cat).reduce((s,e)=>s+e.monto,0)})).filter(x=>x.total>0).sort((a,b)=>b.total-a.total);
   
   return(
     <div className="space-y-4">
@@ -4673,7 +4751,16 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {byCat.map(x=>(<div key={x.cat} className="bg-white rounded-xl border border-gray-200 p-3"><p className="text-xs text-gray-500">{x.cat}</p><p className="text-lg font-bold text-red-600">{fmtMoney(x.total)}</p></div>))}
+        {byCat.map(x=>{
+          const isActive=fCat===x.cat;
+          return(
+            <div key={x.cat} onClick={()=>setFCat(isActive?"":x.cat)}
+              className={`rounded-xl p-3 cursor-pointer hover:opacity-90 transition-opacity ${isActive?"bg-red-50 border-2 border-red-500":"bg-white border border-gray-200"}`}>
+              <p className="text-xs text-gray-500">{x.cat}</p>
+              <p className={`text-lg font-bold ${isActive?"text-red-700":"text-red-600"}`}>{fmtMoney(x.total)}</p>
+            </div>
+          );
+        })}
         <div className="bg-red-50 border border-red-200 rounded-xl p-3"><p className="text-xs text-red-500 font-medium">✓ Pagado</p><p className="text-lg font-bold text-red-700">{fmtMoney(totPagado)}</p></div>
         {totPendiente>0&&<div className="bg-amber-50 border border-amber-200 rounded-xl p-3"><p className="text-xs text-amber-600 font-medium">⏳ Pendiente</p><p className="text-lg font-bold text-amber-700">{fmtMoney(totPendiente)}</p></div>}
       </div>
