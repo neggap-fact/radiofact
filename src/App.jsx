@@ -34,6 +34,7 @@ const Icons = {
   bank: "M3 21h18M5 21V10M10 21V10M14 21V10M19 21V10M2 10h20L12 3 2 10z",
   card: "M22 4H2a2 2 0 00-2 2v12a2 2 0 002 2h20a2 2 0 002-2V6a2 2 0 00-2-2zM2 10h22",
   add: "M12 5v14M5 12h14",
+  menu: "M3 12h18M3 6h18M3 18h18",
 };
 
 const BACKEND_URL = "https://radiofact-backend-production.up.railway.app";
@@ -414,10 +415,12 @@ export default function App() {
     return validPages.includes(hash) ? hash : "finance";
   };
   const [page, setPageState] = useState(getInitialPage);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const setPage = useCallback((newPage) => {
     setPageState(newPage);
     window.history.pushState({ page: newPage }, "", `#${newPage}`);
+    setSidebarOpen(false);
   }, []);
 
   useEffect(() => {
@@ -1226,7 +1229,11 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden" style={{fontFamily:"Inter,system-ui,sans-serif"}}>
-      <aside className="w-52 bg-white border-r border-gray-200 flex flex-col flex-shrink-0">
+      {sidebarOpen && (
+        <div className="fixed inset-0 bg-black/50 z-30 md:hidden" onClick={() => setSidebarOpen(false)} />
+      )}
+
+      <aside className={`fixed inset-y-0 left-0 z-40 w-52 bg-white border-r border-gray-200 flex flex-col flex-shrink-0 transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0 md:z-auto ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
         <div className="p-4 border-b border-gray-100">
           <div className="text-sm font-bold text-blue-700">📻 RadioFact</div>
           <div className="text-xs text-gray-400 mt-0.5">v3.5 — Seguridad+</div>
@@ -1259,9 +1266,14 @@ export default function App() {
         </div>
       </aside>
 
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between flex-shrink-0">
-          <h1 className="font-semibold text-gray-800 text-sm">{pages.find(p=>p.id===page)?.label}</h1>
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+        <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <button onClick={() => setSidebarOpen(true)} className="md:hidden p-1 text-gray-600 hover:text-gray-900 transition-colors">
+              <Icon d={Icons.menu} size={20}/>
+            </button>
+            <h1 className="font-semibold text-gray-800 text-sm">{pages.find(p=>p.id===page)?.label}</h1>
+          </div>
           <button onClick={()=>setPage("billing")} className="relative p-1">
             <Icon d={Icons.bell} size={19} className="text-gray-500 hover:text-blue-600"/>
             {unread>0&&<span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">{unread}</span>}
