@@ -3393,7 +3393,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
           )}
           {(filtroCliente||filtroEstado||filtroEmail||filtroBusqueda)&&<button onClick={()=>{setFiltroCliente("");setFiltroEstado("");setFiltroEmail("");setFiltroBusqueda("");}} className="px-2 py-1.5 text-xs text-red-500 hover:bg-red-50 rounded-lg">✕ Limpiar</button>}
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto hidden md:block">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>{["Fecha","Número","Cliente","Neto","IVA","Total","Estado","CAE","PDF","","NC"].map(h=><th key={h} className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>)}</tr>
@@ -3505,6 +3505,46 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
             </tbody>
           </table>
         </div>
+
+        {/* Mobile cards */}
+        <div className="md:hidden space-y-2 p-3">
+          {monthInvoices.map(inv=>{
+            const cli=clients.find(c=>c.id===inv.clientId);
+            const borderColor=inv.estado==="Emitida"||inv.estado==="Pagada"
+              ?"border-green-400"
+              :inv.estado==="Pendiente aprobación"
+              ?"border-amber-400"
+              :inv.estado==="Anulada"
+              ?"border-red-400"
+              :"border-gray-300";
+            const fecha=inv.fecha
+              ?`${inv.fecha.slice(6,8)}/${inv.fecha.slice(4,6)}/${inv.fecha.slice(0,4)}`
+              :fmtDate(inv.month&&inv.year?`${inv.year}-${String(inv.month).padStart(2,"0")}-01`:"");
+            return(
+              <div key={inv.id} className={`bg-white border border-gray-200 border-l-4 ${borderColor} rounded-lg p-3 shadow-sm ${inv.estado==="Anulada"?"opacity-60":""} ${inv.oculta?"opacity-50":""}`}>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-500">{fecha}</span>
+                  <span className="font-bold text-gray-900">{fmtMoney(inv.neto)}</span>
+                </div>
+                <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                  <span className="font-mono text-xs text-gray-600">{inv.numero}</span>
+                  {inv.origen==="manual_arca"&&(
+                    <span className="bg-purple-100 text-purple-700 text-[9px] font-sans font-semibold px-1.5 py-0.5 rounded uppercase">Manual ARCA</span>
+                  )}
+                  {inv.origen==="sync_arca"&&(
+                    <span className="bg-indigo-100 text-indigo-700 text-[9px] font-sans font-semibold px-1.5 py-0.5 rounded uppercase">Sync ARCA</span>
+                  )}
+                  <EstadoBadge estado={inv.estado}/>
+                </div>
+                <div className="mt-1.5">
+                  <div className="font-semibold text-gray-800 text-sm">{inv.clientName}</div>
+                  {cli?.alias&&<div className="text-xs text-gray-400">{cli.alias}</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
         {monthInvoices.length===0&&<div className="text-center py-8 text-gray-400 text-sm">Sin facturas para este período</div>}
       </div>
       {reviewModal&&<ReviewModal
