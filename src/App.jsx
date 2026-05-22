@@ -4672,14 +4672,14 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
         </div>
       )}
 
-      <div className="grid grid-cols-4 gap-3">
-        {byCat.map(x=>(<div key={x.cat} className="bg-white rounded-xl border border-gray-200 p-3"><p className="text-xs text-gray-400">{x.cat}</p><p className="font-bold text-sm text-red-600">{fmtMoney(x.total)}</p></div>))}
-        <div className="bg-red-50 border border-red-200 rounded-xl p-3"><p className="text-xs text-red-500 font-medium">✓ Pagado</p><p className="font-bold text-sm text-red-700">{fmtMoney(totPagado)}</p></div>
-        {totPendiente>0&&<div className="bg-amber-50 border border-amber-200 rounded-xl p-3"><p className="text-xs text-amber-600 font-medium">⏳ Pendiente</p><p className="font-bold text-sm text-amber-700">{fmtMoney(totPendiente)}</p></div>}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {byCat.map(x=>(<div key={x.cat} className="bg-white rounded-xl border border-gray-200 p-3"><p className="text-xs text-gray-500">{x.cat}</p><p className="text-lg font-bold text-red-600">{fmtMoney(x.total)}</p></div>))}
+        <div className="bg-red-50 border border-red-200 rounded-xl p-3"><p className="text-xs text-red-500 font-medium">✓ Pagado</p><p className="text-lg font-bold text-red-700">{fmtMoney(totPagado)}</p></div>
+        {totPendiente>0&&<div className="bg-amber-50 border border-amber-200 rounded-xl p-3"><p className="text-xs text-amber-600 font-medium">⏳ Pendiente</p><p className="text-lg font-bold text-amber-700">{fmtMoney(totPendiente)}</p></div>}
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <table className="w-full text-sm">
+        <table className="w-full text-sm hidden md:table">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>{["Fecha","Descripción","Categoría","Proveedor/Tarjeta","Comprobante","Monto","Estado",""].map(h=><th key={h} className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500">{h}</th>)}</tr>
           </thead>
@@ -4737,6 +4737,44 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
             ))}
           </tbody>
         </table>
+        {/* Mobile cards */}
+        <div className="md:hidden space-y-2 p-3">
+          {filtered.map(e=>{
+            const tarj=e.es_tarjeta?tarjetasCredito.find(t=>t.id===e.tarjeta_id):null;
+            return(
+              <div key={e.id} className={`border border-gray-200 rounded-lg p-3 shadow-sm ${e.es_tarjeta?"bg-blue-50 border-l-4 border-l-blue-400":"bg-white"}`}>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-500">{fmtDate(e.fecha)}</span>
+                  <span className="font-bold text-red-600">{fmtMoney(e.monto)}</span>
+                </div>
+                <div className="font-semibold text-gray-800 text-sm mt-1">{e.descripcion}</div>
+                <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                  <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-xs">{e.categoria}</span>
+                  {e.subcategoria&&<span className="text-xs text-gray-400 italic">{e.subcategoria}</span>}
+                </div>
+                <div className="text-xs text-gray-500 mt-1.5">
+                  {e.es_tarjeta
+                    ?<span className="font-medium text-blue-700">💳 {e.socio}{tarj?` — ${tarj.tipo_tarjeta} (${tarj.numero_ultimos_4})`:""}</span>
+                    :(e.proveedor||"—")
+                  }
+                </div>
+                <div className="flex items-center justify-between mt-2">
+                  {e.pagado
+                    ?<span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">✓ Pagado</span>
+                    :canEdit
+                      ?<button onClick={()=>togglePagado(e)} className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 font-medium">⏳ Pendiente</button>
+                      :<span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">⏳ Pendiente</span>
+                  }
+                  <div className="flex items-center gap-2">
+                    {canEdit&&<button onClick={()=>setModal(e)} className="text-gray-400 hover:text-blue-600" title="Editar"><Icon d={Icons.edit} size={14}/></button>}
+                    {canEdit&&<button onClick={()=>askDeleteOne(e)} className="text-gray-400 hover:text-red-600" title="Borrar"><Icon d={Icons.trash} size={14}/></button>}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
         {filtered.length===0&&<div className="text-center py-8 text-gray-400 text-sm">Sin gastos</div>}
       </div>
 
@@ -5248,7 +5286,7 @@ function ProveedoresPage({proveedores, setProveedores, canEdit}){
       )}
 
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <table className="w-full">
+        <table className="w-full hidden md:table">
           <thead className="bg-gray-50 border-b border-gray-100">
             <tr>
               <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Nombre</th>
@@ -5281,6 +5319,31 @@ function ProveedoresPage({proveedores, setProveedores, canEdit}){
             ))}
           </tbody>
         </table>
+
+        {/* Mobile cards */}
+        <div className="md:hidden space-y-2 p-3">
+          {filtered.length === 0 ? (
+            <p className="text-center text-sm text-gray-400 py-8">No hay proveedores</p>
+          ) : filtered.map(p => (
+            <div key={p.id} className="bg-white border border-gray-200 rounded-lg p-3 shadow-sm">
+              <div className="font-semibold text-gray-800 text-sm">{p.nombre}</div>
+              <div className="font-mono text-xs text-gray-500 whitespace-nowrap mt-0.5">{p.cuit || "—"}</div>
+              <div className="mt-1.5">
+                <span className="inline-block bg-gray-100 text-gray-700 text-xs px-2 py-0.5 rounded">{p.categoria || "—"}</span>
+              </div>
+              {canEdit && (
+                <div className="flex items-center gap-2 mt-2 pt-2 border-t border-gray-100">
+                  <button onClick={() => editar(p)} className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="Editar">
+                    <Icon d={Icons.edit} size={14}/>
+                  </button>
+                  <button onClick={() => borrar(p)} className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors" title="Borrar">
+                    <Icon d={Icons.trash} size={14}/>
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
