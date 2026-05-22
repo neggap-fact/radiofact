@@ -1557,7 +1557,7 @@ function Clients({clients,setClients,contracts,invoices,currentUser,canEdit,regi
         {canEdit&&<button onClick={()=>setModal(empty)} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"><Icon d={Icons.plus} size={14}/>Nuevo cliente</button>}
       </div>
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <table className="w-full text-sm">
+        <table className="w-full text-sm hidden md:table">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>{["Razón Social","CUIT","Condición IVA","Tipo","Email","Contratos","Estado",""].map(h=><th key={h} className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500">{h}</th>)}</tr>
           </thead>
@@ -1605,6 +1605,50 @@ function Clients({clients,setClients,contracts,invoices,currentUser,canEdit,regi
             ))}
           </tbody>
         </table>
+
+        {/* Mobile cards */}
+        <div className="md:hidden space-y-2 p-3">
+          {filtered.map(c=>(
+            <div key={c.id} className="bg-white border border-gray-200 rounded-lg p-3 shadow-sm">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold text-gray-900 text-base leading-tight truncate">
+                    {c.alias||c.razonSocial}
+                  </div>
+                  {c.alias&&<div className="text-xs text-gray-400 mt-0.5 truncate">{c.razonSocial}</div>}
+                  <div className="font-mono text-xs text-gray-500 whitespace-nowrap mt-1">{c.cuit}</div>
+                  <div className="mt-1.5">
+                    <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs">{c.condicionIVA}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  {c.email&&canEdit&&(
+                    <button onClick={()=>setEmailLibreModal(c)}
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-100 transition-colors"
+                      title={`Enviar email a ${c.razonSocial}`}>
+                      <Icon d={Icons.mail} size={16}/>
+                    </button>
+                  )}
+                  {canEdit&&(
+                    <button onClick={()=>setModal(c)}
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-100 transition-colors"
+                      title="Editar">
+                      <Icon d={Icons.edit} size={16}/>
+                    </button>
+                  )}
+                  {isWebmaster&&(
+                    <button onClick={()=>askDelete(c)}
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                      title="Borrar">
+                      <Icon d={Icons.trash} size={16}/>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
         {filtered.length===0&&<div className="text-center py-8 text-gray-400 text-sm">Sin clientes</div>}
       </div>
       {modal&&<ClientModal data={modal} onSave={save} onClose={()=>setModal(null)}/>}
