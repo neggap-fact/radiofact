@@ -4742,12 +4742,22 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
           {filtered.map(e=>{
             const tarj=e.es_tarjeta?tarjetasCredito.find(t=>t.id===e.tarjeta_id):null;
             return(
-              <div key={e.id} className={`border border-gray-200 rounded-lg p-3 shadow-sm ${e.es_tarjeta?"bg-blue-50 border-l-4 border-l-blue-400":"bg-white"}`}>
-                <div className="flex items-center justify-between">
+              <div key={e.id}
+                onClick={()=>canEdit&&setModal(e)}
+                className={`relative border border-gray-200 rounded-lg p-3 shadow-sm transition-colors ${canEdit?"cursor-pointer hover:bg-gray-50":""} ${e.es_tarjeta?"bg-blue-50 border-l-4 border-l-blue-400":"bg-white"}`}>
+                {canEdit&&(
+                  <button
+                    onClick={ev=>{ev.stopPropagation();askDeleteOne(e);}}
+                    className="absolute top-1 right-1 w-11 h-11 flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                    title="Borrar">
+                    <Icon d={Icons.trash} size={16}/>
+                  </button>
+                )}
+                <div className="flex items-center justify-between pr-10">
                   <span className="text-sm text-gray-500">{fmtDate(e.fecha)}</span>
                   <span className="font-bold text-red-600">{fmtMoney(e.monto)}</span>
                 </div>
-                <div className="font-semibold text-gray-800 text-sm mt-1">{e.descripcion}</div>
+                <div className="font-semibold text-gray-800 text-sm mt-1 pr-10">{e.descripcion}</div>
                 <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                   <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-xs">{e.categoria}</span>
                   {e.subcategoria&&<span className="text-xs text-gray-400 italic">{e.subcategoria}</span>}
@@ -4758,17 +4768,13 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
                     :(e.proveedor||"—")
                   }
                 </div>
-                <div className="flex items-center justify-between mt-2">
+                <div className="mt-2">
                   {e.pagado
                     ?<span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">✓ Pagado</span>
                     :canEdit
-                      ?<button onClick={()=>togglePagado(e)} className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 font-medium">⏳ Pendiente</button>
+                      ?<button onClick={ev=>{ev.stopPropagation();togglePagado(e);}} className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 font-medium">⏳ Pendiente</button>
                       :<span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">⏳ Pendiente</span>
                   }
-                  <div className="flex items-center gap-2">
-                    {canEdit&&<button onClick={()=>setModal(e)} className="text-gray-400 hover:text-blue-600" title="Editar"><Icon d={Icons.edit} size={14}/></button>}
-                    {canEdit&&<button onClick={()=>askDeleteOne(e)} className="text-gray-400 hover:text-red-600" title="Borrar"><Icon d={Icons.trash} size={14}/></button>}
-                  </div>
                 </div>
               </div>
             );
