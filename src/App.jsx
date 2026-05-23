@@ -4498,6 +4498,7 @@ function EmailNCModal({ nc, factura, cliente, config, onClose, onSent }) {
 
 function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlantillas,proveedores,setProveedores,cuentasBancarias,setCuentasBancarias,tarjetasCredito,setTarjetasCredito}){
   const [modal,setModal]=useState(null);
+  const [modalCargarFactura,setModalCargarFactura]=useState(false);
   const [modalPlantillas,setModalPlantillas]=useState(false);
   const [modalTarjetas,setModalTarjetas]=useState(false);
   const [fMonth,setFMonth]=useState(String(new Date().getMonth()+1));
@@ -4722,6 +4723,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
           <button onClick={()=>setModalTarjetas(true)} className="flex items-center gap-2 bg-blue-50 border border-blue-300 text-blue-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-blue-100 ml-auto"><Icon d={Icons.card} size={14}/>Tarjetas</button>
           <button onClick={()=>setModalPlantillas(true)} className="flex items-center gap-2 bg-white border border-gray-300 text-gray-600 px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-50"><Icon d={Icons.settings} size={14}/>Plantillas</button>
           <button onClick={descargarPDFGastos} disabled={descargandoPDF} className="flex items-center gap-2 bg-emerald-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50"><Icon d={Icons.pdf} size={14}/>{descargandoPDF ? "Generando..." : "Descargar PDF"}</button>
+          <button onClick={()=>setModalCargarFactura(true)} className="flex items-center gap-2 bg-indigo-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700">📎 Cargar factura PDF</button>
           <button onClick={()=>setModal(empty)} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"><Icon d={Icons.plus} size={14}/>Nuevo gasto</button>
         </>}
         {isWebmaster&&filtered.length>0&&(
@@ -4874,6 +4876,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
       {modalTarjetas&&<TarjetasCreditoModal tarjetas={tarjetasCredito} setTarjetas={setTarjetasCredito} onClose={()=>setModalTarjetas(false)}/>}
       {modalPlantillas&&<PlantillasGastosModal plantillas={plantillas} setPlantillas={setPlantillas} onClose={()=>setModalPlantillas(false)}/>}
       {modal&&<ExpenseModal data={modal} onSave={save} onClose={()=>setModal(null)} plantillas={plantillas} proveedores={proveedores} tarjetasCredito={tarjetasCredito}/>}
+      {modalCargarFactura&&<CargarFacturaPDFModal onClose={()=>setModalCargarFactura(false)} setExpenses={setExpenses} openNuevoGasto={()=>{setModalCargarFactura(false);setModal(empty);}}/>}
       {confirmDelete && (
         <ConfirmDeleteModal
           titulo={confirmDelete.titulo}
@@ -5041,6 +5044,242 @@ function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[],tarjetas
         </div>
       </div>
       <ModalFooter onClose={onClose} onSave={()=>onSave(form)}/>
+    </Modal>
+  );
+}
+
+
+// ========================================
+// MODAL CARGAR FACTURA DE GASTO (PDF → IA)
+// ========================================
+
+function CargarFacturaPDFModal({ onClose, setExpenses, openNuevoGasto }) {
+  const [step, setStep] = useState(1);
+  const [file, setFile] = useState(null);
+  const [dragging, setDragging] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    proveedor: "",
+    cuit_proveedor: "",
+    fecha: todayStr(),
+    descripcion: "",
+    neto: "",
+    iva: "",
+    punto_venta: "",
+    categoria: "Proveedores",
+    es_tarjeta: false,
+    pagado: true,
+    iva_discriminable: false,
+  });
+
+  const total = (parseFloat(form.neto) || 0) + (parseFloat(form.iva) || 0);
+  const f = k => e => setForm(p => ({ ...p, [k]: e.target.value }));
+
+  const handleFile = (file) => {
+    if (file && file.type === "application/pdf") {
+      setFile(file);
+      setError("");
+    } else if (file) {
+      setError("El archivo debe ser un PDF.");
+    }
+  };
+
+  const procesar = async () => {
+    if (!file) { setError("Seleccioná un PDF primero."); return; }
+    setLoading(true);
+    setError("");
+    try {
+      const fd = new FormData();
+      fd.append("pdf", file);
+      const res = await fetch(`${BACKEND_URL}/procesar-factura-gasto`, { method: "POST", body: fd });
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      const data = await res.json();
+      setForm(prev => ({
+        ...prev,
+        proveedor:      data.proveedor || "",
+        cuit_proveedor: data.cuit_proveedor || "",
+        fecha:          data.fecha || todayStr(),
+        descripcion:    data.concepto || data.descripcion || "",
+        neto:           data.neto != null ? String(data.neto) : "",
+        iva:            data.iva != null ? String(data.iva) : "",
+        punto_venta:    data.punto_venta || "",
+        categoria:      data.categoria || "Proveedores",
+      }));
+      setStep(2);
+    } catch {
+      setError("No se pudo leer el PDF. Podés cargarlo manualmente.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confirmar = async () => {
+    setSaving(true);
+    try {
+      const montoTotal = (parseFloat(form.neto) || 0) + (parseFloat(form.iva) || 0);
+      const payload = {
+        descripcion:       form.descripcion || "Factura importada",
+        categoria:         form.categoria,
+        subcategoria:      null,
+        monto:             montoTotal,
+        fecha:             form.fecha,
+        proveedor:         form.proveedor || null,
+        comprobante:       form.punto_venta ? `PV ${form.punto_venta}` : null,
+        url_comprobante:   null,
+        pagado:            form.pagado !== false,
+        notas:             form.cuit_proveedor ? `CUIT: ${form.cuit_proveedor}` : null,
+        es_tarjeta:        false,
+        tarjeta_id:        null,
+        socio:             null,
+        iva_discriminable: form.iva_discriminable === true,
+        monto_iva:         parseFloat(form.iva) || 0,
+      };
+      const { data: inserted, error } = await supabase.from("gastos").insert([payload]).select().single();
+      if (error) throw error;
+      setExpenses(prev => [...prev, { ...payload, id: inserted.id }]);
+      setStep(3);
+      setTimeout(() => onClose(), 1500);
+    } catch (e) {
+      alert("Error guardando gasto: " + e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (step === 3) {
+    return (
+      <Modal title="Cargar factura de gasto" onClose={onClose}>
+        <div className="text-center py-10">
+          <p className="text-5xl mb-4">✓</p>
+          <p className="text-green-700 font-semibold text-lg">Gasto guardado correctamente ✓</p>
+        </div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal title="Cargar factura de gasto" onClose={onClose} wide={step === 2}>
+      {step === 1 && (
+        <div className="space-y-4">
+          <p className="text-sm text-gray-500">Subí la factura en PDF — la IA va a leer los datos automáticamente</p>
+          <div
+            className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${dragging ? "border-blue-400 bg-blue-50" : file ? "border-green-400 bg-green-50" : "border-gray-300 hover:border-blue-300 hover:bg-gray-50"}`}
+            onDragOver={e => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={e => { e.preventDefault(); setDragging(false); handleFile(e.dataTransfer.files[0]); }}
+            onClick={() => document.getElementById("pdf-factura-input").click()}
+          >
+            <input id="pdf-factura-input" type="file" accept=".pdf" className="hidden" onChange={e => handleFile(e.target.files[0])} />
+            {file ? (
+              <div>
+                <p className="text-green-700 font-medium text-sm">✓ {file.name}</p>
+                <p className="text-xs text-green-500 mt-1">{(file.size / 1024).toFixed(0)} KB</p>
+              </div>
+            ) : (
+              <div>
+                <div className="text-3xl mb-2">📄</div>
+                <p className="text-sm text-gray-500">Arrastrá el PDF aquí o hacé click para seleccionar</p>
+              </div>
+            )}
+          </div>
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+              <p className="text-sm text-red-700">{error}</p>
+              {error.includes("manualmente") && (
+                <button onClick={openNuevoGasto} className="mt-2 text-sm text-blue-600 underline hover:no-underline">
+                  Cargar gasto manualmente →
+                </button>
+              )}
+            </div>
+          )}
+          <div className="flex justify-end gap-2 mt-4">
+            <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">Cancelar</button>
+            <button
+              onClick={procesar}
+              disabled={!file || loading}
+              className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+            >
+              {loading ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                  </svg>
+                  Leyendo factura...
+                </>
+              ) : "Procesar factura"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step === 2 && (
+        <div>
+          <p className="text-xs text-blue-600 bg-blue-50 px-3 py-2 rounded-lg mb-4">Revisá y editá los datos extraídos por la IA antes de guardar.</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-gray-600">Proveedor</label>
+              <input value={form.proveedor} onChange={f("proveedor")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600">CUIT proveedor</label>
+              <input value={form.cuit_proveedor} onChange={f("cuit_proveedor")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600">Fecha</label>
+              <input value={form.fecha} onChange={f("fecha")} type="date" className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600">Punto de venta</label>
+              <input value={form.punto_venta} onChange={f("punto_venta")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+            </div>
+            <div className="col-span-2">
+              <label className="text-xs font-medium text-gray-600">Concepto / Descripción</label>
+              <input value={form.descripcion} onChange={f("descripcion")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600">Neto ($)</label>
+              <input value={form.neto} onChange={f("neto")} type="number" className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600">IVA ($)</label>
+              <input value={form.iva} onChange={f("iva")} type="number" className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600">Total (calculado)</label>
+              <div className="w-full mt-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-semibold text-gray-700">{fmtMoney(total)}</div>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600">Categoría</label>
+              <select value={form.categoria} onChange={f("categoria")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+                {EXPENSE_CATS.map(c => <option key={c}>{c}</option>)}
+              </select>
+            </div>
+            <div className="col-span-2 flex flex-wrap items-center gap-4 bg-gray-50 rounded-lg p-3">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={form.es_tarjeta} onChange={e => setForm(p => ({...p, es_tarjeta: e.target.checked}))}/>
+                <span className="text-sm text-gray-600">Gasto externo</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={form.iva_discriminable} onChange={e => setForm(p => ({...p, iva_discriminable: e.target.checked}))}/>
+                <span className="text-sm text-gray-600">💵 Discriminar IVA (deducible)</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={form.pagado} onChange={e => setForm(p => ({...p, pagado: e.target.checked}))}/>
+                <span className="text-sm text-gray-600">Pagado</span>
+              </label>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <button onClick={() => setStep(1)} className="px-4 py-2 text-sm text-gray-600 border border-gray-200 hover:bg-gray-50 rounded-lg">Volver</button>
+            <button onClick={confirmar} disabled={saving} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+              {saving ? "Guardando..." : "Confirmar y guardar"}
+            </button>
+          </div>
+        </div>
+      )}
     </Modal>
   );
 }
@@ -5859,6 +6098,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
   const [fYear,setFYear]=useState(String(today.getFullYear()));
   const [modalCuentas,setModalCuentas]=useState(false);
   const [modalMovEfectivo,setModalMovEfectivo]=useState(false);
+  const [modalExtracto,setModalExtracto]=useState(false);
   const [mostrarMontos,setMostrarMontos]=useState(false);
   const [modalPDF,setModalPDF]=useState(false);
   
@@ -6034,6 +6274,13 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
               title="Registrar entrada o salida de efectivo"
             >
               <Icon d={Icons.cash} size={12}/>Mov. efectivo
+            </button>
+            <button
+              onClick={() => setModalExtracto(true)}
+              className="flex items-center gap-1 text-xs bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700"
+              title="Importar movimientos desde PDF del banco"
+            >
+              📤 Importar extracto
             </button>
             <button
               onClick={() => setModalCuentas(true)}
@@ -6491,6 +6738,14 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
           onClose={() => setModalMovEfectivo(false)}
         />
       )}
+      {/* ── MODAL IMPORTAR EXTRACTO BANCARIO ────────── */}
+      {modalExtracto && (
+        <ImportarExtractoModal
+          cuentasBancarias={cuentasBancarias}
+          setIngresosBancarios={setIngresosBancarios}
+          onClose={() => setModalExtracto(false)}
+        />
+      )}
     </div>
   );
 }
@@ -6567,6 +6822,229 @@ function MovimientoEfectivoModal({ cuentasEfectivo, setCuentasBancarias, onClose
         </div>
         <ModalFooter onClose={onClose} onSave={guardar} saveLabel={saving ? "Guardando..." : "Confirmar"}/>
       </div>
+    </Modal>
+  );
+}
+
+
+// ========================================
+// MODAL IMPORTAR EXTRACTO BANCARIO (PDF → IA)
+// ========================================
+
+function ImportarExtractoModal({ cuentasBancarias, setIngresosBancarios, onClose }) {
+  const cuentasActivas = (cuentasBancarias||[]).filter(c => c.activa !== false);
+  const [step, setStep] = useState(1);
+  const [cuentaId, setCuentaId] = useState(cuentasActivas[0]?.id || "");
+  const [file, setFile] = useState(null);
+  const [dragging, setDragging] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [movimientos, setMovimientos] = useState([]);
+  const [seleccionados, setSeleccionados] = useState(new Set());
+  const [saving, setSaving] = useState(false);
+  const [importados, setImportados] = useState(0);
+
+  const handleFile = (file) => {
+    if (file && file.type === "application/pdf") {
+      setFile(file);
+      setError("");
+    } else if (file) {
+      setError("El archivo debe ser un PDF.");
+    }
+  };
+
+  const procesar = async () => {
+    if (!file) { setError("Seleccioná un PDF primero."); return; }
+    if (!cuentaId) { setError("Seleccioná una cuenta bancaria."); return; }
+    setLoading(true);
+    setError("");
+    try {
+      const fd = new FormData();
+      fd.append("pdf", file);
+      fd.append("cuenta_id", cuentaId);
+      const res = await fetch(`${BACKEND_URL}/procesar-extracto-banco`, { method: "POST", body: fd });
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      const data = await res.json();
+      const movs = (data.movimientos || data.movements || []).map((m, i) => ({ ...m, _id: i }));
+      setMovimientos(movs);
+      setSeleccionados(new Set(movs.map(m => m._id)));
+      setStep(2);
+    } catch {
+      setError("No se pudo procesar el PDF del banco. Intentá de nuevo.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggleSeleccion = (id) => {
+    setSeleccionados(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleTodos = () => {
+    setSeleccionados(seleccionados.size === movimientos.length ? new Set() : new Set(movimientos.map(m => m._id)));
+  };
+
+  const updateMovimiento = (id, field, value) => {
+    setMovimientos(prev => prev.map(m => m._id === id ? {...m, [field]: value} : m));
+  };
+
+  const importar = async () => {
+    const aImportar = movimientos.filter(m => seleccionados.has(m._id));
+    if (aImportar.length === 0) { alert("Seleccioná al menos un movimiento."); return; }
+    setSaving(true);
+    try {
+      const payloads = aImportar.map(m => ({
+        fecha:       m.fecha,
+        monto:       parseFloat(m.monto) || 0,
+        descripcion: m.descripcion || "",
+        tipo:        m.tipo || "credito",
+        cuenta_id:   cuentaId,
+      }));
+      const { data: inserted, error } = await supabase.from("ingresos_bancarios").insert(payloads).select();
+      if (error) throw error;
+      setIngresosBancarios(prev => [...(prev||[]), ...inserted]);
+      setImportados(inserted.length);
+      setStep(3);
+      setTimeout(() => onClose(), 2000);
+    } catch (e) {
+      alert("Error importando movimientos: " + e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (step === 3) {
+    return (
+      <Modal title="Importar extracto bancario" onClose={onClose}>
+        <div className="text-center py-10">
+          <p className="text-5xl mb-4">✓</p>
+          <p className="text-green-700 font-semibold text-lg">Se importaron {importados} movimiento{importados !== 1 ? "s" : ""} correctamente ✓</p>
+        </div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal title="Importar extracto bancario" onClose={onClose} wide={step === 2}>
+      {step === 1 && (
+        <div className="space-y-4">
+          <div>
+            <label className="text-xs font-medium text-gray-600">Cuenta bancaria</label>
+            <select value={cuentaId} onChange={e => setCuentaId(e.target.value)} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+              <option value="">— Elegir cuenta —</option>
+              {cuentasActivas.map(c => <option key={c.id} value={c.id}>{c.nombre}{c.banco ? ` — ${c.banco}` : ""}</option>)}
+            </select>
+          </div>
+          <p className="text-sm text-gray-500">Subí el resumen PDF del banco — la IA va a extraer los movimientos</p>
+          <div
+            className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${dragging ? "border-blue-400 bg-blue-50" : file ? "border-green-400 bg-green-50" : "border-gray-300 hover:border-blue-300 hover:bg-gray-50"}`}
+            onDragOver={e => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={e => { e.preventDefault(); setDragging(false); handleFile(e.dataTransfer.files[0]); }}
+            onClick={() => document.getElementById("pdf-extracto-input").click()}
+          >
+            <input id="pdf-extracto-input" type="file" accept=".pdf" className="hidden" onChange={e => handleFile(e.target.files[0])} />
+            {file ? (
+              <div>
+                <p className="text-green-700 font-medium text-sm">✓ {file.name}</p>
+                <p className="text-xs text-green-500 mt-1">{(file.size / 1024).toFixed(0)} KB</p>
+              </div>
+            ) : (
+              <div>
+                <div className="text-3xl mb-2">📄</div>
+                <p className="text-sm text-gray-500">Arrastrá el PDF aquí o hacé click para seleccionar</p>
+              </div>
+            )}
+          </div>
+          {error && <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{error}</div>}
+          <div className="flex justify-end gap-2 mt-4">
+            <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">Cancelar</button>
+            <button
+              onClick={procesar}
+              disabled={!file || !cuentaId || loading}
+              className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+            >
+              {loading ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                  </svg>
+                  Leyendo movimientos...
+                </>
+              ) : "Procesar extracto"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step === 2 && (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm font-medium text-gray-700">
+              {movimientos.length} movimiento{movimientos.length !== 1 ? "s" : ""} encontrado{movimientos.length !== 1 ? "s" : ""}
+            </p>
+            <button onClick={toggleTodos} className="text-xs text-blue-600 underline hover:no-underline">
+              {seleccionados.size === movimientos.length ? "Deseleccionar todos" : "Seleccionar todos"}
+            </button>
+          </div>
+          <div className="overflow-auto max-h-72 rounded-lg border border-gray-200">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 sticky top-0">
+                <tr>
+                  <th className="px-3 py-2 w-8"></th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Fecha</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Descripción</th>
+                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">Monto</th>
+                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500">Tipo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {movimientos.map(m => (
+                  <tr key={m._id} className={`border-t border-gray-100 ${!seleccionados.has(m._id) ? "opacity-40" : ""}`}>
+                    <td className="px-3 py-2">
+                      <input type="checkbox" checked={seleccionados.has(m._id)} onChange={() => toggleSeleccion(m._id)}/>
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <input type="date" value={m.fecha || ""} onChange={e => updateMovimiento(m._id, "fecha", e.target.value)}
+                        className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none w-32"/>
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <input value={m.descripcion || ""} onChange={e => updateMovimiento(m._id, "descripcion", e.target.value)}
+                        className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none w-full min-w-36"/>
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <input type="number" value={m.monto || ""} onChange={e => updateMovimiento(m._id, "monto", e.target.value)}
+                        className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none text-right w-24"/>
+                    </td>
+                    <td className="px-3 py-1.5 text-center">
+                      <select value={m.tipo || "credito"} onChange={e => updateMovimiento(m._id, "tipo", e.target.value)}
+                        className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none">
+                        <option value="credito">Crédito</option>
+                        <option value="debito">Débito</option>
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <button onClick={() => setStep(1)} className="px-4 py-2 text-sm text-gray-600 border border-gray-200 hover:bg-gray-50 rounded-lg">Volver</button>
+            <button
+              onClick={importar}
+              disabled={seleccionados.size === 0 || saving}
+              className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saving ? "Importando..." : `Importar seleccionados (${seleccionados.size})`}
+            </button>
+          </div>
+        </div>
+      )}
     </Modal>
   );
 }
