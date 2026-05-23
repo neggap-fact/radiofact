@@ -6164,6 +6164,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
   const [modalCuentas,setModalCuentas]=useState(false);
   const [modalMovEfectivo,setModalMovEfectivo]=useState(false);
   const [modalExtracto,setModalExtracto]=useState(false);
+  const [modalCSV,setModalCSV]=useState(false);
   const [mostrarMontos,setMostrarMontos]=useState(false);
   const [modalPDF,setModalPDF]=useState(false);
   
@@ -6350,6 +6351,13 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
               title="Importar movimientos desde PDF del banco"
             >
               📤 Importar extracto
+            </button>
+            <button
+              onClick={() => setModalCSV(true)}
+              className="flex items-center gap-1 text-xs bg-green-600 text-white px-3 py-1.5 rounded-lg hover:bg-green-700"
+              title="Importar CSV del Santander"
+            >
+              📊 CSV Santander
             </button>
             <button
               onClick={() => setModalCuentas(true)}
@@ -6821,6 +6829,13 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
           onClose={() => setModalExtracto(false)}
         />
       )}
+      {/* ── MODAL IMPORTAR CSV SANTANDER ─────────────── */}
+      {modalCSV && (
+        <ImportarCSVSantanderModal
+          cuentasBancarias={cuentasBancarias}
+          onClose={() => setModalCSV(false)}
+        />
+      )}
     </div>
   );
 }
@@ -7120,6 +7135,135 @@ function ImportarExtractoModal({ cuentasBancarias, setIngresosBancarios, onClose
           </div>
         </div>
       )}
+    </Modal>
+  );
+}
+
+
+// ========================================
+// MODAL IMPORTAR CSV SANTANDER
+// ========================================
+
+function ImportarCSVSantanderModal({ cuentasBancarias, onClose }) {
+  const cuentasActivas = (cuentasBancarias||[]).filter(c => c.activa !== false && !c.tipo_efectivo);
+  const [cuentaId, setCuentaId] = useState(cuentasActivas[0]?.id || "");
+  const [file, setFile] = useState(null);
+  const [dragging, setDragging] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [resultado, setResultado] = useState(null); // { insertados, duplicados, total }
+
+  const handleFile = (f) => {
+    if (f && (f.name.toLowerCase().endsWith(".csv") || f.type === "text/csv")) {
+      setFile(f);
+      setError("");
+    } else if (f) {
+      setError("El archivo debe ser un CSV.");
+    }
+  };
+
+  const procesar = async () => {
+    if (!file)     { setError("Seleccioná un archivo CSV primero."); return; }
+    if (!cuentaId) { setError("Seleccioná una cuenta bancaria."); return; }
+    setLoading(true);
+    setError("");
+    try {
+      const fd = new FormData();
+      fd.append("csv", file);
+      fd.append("cuenta_id", cuentaId);
+      const res = await fetch(`${BACKEND_URL}/procesar-extracto-csv`, { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+      setResultado(data);
+      setTimeout(() => onClose(), 3000);
+    } catch (e) {
+      setError(e.message || "No se pudo procesar el CSV. Intentá de nuevo.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (resultado) {
+    return (
+      <Modal title="CSV Santander importado" onClose={onClose}>
+        <div className="text-center py-8 space-y-3">
+          <p className="text-5xl">✓</p>
+          <p className="text-green-700 font-semibold text-lg">Importación completada</p>
+          <div className="bg-gray-50 rounded-lg p-4 text-sm space-y-1 text-left inline-block mx-auto">
+            <p><span className="text-gray-500">Total en el archivo:</span> <span className="font-bold">{resultado.total}</span></p>
+            <p><span className="text-gray-500">Insertados:</span> <span className="font-bold text-green-600">{resultado.insertados}</span></p>
+            {resultado.duplicados > 0 && (
+              <p><span className="text-amber-600">Duplicados ignorados:</span> <span className="font-bold text-amber-600">{resultado.duplicados}</span></p>
+            )}
+          </div>
+          <p className="text-xs text-gray-400">Se cierra automáticamente…</p>
+        </div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal title="📊 Importar CSV Santander" onClose={onClose}>
+      <div className="space-y-4">
+        <div>
+          <label className="text-xs font-medium text-gray-600">Cuenta bancaria</label>
+          <select value={cuentaId} onChange={e => setCuentaId(e.target.value)}
+            className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+            <option value="">— Elegir cuenta —</option>
+            {cuentasActivas.map(c => (
+              <option key={c.id} value={c.id}>{c.nombre}{c.banco ? ` — ${c.banco}` : ""}</option>
+            ))}
+          </select>
+        </div>
+
+        <p className="text-sm text-gray-500">
+          Subí el extracto CSV del Santander — se va a importar directo a la tabla de movimientos.
+        </p>
+
+        <div
+          className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${dragging ? "border-green-400 bg-green-50" : file ? "border-green-400 bg-green-50" : "border-gray-300 hover:border-green-300 hover:bg-gray-50"}`}
+          onDragOver={e => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={e => { e.preventDefault(); setDragging(false); handleFile(e.dataTransfer.files[0]); }}
+          onClick={() => document.getElementById("csv-santander-input").click()}
+        >
+          <input id="csv-santander-input" type="file" accept=".csv,text/csv" className="hidden"
+            onChange={e => handleFile(e.target.files[0])} />
+          {file ? (
+            <div>
+              <p className="text-green-700 font-medium text-sm">✓ {file.name}</p>
+              <p className="text-xs text-green-500 mt-1">{(file.size / 1024).toFixed(0)} KB</p>
+            </div>
+          ) : (
+            <div>
+              <div className="text-3xl mb-2">📊</div>
+              <p className="text-sm text-gray-500">Arrastrá el CSV aquí o hacé click para seleccionar</p>
+              <p className="text-xs text-gray-400 mt-1">Encoding: latin-1 · Separador: punto y coma</p>
+            </div>
+          )}
+        </div>
+
+        {error && <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{error}</div>}
+
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">Cancelar</button>
+          <button
+            onClick={procesar}
+            disabled={!file || !cuentaId || loading}
+            className="flex items-center gap-2 px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+          >
+            {loading ? (
+              <>
+                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                </svg>
+                Importando…
+              </>
+            ) : "Importar movimientos"}
+          </button>
+        </div>
+      </div>
     </Modal>
   );
 }
