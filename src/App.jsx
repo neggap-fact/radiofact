@@ -4510,7 +4510,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
   const [descargandoPDF, setDescargandoPDF] = useState(false);
   const isWebmaster = currentUser?.role === "webmaster";
 
-  const empty={descripcion:"",categoria:"Gastos Fijos",subcategoria:"",monto:"",fecha:todayStr(),proveedor:"",comprobante:"",url_comprobante:"",pagado:true,notas:"",es_tarjeta:false,tarjeta_id:"",socio:""};
+  const empty={descripcion:"",categoria:"Gastos Fijos",subcategoria:"",monto:"",fecha:todayStr(),proveedor:"",comprobante:"",url_comprobante:"",pagado:true,notas:"",es_tarjeta:false,tarjeta_id:"",socio:"",es_externo:false,monto_neto:""};
   
   const filtered=expenses.filter(e=>{
     const d=new Date(e.fecha);
@@ -4599,6 +4599,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
       es_tarjeta:       d.es_tarjeta === true,
       tarjeta_id:       d.tarjeta_id || null,
       socio:            d.socio || null,
+      es_externo:       d.es_externo === true,
       iva_discriminable: d.iva_discriminable === true,
       monto_iva:        parseFloat(d.monto_iva) || 0,
     };
@@ -4765,6 +4766,12 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
         })}
         <div className="bg-red-50 border border-red-200 rounded-xl p-3"><p className="text-xs text-red-500 font-medium">✓ Pagado</p><p className="text-lg font-bold text-red-700">{fmtMoney(totPagado)}</p></div>
         {totPendiente>0&&<div className="bg-amber-50 border border-amber-200 rounded-xl p-3"><p className="text-xs text-amber-600 font-medium">⏳ Pendiente</p><p className="text-lg font-bold text-amber-700">{fmtMoney(totPendiente)}</p></div>}
+        {filtered.filter(e=>e.es_externo).reduce((s,e)=>s+(parseFloat(e.monto_iva)||0),0)>0&&(
+          <div className="bg-green-50 border border-green-200 rounded-xl p-3">
+            <p className="text-xs text-green-600 font-medium">📦 IVA crédito externos</p>
+            <p className="text-lg font-bold text-green-700">{fmtMoney(filtered.filter(e=>e.es_externo).reduce((s,e)=>s+(parseFloat(e.monto_iva)||0),0))}</p>
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -4774,7 +4781,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
           </thead>
           <tbody>
             {filtered.map(e=>(
-              <tr key={e.id} className={`border-b border-gray-50 hover:bg-gray-50 ${e.es_tarjeta ? "bg-blue-50" : ""}`}>
+              <tr key={e.id} className={`border-b border-gray-50 hover:bg-gray-50 ${e.es_tarjeta ? "bg-blue-50" : ""} ${e.es_externo ? "bg-amber-50" : ""}`}>
                 <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">{fmtDate(e.fecha)}</td>
                 <td className="px-3 py-2.5 text-xs font-medium">{e.descripcion}</td>
                 <td className="px-3 py-2.5">
@@ -4807,7 +4814,12 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
                     )}
                   </div>
                 </td>
-                <td className="px-3 py-2.5 text-xs font-semibold text-red-600">{fmtMoney(e.monto)}</td>
+                <td className="px-3 py-2.5 text-xs font-semibold text-red-600">
+                  {fmtMoney(e.monto)}
+                  {e.es_externo && parseFloat(e.monto_iva) > 0 && (
+                    <div className="text-[10px] font-normal text-green-600 mt-0.5">IVA crédito: {fmtMoney(e.monto_iva)}</div>
+                  )}
+                </td>
                 <td className="px-3 py-2.5">
                   {e.pagado
                     ? <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">✓ Pagado</span>
@@ -4857,13 +4869,17 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
                     :(e.proveedor||"—")
                   }
                 </div>
-                <div className="mt-2">
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   {e.pagado
                     ?<span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">✓ Pagado</span>
                     :canEdit
                       ?<button onClick={ev=>{ev.stopPropagation();togglePagado(e);}} className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 font-medium">⏳ Pendiente</button>
                       :<span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">⏳ Pendiente</span>
                   }
+                  {e.es_externo && <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-300">📦 Externo</span>}
+                  {e.es_externo && parseFloat(e.monto_iva) > 0 && (
+                    <span className="text-xs text-green-600 font-medium">IVA crédito: {fmtMoney(e.monto_iva)}</span>
+                  )}
                 </div>
               </div>
             );
@@ -4897,7 +4913,12 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
 // ========================================
 
 function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[],tarjetasCredito=[]}){
-  const [form,setForm]=useState(data);
+  const [form,setForm]=useState(()=>({
+    ...data,
+    monto_neto: data.es_externo
+      ? String(Math.max(0,(parseFloat(data.monto)||0)-(parseFloat(data.monto_iva)||0)))
+      : (data.monto_neto || ""),
+  }));
   const f=k=>e=>setForm(p=>({...p,[k]:e.target.value}));
 
   const aplicarPlantilla = (p) => {
@@ -4933,17 +4954,60 @@ function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[],tarjetas
         )}
 
         {/* TIPO DE GASTO */}
-        <div className="col-span-2 flex items-center gap-3 bg-gray-50 rounded-lg p-3">
-          <label className="text-xs font-medium text-gray-600">Tipo de gasto:</label>
+        <div className="col-span-2 flex items-center gap-3 bg-gray-50 rounded-lg p-3 flex-wrap">
+          <label className="text-xs font-medium text-gray-600">Tipo:</label>
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="radio" checked={!form.es_tarjeta} onChange={()=>setForm(p=>({...p,es_tarjeta:false,tarjeta_id:"",socio:""}))} />
-            <span className="text-xs">Gasto normal</span>
+            <span className="text-xs">Normal</span>
           </label>
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="radio" checked={form.es_tarjeta === true} onChange={()=>setForm(p=>({...p,es_tarjeta:true}))} />
-            <span className="text-xs">Tarjeta de crédito</span>
+            <span className="text-xs">Tarjeta</span>
+          </label>
+          <div className="h-4 w-px bg-gray-300"/>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={form.es_externo === true} onChange={e=>setForm(p=>({...p,es_externo:e.target.checked}))}/>
+            <span className="text-xs font-medium text-amber-700">📦 Externo</span>
           </label>
         </div>
+
+        {/* CAMPOS EXTRA PARA GASTOS EXTERNOS */}
+        {form.es_externo === true && (
+          <div className="col-span-2 grid grid-cols-3 gap-3 bg-amber-50 rounded-lg p-3 border border-amber-200">
+            <div>
+              <label className="text-xs font-medium text-amber-700">Neto de la factura ($)</label>
+              <input
+                value={form.monto_neto || ""}
+                onChange={e=>{
+                  const neto=e.target.value;
+                  const iva=parseFloat(form.monto_iva)||0;
+                  setForm(p=>({...p,monto_neto:neto,monto:String((parseFloat(neto)||0)+iva)}));
+                }}
+                type="number"
+                className="w-full mt-1 px-3 py-2 border border-amber-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-200 bg-white"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-amber-700">IVA de la factura ($)</label>
+              <input
+                value={form.monto_iva || ""}
+                onChange={e=>{
+                  const iva=e.target.value;
+                  const neto=parseFloat(form.monto_neto)||0;
+                  setForm(p=>({...p,monto_iva:iva,monto:String(neto+(parseFloat(iva)||0))}));
+                }}
+                type="number"
+                className="w-full mt-1 px-3 py-2 border border-amber-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-200 bg-white"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-amber-700">Total factura</label>
+              <div className="w-full mt-1 px-3 py-2 bg-white border border-amber-200 rounded-lg text-sm font-semibold text-amber-900">
+                {fmtMoney((parseFloat(form.monto_neto)||0)+(parseFloat(form.monto_iva)||0))}
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="col-span-2"><Field label="Descripción" value={form.descripcion} onChange={f("descripcion")}/></div>
         <div>
@@ -5069,7 +5133,7 @@ function CargarFacturaPDFModal({ onClose, setExpenses, openNuevoGasto }) {
     iva: "",
     punto_venta: "",
     categoria: "Proveedores",
-    es_tarjeta: false,
+    es_externo: false,
     pagado: true,
     iva_discriminable: false,
   });
@@ -5133,6 +5197,7 @@ function CargarFacturaPDFModal({ onClose, setExpenses, openNuevoGasto }) {
         es_tarjeta:        false,
         tarjeta_id:        null,
         socio:             null,
+        es_externo:        form.es_externo === true,
         iva_discriminable: form.iva_discriminable === true,
         monto_iva:         parseFloat(form.iva) || 0,
       };
@@ -5259,8 +5324,8 @@ function CargarFacturaPDFModal({ onClose, setExpenses, openNuevoGasto }) {
             </div>
             <div className="col-span-2 flex flex-wrap items-center gap-4 bg-gray-50 rounded-lg p-3">
               <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={form.es_tarjeta} onChange={e => setForm(p => ({...p, es_tarjeta: e.target.checked}))}/>
-                <span className="text-sm text-gray-600">Gasto externo</span>
+                <input type="checkbox" checked={form.es_externo} onChange={e => setForm(p => ({...p, es_externo: e.target.checked}))}/>
+                <span className="text-sm text-gray-600">📦 Gasto externo</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" checked={form.iva_discriminable} onChange={e => setForm(p => ({...p, iva_discriminable: e.target.checked}))}/>
@@ -6144,15 +6209,19 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
   const totImpuestosTotal = totIva + totIibb + totImpuestosOtros + totImpBanco;
 
   // ── IVA DISCRIMINABLE (DEDUCIBLE) ──────────────
-  // Suma todos los gastos marcados con iva_discriminable=TRUE
-  // Estima IVA 21% para cada uno (puede haber 10.5% pero simplificamos)
   const gastosConIvaDiscriminable = filtExp.filter(e => e.iva_discriminable === true);
   const ivaComprasEstimado = gastosConIvaDiscriminable.reduce((s,e) => {
-    // Estimamos IVA 21% sobre el monto (monto bruto / 121 * 21)
     const ivaEst = Math.round((parseFloat(e.monto)||0) / 121 * 21);
     return s + ivaEst;
   }, 0);
-  const ivaPagar = Math.max(0, totIva - ivaComprasEstimado); // No puede ser negativo sin crédito
+  const ivaPagar = Math.max(0, totIva - ivaComprasEstimado);
+
+  // ── POSICIÓN IVA CON GASTOS EXTERNOS ───────────
+  // Usa el IVA exacto ingresado en gastos con es_externo=true
+  const gastosExternos = filtExp.filter(e => e.es_externo === true);
+  const ivaCredito = gastosExternos.reduce((s,e) => s + (parseFloat(e.monto_iva)||0), 0);
+  const ivaDebito = totIva;
+  const ivaPosicion = ivaDebito - ivaCredito; // positivo = a pagar, negativo = saldo a favor
 
   // ── ACTIVOS ────────────────────────────────────
   const cuentasActivas = cuentasBancarias.filter(c => c.activa !== false);
@@ -6364,10 +6433,16 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
             <p className="text-xl font-bold text-orange-600 mt-1">{fmt(totIva)}</p>
             <p className="text-xs text-gray-400 mt-0.5">débito fiscal</p>
           </div>
-          <div className="bg-red-50 rounded-lg p-3 border-l-4 border-red-500">
-            <p className="text-xs text-gray-500">IVA a pagar</p>
-            <p className="text-xl font-bold text-red-600 mt-1">{fmt(ivaPagar)}</p>
-            <p className="text-xs text-gray-400 mt-0.5">{fmt(totIva)} (ventas) - {fmt(ivaComprasEstimado)} (compras)</p>
+          <div className={`rounded-lg p-3 border-l-4 ${ivaPosicion > 0 ? "bg-red-50 border-red-500" : "bg-green-50 border-green-500"}`}>
+            <p className="text-xs text-gray-500">📊 Posición IVA</p>
+            <div className="flex items-baseline gap-1.5 mt-1">
+              <p className={`text-xl font-bold ${ivaPosicion > 0 ? "text-red-600" : "text-green-600"}`}>{fmt(Math.abs(ivaPosicion))}</p>
+              {ivaPosicion <= 0 && <span className="text-xs text-green-500 font-medium">saldo a favor</span>}
+            </div>
+            <div className="text-xs text-gray-400 mt-0.5 space-y-0.5">
+              <div>Débito: {fmt(ivaDebito)}</div>
+              <div className="text-green-600">Crédito externos: {fmt(ivaCredito)}</div>
+            </div>
           </div>
           <div className="bg-purple-50 rounded-lg p-3 border-l-4 border-purple-500">
             <p className="text-xs text-gray-500">IIBB Santa Cruz 3%</p>
