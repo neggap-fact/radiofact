@@ -2155,34 +2155,34 @@ function ModalEditarCobro({ inv, onSave, onClose }) {
   };
 
   return (
-    <Modal title="✏️ Editar monto cobrado" onClose={onClose}>
-      <div className="space-y-4">
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-          <p className="text-xs text-blue-600 font-medium">{inv.numero} — {inv.clientName}</p>
-          <p className="text-xs text-blue-500 mt-1">Total facturado: {fmtMoney(inv.total)}</p>
+    <Modal title="✏️ Editar cobro" onClose={onClose}>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between bg-blue-50 rounded-lg px-3 py-2 text-xs text-blue-600">
+          <span className="font-medium truncate">{inv.clientName}</span>
+          <span className="ml-3 whitespace-nowrap font-semibold">{fmtMoney(inv.total)}</span>
         </div>
         <div>
-          <label className="text-xs font-medium text-gray-700 block mb-1">Monto cobrado real ($)</label>
+          <label className="text-xs font-medium text-gray-600 block mb-1">Monto cobrado ($)</label>
           <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-medium">$</span>
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
             <input
               type="number"
               value={monto}
               onChange={e => setMonto(e.target.value)}
               step="0.01"
-              className="w-full pl-8 pr-3 py-3 border-2 border-gray-200 rounded-lg text-base font-semibold focus:outline-none focus:border-blue-400"
+              className="w-full pl-7 pr-3 py-2.5 border-2 border-gray-200 rounded-lg text-base font-semibold focus:outline-none focus:border-blue-400"
               autoFocus
             />
           </div>
         </div>
-        <div className="flex gap-3 justify-end pt-4 border-t border-gray-200">
-          <button onClick={onClose} className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50 font-medium">
+        <div className="flex gap-2 justify-end pt-2 border-t border-gray-100">
+          <button onClick={onClose} className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-50">
             Cancelar
           </button>
           <button
             onClick={handleGuardar}
             disabled={guardando}
-            className="px-5 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold disabled:opacity-50">
+            className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold disabled:opacity-50">
             {guardando ? "Guardando..." : "Guardar"}
           </button>
         </div>
@@ -3499,8 +3499,8 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
                       )}
                       {currentUser.role==="webmaster" && inv.estado==="Pagada" && (
                         <button onClick={()=>setModalEditarCobro(inv)}
-                          className="text-xs px-2 py-0.5 bg-blue-50 text-blue-600 border border-blue-200 rounded hover:bg-blue-100 font-medium">
-                          ✏️ Editar cobro
+                          className="text-[11px] px-1.5 py-0.5 bg-blue-50 text-blue-500 border border-blue-100 rounded hover:bg-blue-100 whitespace-nowrap leading-tight">
+                          ✏️ cobro
                         </button>
                       )}
                     </div>
@@ -3799,7 +3799,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
                 {currentUser.role==="webmaster"&&inv.estado==="Pagada"&&(
                   <button onClick={()=>{setModalEditarCobro(inv);cerrar();}}
                     className="w-full flex items-center gap-3 px-4 py-3 bg-blue-50 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-100 transition-colors">
-                    ✏️ Editar monto cobrado
+                    ✏️ Editar cobro
                   </button>
                 )}
                 {canEdit&&inv.cae&&inv.estado==="Emitida"&&!inv.nc_id&&(
