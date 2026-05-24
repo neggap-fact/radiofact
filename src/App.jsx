@@ -5276,11 +5276,11 @@ function CargarFacturaPDFModal({ onClose, setExpenses, openNuevoGasto }) {
         socio:             null,
         es_externo:        form.es_externo === true,
         iva_discriminable: form.iva_discriminable === true,
-        monto_iva:         parseFloat(form.iva) || 0,
+        iva_compra:        parseFloat(form.iva) || 0,
       };
       const { data: inserted, error } = await supabase.from("gastos").insert([payload]).select().single();
       if (error) throw error;
-      setExpenses(prev => [...prev, { ...payload, id: inserted.id }]);
+      setExpenses(prev => [...prev, { ...payload, monto_iva: parseFloat(form.iva)||0, id: inserted.id }]);
       setStep(3);
       setTimeout(() => onClose(), 1500);
     } catch (e) {
