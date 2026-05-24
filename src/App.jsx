@@ -4988,10 +4988,10 @@ function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[],tarjetas
   const [form,setForm]=useState(()=>({
     ...data,
     monto_neto: data.es_externo
-      ? String(parseFloat(Math.max(0,(parseFloat(data.monto)||0)-(parseFloat(data.monto_iva)||0)).toFixed(2)))
+      ? Math.max(0,(parseFloat(data.monto)||0)-(parseFloat(data.monto_iva)||0)).toFixed(2)
       : (data.monto_neto || ""),
     monto_iva: data.es_externo
-      ? String(parseFloat((parseFloat(data.monto_iva)||0).toFixed(2)))
+      ? (parseFloat(data.monto_iva)||0).toFixed(2)
       : (data.monto_iva || ""),
   }));
   const f=k=>e=>setForm(p=>({...p,[k]:e.target.value}));
