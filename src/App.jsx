@@ -1396,7 +1396,7 @@ function Dashboard({clients,contracts,invoices,expenses,notifications,setPage}){
   const iibbDelMes = tot.iibb;
   const cobrado = mi.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+(i.montoCobrado||i.total),0);
   const adeudado = facturado - cobrado;
-  const totalGastos=me.filter(e=>e.pagado).reduce((s,e)=>s+e.monto,0);
+  const totalGastos=me.filter(e=>e.pagado && !e.es_externo).reduce((s,e)=>s+e.monto,0);
   const gastosPendientes=me.filter(e=>!e.pagado && !e.es_externo).reduce((s,e)=>s+e.monto,0);
   const resultado=cobrado-totalGastos;
   const pendingNotifs=notifications.filter(n=>!n.read);
@@ -4752,7 +4752,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
     const matchTipo=fTipo===""||( fTipo==="normales"&&!e.es_tarjeta)||(fTipo==="tarjetas"&&e.es_tarjeta);
     return matchMes&&matchAnio&&matchSearch&&matchTipo;
   });
-  const totPagado=filtered.filter(e=>e.pagado && !(e.es_externo && !e.pagado)).reduce((s,e)=>s+e.monto,0);
+  const totPagado=filtered.filter(e=>e.pagado && !e.es_externo).reduce((s,e)=>s+e.monto,0);
   const totPendiente=filtered.filter(e=>!e.pagado && !e.es_externo).reduce((s,e)=>s+e.monto,0);
   
   // Gastos por tarjeta
@@ -4893,11 +4893,13 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
                   )}
                 </td>
                 <td className="px-3 py-2.5">
-                  {e.pagado
-                    ? <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">✓ Pagado</span>
-                    : canEdit
-                      ? <button onClick={()=>togglePagado(e)} className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 font-medium">⏳ Pendiente</button>
-                      : <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">⏳ Pendiente</span>
+                  {e.es_externo
+                    ? <span className="text-xs px-2 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-200">🔶 Externo</span>
+                    : e.pagado
+                      ? <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">✓ Pagado</span>
+                      : canEdit
+                        ? <button onClick={()=>togglePagado(e)} className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 border border-gray-200 hover:bg-gray-200 font-medium">⏳ Pendiente</button>
+                        : <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">⏳ Pendiente</span>
                   }
                 </td>
                 <td className="px-3 py-2.5">
@@ -4942,13 +4944,14 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
                   }
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  {e.pagado
-                    ?<span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">✓ Pagado</span>
-                    :canEdit
-                      ?<button onClick={ev=>{ev.stopPropagation();togglePagado(e);}} className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 font-medium">⏳ Pendiente</button>
-                      :<span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">⏳ Pendiente</span>
+                  {e.es_externo
+                    ?<span className="text-xs px-2 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-200">🔶 Externo</span>
+                    :e.pagado
+                      ?<span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">✓ Pagado</span>
+                      :canEdit
+                        ?<button onClick={ev=>{ev.stopPropagation();togglePagado(e);}} className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 border border-gray-200 hover:bg-gray-200 font-medium">⏳ Pendiente</button>
+                        :<span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">⏳ Pendiente</span>
                   }
-                  {e.es_externo && <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-300">📦 Externo</span>}
                   {(e.es_externo || e.iva_discriminable) && parseFloat(e.monto_iva) > 0 && (
                     <span className="text-xs text-green-600 font-medium">IVA crédito: {fmtMoney(e.monto_iva)}</span>
                   )}
@@ -5032,26 +5035,19 @@ function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[],tarjetas
         <div className="col-span-2 flex items-center gap-3 bg-gray-50 rounded-lg p-3 flex-wrap">
           <label className="text-xs font-medium text-gray-600">Tipo:</label>
           <label className="flex items-center gap-2 cursor-pointer">
-            <input type="radio" checked={!form.es_tarjeta && !form.es_externo} onChange={()=>setForm(p=>({...p,es_tarjeta:false,es_externo:false,tarjeta_id:"",socio:""}))} />
+            <input type="radio" checked={!form.es_tarjeta} onChange={()=>setForm(p=>({...p,es_tarjeta:false,tarjeta_id:"",socio:""}))} />
             <span className="text-xs">Normal</span>
           </label>
           <label className="flex items-center gap-2 cursor-pointer">
-            <input type="radio" checked={form.es_tarjeta === true} onChange={()=>setForm(p=>({...p,es_tarjeta:true,es_externo:false}))} />
+            <input type="radio" checked={form.es_tarjeta === true} onChange={()=>setForm(p=>({...p,es_tarjeta:true,es_externo:false,pagado:false}))} />
             <span className="text-xs">Tarjeta</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="radio" checked={form.es_externo === true} onChange={()=>setForm(p=>({...p,es_externo:true,es_tarjeta:false,tarjeta_id:"",socio:"",pagado:false,monto_neto:Math.max(0,(parseFloat(p.monto)||0)-(parseFloat(p.monto_iva)||0)).toFixed(2),monto_iva:(parseFloat(p.monto_iva)||0).toFixed(2)}))} />
-            <span className="text-xs font-medium text-amber-700">📦 Externo</span>
           </label>
         </div>
 
         {/* CAMPOS EXTRA PARA GASTOS EXTERNOS */}
         {form.es_externo === true && (
-          <div className="col-span-2 text-xs rounded-lg px-3 py-2 border font-medium
-            bg-amber-50 border-amber-200 text-amber-700">
-            {form.pagado
-              ? "El gasto afecta el saldo de cuentas y genera IVA crédito fiscal."
-              : "El gasto no afecta el saldo de cuentas. Solo se registra el IVA como crédito fiscal."}
+          <div className="col-span-2 text-xs rounded-lg px-3 py-2 border font-medium bg-amber-50 border-amber-200 text-amber-700">
+            El dinero fue aportado externamente. No afecta el saldo de cuentas. Solo genera IVA crédito fiscal.
           </div>
         )}
         {form.es_externo === true && (
@@ -5178,15 +5174,24 @@ function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[],tarjetas
           </div>
         </div>
         <div className="col-span-2"><Field label="Notas" value={form.notas} onChange={f("notas")}/></div>
-        <div className="col-span-2 flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <input type="checkbox" checked={form.pagado} onChange={e=>setForm(p=>({...p,pagado:e.target.checked}))} id="ex-pag"/>
-            <label htmlFor="ex-pag" className="text-sm text-gray-600">Pagado</label>
-          </div>
-          <div className="flex items-center gap-2">
+        <div className="col-span-2 flex flex-wrap items-center gap-3 bg-gray-50 rounded-lg p-3">
+          <span className="text-xs font-medium text-gray-600 w-full">Estado:</span>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="radio" checked={!form.pagado && !form.es_externo} onChange={()=>setForm(p=>({...p,pagado:false,es_externo:false}))}/>
+            <span className="text-xs text-gray-500">⚪ Sin pagar</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="radio" checked={form.pagado===true && !form.es_externo} onChange={()=>setForm(p=>({...p,pagado:true,es_externo:false}))}/>
+            <span className="text-xs text-green-700 font-medium">✅ Pagado</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="radio" checked={form.es_externo===true} onChange={()=>setForm(p=>({...p,es_externo:true,pagado:false,es_tarjeta:false,tarjeta_id:"",socio:"",monto_neto:p.monto_neto||(Math.max(0,(parseFloat(p.monto)||0)-(parseFloat(p.monto_iva)||0)).toFixed(2)),monto_iva:(parseFloat(p.monto_iva)||0).toFixed(2)}))}/>
+            <span className="text-xs text-amber-700 font-medium">🔶 Pago externo</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer ml-auto">
             <input type="checkbox" checked={form.iva_discriminable} onChange={e=>setForm(p=>({...p,iva_discriminable:e.target.checked}))} id="ex-iva"/>
-            <label htmlFor="ex-iva" className="text-sm text-gray-600">💵 Discriminar IVA (deducible)</label>
-          </div>
+            <label htmlFor="ex-iva" className="text-xs text-gray-600">💵 Discriminar IVA</label>
+          </label>
         </div>
       </div>
       <ModalFooter onClose={onClose} onSave={()=>onSave(form)}/>
@@ -5404,18 +5409,23 @@ function CargarFacturaPDFModal({ onClose, setExpenses, openNuevoGasto }) {
                 {EXPENSE_CATS.map(c => <option key={c}>{c}</option>)}
               </select>
             </div>
-            <div className="col-span-2 flex flex-wrap items-center gap-4 bg-gray-50 rounded-lg p-3">
+            <div className="col-span-2 flex flex-wrap items-center gap-3 bg-gray-50 rounded-lg p-3">
+              <span className="text-xs font-medium text-gray-600 w-full">Estado:</span>
               <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={form.es_externo} onChange={e => setForm(p => ({...p, es_externo: e.target.checked}))}/>
-                <span className="text-sm text-gray-600">📦 Gasto externo</span>
+                <input type="radio" checked={!form.pagado && !form.es_externo} onChange={() => setForm(p => ({...p, pagado: false, es_externo: false}))}/>
+                <span className="text-sm text-gray-600">⚪ Sin pagar</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
+                <input type="radio" checked={form.pagado === true} onChange={() => setForm(p => ({...p, pagado: true, es_externo: false}))}/>
+                <span className="text-sm text-green-700 font-medium">✅ Pagado</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="radio" checked={form.es_externo === true} onChange={() => setForm(p => ({...p, es_externo: true, pagado: false}))}/>
+                <span className="text-sm text-amber-700 font-medium">🔶 Pago externo</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer ml-auto">
                 <input type="checkbox" checked={form.iva_discriminable} onChange={e => setForm(p => ({...p, iva_discriminable: e.target.checked}))}/>
-                <span className="text-sm text-gray-600">💵 Discriminar IVA (deducible)</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={form.pagado} onChange={e => setForm(p => ({...p, pagado: e.target.checked}))}/>
-                <span className="text-sm text-gray-600">Pagado</span>
+                <span className="text-sm text-gray-600">💵 Discriminar IVA</span>
               </label>
             </div>
           </div>
