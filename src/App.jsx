@@ -1016,24 +1016,28 @@ export default function App() {
     // Cargar gastos desde Supabase
     supabase.from("gastos").select("*").order("fecha", { ascending: false }).then(({ data, error }) => {
       if(error){ console.error("Error cargando gastos:", error); return; }
-      if(data) setExpenses(data.map(g => ({
-        id:              g.id,
-        descripcion:     g.descripcion || "",
-        categoria:       g.categoria || "Otros",
-        subcategoria:    g.subcategoria || "",
-        monto:           parseFloat(g.monto) || 0,
-        fecha:           g.fecha || "",
-        proveedor:       g.proveedor || "",
-        comprobante:     g.comprobante || "",
-        url_comprobante: g.url_comprobante || "",
-        pagado:          g.pagado !== false,
-        notas:           g.notas || "",
-        es_tarjeta:      g.es_tarjeta === true,
-        tarjeta_id:      g.tarjeta_id || null,
-        socio:           g.socio || "",
-        iva_discriminable: g.iva_discriminable === true,
-        monto_iva:       parseFloat(g.monto_iva) || 0,
-      })));
+      if(data) {
+        console.log("[gastos] muestra iva_compra:", data.slice(0,3).map(g=>({id:g.id,es_externo:g.es_externo,iva_compra:g.iva_compra})));
+        setExpenses(data.map(g => ({
+          id:              g.id,
+          descripcion:     g.descripcion || "",
+          categoria:       g.categoria || "Otros",
+          subcategoria:    g.subcategoria || "",
+          monto:           parseFloat(g.monto) || 0,
+          fecha:           g.fecha || "",
+          proveedor:       g.proveedor || "",
+          comprobante:     g.comprobante || "",
+          url_comprobante: g.url_comprobante || "",
+          pagado:          g.pagado !== false,
+          notas:           g.notas || "",
+          es_tarjeta:      g.es_tarjeta === true,
+          tarjeta_id:      g.tarjeta_id || null,
+          socio:           g.socio || "",
+          es_externo:      g.es_externo === true,
+          iva_discriminable: g.iva_discriminable === true,
+          monto_iva:       parseFloat(g.iva_compra) || 0,
+        })));
+      }
     });
     // Cargar cuentas bancarias
     supabase.from("cuentas_bancarias").select("*").order("created_at").then(({ data }) => {
@@ -4670,7 +4674,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
       socio:            d.socio || null,
       es_externo:       d.es_externo === true,
       iva_discriminable: d.iva_discriminable === true,
-      monto_iva:        parseFloat(d.monto_iva) || 0,
+      iva_compra:       parseFloat(d.monto_iva) || 0,
     };
     const esUUID = d.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(d.id);
     if (esUUID) {
