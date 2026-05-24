@@ -1394,7 +1394,7 @@ function Dashboard({clients,contracts,invoices,expenses,notifications,setPage}){
   const cobrado = mi.filter(i=>i.estado==="Pagada").reduce((s,i)=>s+(i.montoCobrado||i.total),0);
   const adeudado = facturado - cobrado;
   const totalGastos=me.filter(e=>e.pagado).reduce((s,e)=>s+e.monto,0);
-  const gastosPendientes=me.filter(e=>!e.pagado).reduce((s,e)=>s+e.monto,0);
+  const gastosPendientes=me.filter(e=>!e.pagado && !e.es_externo).reduce((s,e)=>s+e.monto,0);
   const resultado=cobrado-totalGastos;
   const pendingNotifs=notifications.filter(n=>!n.read);
   return(
@@ -4616,10 +4616,10 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
         // Totales por categoría para el resumen
         totales_por_categoria: EXPENSE_CATS.map(cat => ({
           categoria: cat,
-          total: filtered.filter(e => e.categoria === cat).reduce((s,e) => s + e.monto, 0),
-          cantidad: filtered.filter(e => e.categoria === cat).length,
+          total: filtered.filter(e => e.categoria === cat && (!e.es_externo||e.pagado)).reduce((s,e) => s + e.monto, 0),
+          cantidad: filtered.filter(e => e.categoria === cat && (!e.es_externo||e.pagado)).length,
         })).filter(x => x.total > 0),
-        total_general: filtered.reduce((s,e) => s + e.monto, 0),
+        total_general: filtered.filter(e=>!e.es_externo||e.pagado).reduce((s,e) => s + e.monto, 0),
         empresa: "La Vanguardia Noticias",
         generado_en: new Date().toLocaleDateString("es-AR", {day:"2-digit",month:"long",year:"numeric"}),
       };
@@ -4739,7 +4739,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
     setExpenses(prev => prev.map(e => e.id === gasto.id ? { ...e, pagado: nuevoPagado } : e));
   };
 
-  const totFiltered=filtered.reduce((s,e)=>s+e.monto,0);
+  const totFiltered=filtered.filter(e=>!e.es_externo||e.pagado).reduce((s,e)=>s+e.monto,0);
   const baseFiltered=expenses.filter(e=>{
     const d=new Date(e.fecha);
     const matchMes=!fMonth||d.getMonth()+1===Number(fMonth);
@@ -4750,7 +4750,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
     return matchMes&&matchAnio&&matchSearch&&matchTipo;
   });
   const totPagado=filtered.filter(e=>e.pagado).reduce((s,e)=>s+e.monto,0);
-  const totPendiente=filtered.filter(e=>!e.pagado).reduce((s,e)=>s+e.monto,0);
+  const totPendiente=filtered.filter(e=>!e.pagado && !e.es_externo).reduce((s,e)=>s+e.monto,0);
   
   // Gastos por tarjeta
   const gastosPorTarjeta = tarjetasCredito.map(tarj => {
@@ -4758,7 +4758,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
     return { tarjeta: tarj, total };
   }).filter(x => x.total > 0);
 
-  const byCat=EXPENSE_CATS.map(cat=>({cat,total:baseFiltered.filter(e=>e.categoria===cat).reduce((s,e)=>s+e.monto,0)})).filter(x=>x.total>0).sort((a,b)=>b.total-a.total);
+  const byCat=EXPENSE_CATS.map(cat=>({cat,total:baseFiltered.filter(e=>e.categoria===cat&&(!e.es_externo||e.pagado)).reduce((s,e)=>s+e.monto,0)})).filter(x=>x.total>0).sort((a,b)=>b.total-a.total);
   
   return(
     <div className="space-y-4">
@@ -5041,6 +5041,14 @@ function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[],tarjetas
         </div>
 
         {/* CAMPOS EXTRA PARA GASTOS EXTERNOS */}
+        {form.es_externo === true && (
+          <div className="col-span-2 text-xs rounded-lg px-3 py-2 border font-medium
+            bg-amber-50 border-amber-200 text-amber-700">
+            {form.pagado
+              ? "El gasto afecta el saldo de cuentas y genera IVA crédito fiscal."
+              : "El gasto no afecta el saldo de cuentas. Solo se registra el IVA como crédito fiscal."}
+          </div>
+        )}
         {form.es_externo === true && (
           <div className="col-span-2 grid grid-cols-3 gap-3 bg-amber-50 rounded-lg p-3 border border-amber-200">
             <div>
