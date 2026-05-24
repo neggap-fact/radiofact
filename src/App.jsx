@@ -1027,7 +1027,7 @@ export default function App() {
           proveedor:       g.proveedor || "",
           comprobante:     g.comprobante || "",
           url_comprobante: g.url_comprobante || "",
-          pagado:          g.pagado !== false,
+          pagado:          g.es_externo ? g.pagado === true : g.pagado !== false,
           notas:           g.notas || "",
           es_tarjeta:      g.es_tarjeta === true,
           tarjeta_id:      g.tarjeta_id || null,
@@ -4752,7 +4752,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
     const matchTipo=fTipo===""||( fTipo==="normales"&&!e.es_tarjeta)||(fTipo==="tarjetas"&&e.es_tarjeta);
     return matchMes&&matchAnio&&matchSearch&&matchTipo;
   });
-  const totPagado=filtered.filter(e=>e.pagado).reduce((s,e)=>s+e.monto,0);
+  const totPagado=filtered.filter(e=>e.pagado && !(e.es_externo && !e.pagado)).reduce((s,e)=>s+e.monto,0);
   const totPendiente=filtered.filter(e=>!e.pagado && !e.es_externo).reduce((s,e)=>s+e.monto,0);
   
   // Gastos por tarjeta
@@ -4838,10 +4838,10 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
         })}
         <div className="bg-red-50 border border-red-200 rounded-xl p-3"><p className="text-xs text-red-500 font-medium">✓ Pagado</p><p className="text-lg font-bold text-red-700">{fmtMoney(totPagado)}</p></div>
         {totPendiente>0&&<div className="bg-amber-50 border border-amber-200 rounded-xl p-3"><p className="text-xs text-amber-600 font-medium">⏳ Pendiente</p><p className="text-lg font-bold text-amber-700">{fmtMoney(totPendiente)}</p></div>}
-        {filtered.filter(e=>e.es_externo).reduce((s,e)=>s+(parseFloat(e.monto_iva)||0),0)>0&&(
+        {filtered.filter(e=>e.es_externo||e.iva_discriminable).reduce((s,e)=>s+(parseFloat(e.monto_iva)||0),0)>0&&(
           <div className="bg-green-50 border border-green-200 rounded-xl p-3">
-            <p className="text-xs text-green-600 font-medium">📦 IVA crédito externos</p>
-            <p className="text-lg font-bold text-green-700">{fmtMoney(filtered.filter(e=>e.es_externo).reduce((s,e)=>s+(parseFloat(e.monto_iva)||0),0))}</p>
+            <p className="text-xs text-green-600 font-medium">💵 IVA crédito fiscal</p>
+            <p className="text-lg font-bold text-green-700">{fmtMoney(filtered.filter(e=>e.es_externo||e.iva_discriminable).reduce((s,e)=>s+(parseFloat(e.monto_iva)||0),0))}</p>
           </div>
         )}
       </div>
@@ -4888,7 +4888,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
                 </td>
                 <td className="px-3 py-2.5 text-xs font-semibold text-red-600">
                   {fmtMoney(e.monto)}
-                  {e.es_externo && parseFloat(e.monto_iva) > 0 && (
+                  {(e.es_externo || e.iva_discriminable) && parseFloat(e.monto_iva) > 0 && (
                     <div className="text-[10px] font-normal text-green-600 mt-0.5">IVA crédito: {fmtMoney(e.monto_iva)}</div>
                   )}
                 </td>
@@ -4949,7 +4949,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
                       :<span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">⏳ Pendiente</span>
                   }
                   {e.es_externo && <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-300">📦 Externo</span>}
-                  {e.es_externo && parseFloat(e.monto_iva) > 0 && (
+                  {(e.es_externo || e.iva_discriminable) && parseFloat(e.monto_iva) > 0 && (
                     <span className="text-xs text-green-600 font-medium">IVA crédito: {fmtMoney(e.monto_iva)}</span>
                   )}
                 </div>
@@ -5032,16 +5032,15 @@ function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[],tarjetas
         <div className="col-span-2 flex items-center gap-3 bg-gray-50 rounded-lg p-3 flex-wrap">
           <label className="text-xs font-medium text-gray-600">Tipo:</label>
           <label className="flex items-center gap-2 cursor-pointer">
-            <input type="radio" checked={!form.es_tarjeta} onChange={()=>setForm(p=>({...p,es_tarjeta:false,tarjeta_id:"",socio:""}))} />
+            <input type="radio" checked={!form.es_tarjeta && !form.es_externo} onChange={()=>setForm(p=>({...p,es_tarjeta:false,es_externo:false,tarjeta_id:"",socio:""}))} />
             <span className="text-xs">Normal</span>
           </label>
           <label className="flex items-center gap-2 cursor-pointer">
-            <input type="radio" checked={form.es_tarjeta === true} onChange={()=>setForm(p=>({...p,es_tarjeta:true}))} />
+            <input type="radio" checked={form.es_tarjeta === true} onChange={()=>setForm(p=>({...p,es_tarjeta:true,es_externo:false}))} />
             <span className="text-xs">Tarjeta</span>
           </label>
-          <div className="h-4 w-px bg-gray-300"/>
           <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={form.es_externo === true} onChange={e=>setForm(p=>({...p,es_externo:e.target.checked}))}/>
+            <input type="radio" checked={form.es_externo === true} onChange={()=>setForm(p=>({...p,es_externo:true,es_tarjeta:false,tarjeta_id:"",socio:"",pagado:false,monto_neto:Math.max(0,(parseFloat(p.monto)||0)-(parseFloat(p.monto_iva)||0)).toFixed(2),monto_iva:(parseFloat(p.monto_iva)||0).toFixed(2)}))} />
             <span className="text-xs font-medium text-amber-700">📦 Externo</span>
           </label>
         </div>
