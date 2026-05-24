@@ -1017,7 +1017,6 @@ export default function App() {
     supabase.from("gastos").select("*").order("fecha", { ascending: false }).then(({ data, error }) => {
       if(error){ console.error("Error cargando gastos:", error); return; }
       if(data) {
-        console.log("[gastos] muestra iva_compra:", data.slice(0,3).map(g=>({id:g.id,es_externo:g.es_externo,iva_compra:g.iva_compra})));
         setExpenses(data.map(g => ({
           id:              g.id,
           descripcion:     g.descripcion || "",
