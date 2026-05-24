@@ -1034,6 +1034,7 @@ export default function App() {
           socio:           g.socio || "",
           es_externo:      g.es_externo === true,
           iva_discriminable: g.iva_discriminable === true,
+          alicuota_iva:    g.alicuota_iva || "21",
           monto_iva:       parseFloat(g.iva_compra) || 0,
         })));
       }
@@ -4673,6 +4674,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
       socio:            d.socio || null,
       es_externo:       d.es_externo === true,
       iva_discriminable: d.iva_discriminable === true,
+      alicuota_iva:     d.alicuota_iva || "21",
       iva_compra:       parseFloat(d.monto_iva) || 0,
     };
     const esUUID = d.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(d.id);
@@ -4683,7 +4685,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
     } else {
       const { data: inserted, error } = await supabase.from("gastos").insert([payload]).select().single();
       if (error) { alert("Error guardando gasto: " + error.message); setSaving(false); return; }
-      setExpenses(prev => [...prev, { ...payload, id: inserted.id }]);
+      setExpenses(prev => [...prev, { ...payload, monto_iva: parseFloat(d.monto_iva)||0, id: inserted.id }]);
     }
     setModal(null);
     setSaving(false);
@@ -4996,6 +4998,7 @@ function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[],tarjetas
     monto_iva: data.es_externo
       ? (parseFloat(data.monto_iva)||0).toFixed(2)
       : (data.monto_iva || ""),
+    alicuota_iva: data.alicuota_iva || "21",
   }));
   const f=k=>e=>setForm(p=>({...p,[k]:e.target.value}));
 
@@ -5189,10 +5192,27 @@ function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[],tarjetas
             <span className="text-xs text-amber-700 font-medium">🔶 Pago externo</span>
           </label>
           <label className="flex items-center gap-2 cursor-pointer ml-auto">
-            <input type="checkbox" checked={form.iva_discriminable} onChange={e=>setForm(p=>({...p,iva_discriminable:e.target.checked}))} id="ex-iva"/>
+            <input type="checkbox" checked={form.iva_discriminable} onChange={e=>{const checked=e.target.checked;setForm(p=>({...p,iva_discriminable:checked,monto_iva:checked&&!p.es_externo?((parseFloat(p.monto)||0)/1.21*0.21).toFixed(2):p.monto_iva,alicuota_iva:p.alicuota_iva||"21"}));}} id="ex-iva"/>
             <label htmlFor="ex-iva" className="text-xs text-gray-600">💵 Discriminar IVA</label>
           </label>
         </div>
+        {form.iva_discriminable && !form.es_externo && (
+          <div className="col-span-2 flex flex-wrap items-center gap-3 bg-blue-50 rounded-lg p-3 border border-blue-200">
+            <span className="text-xs font-medium text-blue-700">Alícuota IVA:</span>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input type="radio" checked={form.alicuota_iva==="21"} onChange={()=>setForm(p=>({...p,alicuota_iva:"21",monto_iva:((parseFloat(p.monto)||0)/1.21*0.21).toFixed(2)}))}/>
+              <span className="text-xs font-medium text-blue-700">21%</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input type="radio" checked={form.alicuota_iva==="10.5"} onChange={()=>setForm(p=>({...p,alicuota_iva:"10.5",monto_iva:((parseFloat(p.monto)||0)/1.105*0.105).toFixed(2)}))}/>
+              <span className="text-xs font-medium text-blue-700">10.5%</span>
+            </label>
+            <div className="flex items-center gap-2 ml-3">
+              <label className="text-xs font-medium text-blue-700">IVA ($):</label>
+              <input type="number" value={form.monto_iva||""} onChange={e=>setForm(p=>({...p,monto_iva:e.target.value}))} className="w-32 px-2 py-1.5 border border-blue-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 bg-white"/>
+            </div>
+          </div>
+        )}
       </div>
       <ModalFooter onClose={onClose} onSave={()=>onSave(form)}/>
     </Modal>
@@ -5223,6 +5243,7 @@ function CargarFacturaPDFModal({ onClose, setExpenses, openNuevoGasto }) {
     es_externo: false,
     pagado: true,
     iva_discriminable: false,
+    alicuota_iva: "21",
   });
 
   const total = (parseFloat(form.neto) || 0) + (parseFloat(form.iva) || 0);
@@ -5286,6 +5307,7 @@ function CargarFacturaPDFModal({ onClose, setExpenses, openNuevoGasto }) {
         socio:             null,
         es_externo:        form.es_externo === true,
         iva_discriminable: form.iva_discriminable === true,
+        alicuota_iva:      form.alicuota_iva || "21",
         iva_compra:        parseFloat(form.iva) || 0,
       };
       const { data: inserted, error } = await supabase.from("gastos").insert([payload]).select().single();
@@ -5395,9 +5417,22 @@ function CargarFacturaPDFModal({ onClose, setExpenses, openNuevoGasto }) {
               <label className="text-xs font-medium text-gray-600">Neto ($)</label>
               <input value={form.neto} onChange={f("neto")} type="number" className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
             </div>
-            <div>
+            <div className="col-span-2">
               <label className="text-xs font-medium text-gray-600">IVA ($)</label>
-              <input value={form.iva} onChange={f("iva")} type="number" className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+              <div className="flex items-center gap-3 mt-1">
+                <input value={form.iva} onChange={f("iva")} type="number" className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+                <div className="flex items-center gap-3 bg-blue-50 rounded-lg px-3 py-2 border border-blue-200">
+                  <span className="text-xs font-medium text-blue-700">Alícuota:</span>
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input type="radio" checked={form.alicuota_iva==="21"} onChange={()=>setForm(p=>({...p,alicuota_iva:"21",iva:((parseFloat(p.neto)||0)*0.21).toFixed(2)}))}/>
+                    <span className="text-xs text-blue-700 font-medium">21%</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input type="radio" checked={form.alicuota_iva==="10.5"} onChange={()=>setForm(p=>({...p,alicuota_iva:"10.5",iva:((parseFloat(p.neto)||0)*0.105).toFixed(2)}))}/>
+                    <span className="text-xs text-blue-700 font-medium">10.5%</span>
+                  </label>
+                </div>
+              </div>
             </div>
             <div>
               <label className="text-xs font-medium text-gray-600">Total (calculado)</label>
