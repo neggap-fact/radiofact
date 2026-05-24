@@ -7061,6 +7061,8 @@ function ImportarExtractoModal({ cuentasBancarias, setIngresosBancarios, onClose
   const [seleccionados, setSeleccionados] = useState(new Set());
   const [saving, setSaving] = useState(false);
   const [importados, setImportados] = useState(0);
+  const [conflictosPDF, setConflictosPDF] = useState([]);
+  const [decisionesPDF, setDecisionesPDF] = useState({});
 
   const handleFile = (file) => {
     if (file && file.type === "application/pdf") {
@@ -7086,6 +7088,12 @@ function ImportarExtractoModal({ cuentasBancarias, setIngresosBancarios, onClose
       const movs = (data.movimientos || data.movements || []).map((m, i) => ({ ...m, _id: i }));
       setMovimientos(movs);
       setSeleccionados(new Set(movs.map(m => m._id)));
+      if (data.conflictos && data.conflictos.length > 0) {
+        setConflictosPDF(data.conflictos);
+        const init = {};
+        data.conflictos.forEach((_, i) => { init[i] = "existente"; });
+        setDecisionesPDF(init);
+      }
       setStep(2);
     } catch {
       setError("No se pudo procesar el PDF del banco. Intentá de nuevo.");
@@ -7112,20 +7120,53 @@ function ImportarExtractoModal({ cuentasBancarias, setIngresosBancarios, onClose
 
   const importar = async () => {
     const aImportar = movimientos.filter(m => seleccionados.has(m._id));
-    if (aImportar.length === 0) { alert("Seleccioná al menos un movimiento."); return; }
+    if (aImportar.length === 0 && conflictosPDF.every((_, i) => decisionesPDF[i] === "existente")) {
+      alert("Seleccioná al menos un movimiento."); return;
+    }
     setSaving(true);
     try {
-      const payloads = aImportar.map(m => ({
-        fecha:       m.fecha,
-        monto:       parseFloat(m.monto) || 0,
-        descripcion: m.descripcion || "",
-        tipo:        m.tipo || "credito",
-        cuenta_id:   cuentaId,
-      }));
-      const { data: inserted, error } = await supabase.from("ingresos_bancarios").insert(payloads).select();
-      if (error) throw error;
-      setIngresosBancarios(prev => [...(prev||[]), ...inserted]);
-      setImportados(inserted.length);
+      let totalInsertados = 0;
+
+      // Insertar movimientos seguros seleccionados
+      if (aImportar.length > 0) {
+        const payloads = aImportar.map(m => ({
+          fecha:       m.fecha,
+          monto:       parseFloat(m.monto) || 0,
+          descripcion: m.descripcion || "",
+          tipo:        m.tipo || "credito",
+          cuenta_id:   cuentaId,
+        }));
+        const { data: inserted, error } = await supabase.from("ingresos_bancarios").insert(payloads).select();
+        if (error) throw error;
+        setIngresosBancarios(prev => [...(prev||[]), ...inserted]);
+        totalInsertados += inserted.length;
+      }
+
+      // Aplicar decisiones de conflictos
+      const conflictosAInsertar = conflictosPDF
+        .filter((_, i) => decisionesPDF[i] === "nuevo" || decisionesPDF[i] === "ambos")
+        .map(c => ({
+          fecha:       c.nuevo.fecha,
+          monto:       parseFloat(c.nuevo.monto) || 0,
+          descripcion: c.nuevo.descripcion || "",
+          tipo:        c.nuevo.tipo || "credito",
+          cuenta_id:   cuentaId,
+        }));
+      const idsABorrar = conflictosPDF
+        .filter((_, i) => decisionesPDF[i] === "nuevo")
+        .map(c => c.existente.id);
+
+      if (idsABorrar.length > 0) {
+        await supabase.from("ingresos_bancarios").delete().in("id", idsABorrar);
+      }
+      if (conflictosAInsertar.length > 0) {
+        const { data: ins2, error: e2 } = await supabase.from("ingresos_bancarios").insert(conflictosAInsertar).select();
+        if (e2) throw e2;
+        setIngresosBancarios(prev => [...(prev||[]), ...ins2]);
+        totalInsertados += ins2.length;
+      }
+
+      setImportados(totalInsertados);
       setStep(3);
       setTimeout(() => onClose(), 2000);
     } catch (e) {
@@ -7251,6 +7292,37 @@ function ImportarExtractoModal({ cuentasBancarias, setIngresosBancarios, onClose
               </tbody>
             </table>
           </div>
+          {conflictosPDF.length > 0 && (
+            <div className="mt-4 space-y-3">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+                <p className="text-sm font-semibold text-amber-700">⚠️ {conflictosPDF.length} movimiento{conflictosPDF.length > 1 ? "s similares" : " similar"} ya registrado{conflictosPDF.length > 1 ? "s" : ""}</p>
+              </div>
+              {conflictosPDF.map((c, i) => (
+                <div key={i} className="border border-gray-200 rounded-lg p-3 bg-white">
+                  <div className="grid grid-cols-2 gap-2 text-xs mb-3">
+                    <div className="bg-blue-50 rounded-lg p-2.5 border border-blue-100">
+                      <p className="font-semibold text-blue-700 mb-1">📥 NUEVO (del PDF)</p>
+                      <p>{c.nuevo.fecha} — {c.nuevo.descripcion || "—"}</p>
+                      <p className="font-bold">{fmtMoney(c.nuevo.monto)}</p>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-2.5 border border-gray-200">
+                      <p className="font-semibold text-gray-600 mb-1">📋 EXISTENTE (en sistema)</p>
+                      <p>{fmtDate(c.existente.fecha)} — {c.existente.descripcion || "—"}</p>
+                      <p className="font-bold">{fmtMoney(c.existente.monto)}</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-4 text-xs pt-2 border-t border-gray-100">
+                    {[["existente","✅ Mantener existente"],["nuevo","🔄 Usar el nuevo"],["ambos","➕ Importar ambos"]].map(([val, label]) => (
+                      <label key={val} className="flex items-center gap-1.5 cursor-pointer">
+                        <input type="radio" checked={decisionesPDF[i] === val} onChange={() => setDecisionesPDF(p => ({...p, [i]: val}))}/>
+                        <span className="text-gray-600">{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="flex justify-end gap-2 mt-4">
             <button onClick={() => setStep(1)} className="px-4 py-2 text-sm text-gray-600 border border-gray-200 hover:bg-gray-50 rounded-lg">Volver</button>
             <button
@@ -7279,12 +7351,15 @@ function ImportarCSVSantanderModal({ cuentasBancarias, onClose }) {
   const [dragging, setDragging] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [resultado, setResultado] = useState(null); // { insertados, duplicados, total }
+  const [resultado, setResultado] = useState(null);
+  const [step, setStep] = useState(1);
+  const [conflictos, setConflictos] = useState([]);
+  const [decisiones, setDecisiones] = useState({});
+  const [resultadoParcial, setResultadoParcial] = useState(null);
 
   const handleFile = (f) => {
     if (f && (f.name.toLowerCase().endsWith(".csv") || f.type === "text/csv")) {
-      setFile(f);
-      setError("");
+      setFile(f); setError("");
     } else if (f) {
       setError("El archivo debe ser un CSV.");
     }
@@ -7293,8 +7368,7 @@ function ImportarCSVSantanderModal({ cuentasBancarias, onClose }) {
   const procesar = async () => {
     if (!file)     { setError("Seleccioná un archivo CSV primero."); return; }
     if (!cuentaId) { setError("Seleccioná una cuenta bancaria."); return; }
-    setLoading(true);
-    setError("");
+    setLoading(true); setError("");
     try {
       const fd = new FormData();
       fd.append("csv", file);
@@ -7302,10 +7376,50 @@ function ImportarCSVSantanderModal({ cuentasBancarias, onClose }) {
       const res = await fetch(`${BACKEND_URL}/procesar-extracto-csv`, { method: "POST", body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
-      setResultado(data);
-      setTimeout(() => onClose(), 3000);
+      if (data.conflictos && data.conflictos.length > 0) {
+        setConflictos(data.conflictos);
+        const init = {};
+        data.conflictos.forEach((_, i) => { init[i] = "existente"; });
+        setDecisiones(init);
+        setResultadoParcial({ insertados: data.insertados, duplicados_exactos: data.duplicados_exactos, total: data.total });
+        setStep(2);
+      } else {
+        setResultado(data);
+        setTimeout(() => onClose(), 3000);
+      }
     } catch (e) {
       setError(e.message || "No se pudo procesar el CSV. Intentá de nuevo.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confirmarDecisiones = async () => {
+    setLoading(true); setError("");
+    try {
+      const insertar = [];
+      const borrar_ids = [];
+      conflictos.forEach((c, i) => {
+        const d = decisiones[i] || "existente";
+        if (d === "nuevo") { insertar.push(c.nuevo); borrar_ids.push(c.existente.id); }
+        else if (d === "ambos") { insertar.push(c.nuevo); }
+      });
+      const res = await fetch(`${BACKEND_URL}/confirmar-conflictos-extracto`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ insertar, borrar_ids, cuenta_id: cuentaId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+      setResultado({
+        total: resultadoParcial?.total || 0,
+        insertados: (resultadoParcial?.insertados || 0) + (data.insertados || 0),
+        duplicados_exactos: resultadoParcial?.duplicados_exactos || 0,
+        conflictos_resueltos: conflictos.length,
+      });
+      setTimeout(() => onClose(), 3000);
+    } catch (e) {
+      setError(e.message);
     } finally {
       setLoading(false);
     }
@@ -7320,11 +7434,59 @@ function ImportarCSVSantanderModal({ cuentasBancarias, onClose }) {
           <div className="bg-gray-50 rounded-lg p-4 text-sm space-y-1 text-left inline-block mx-auto">
             <p><span className="text-gray-500">Total en el archivo:</span> <span className="font-bold">{resultado.total}</span></p>
             <p><span className="text-gray-500">Insertados:</span> <span className="font-bold text-green-600">{resultado.insertados}</span></p>
-            {resultado.duplicados > 0 && (
-              <p><span className="text-amber-600">Duplicados ignorados:</span> <span className="font-bold text-amber-600">{resultado.duplicados}</span></p>
-            )}
+            {resultado.duplicados_exactos > 0 && <p><span className="text-amber-600">Duplicados exactos ignorados:</span> <span className="font-bold text-amber-600">{resultado.duplicados_exactos}</span></p>}
+            {resultado.conflictos_resueltos > 0 && <p><span className="text-blue-600">Conflictos resueltos:</span> <span className="font-bold text-blue-600">{resultado.conflictos_resueltos}</span></p>}
           </div>
           <p className="text-xs text-gray-400">Se cierra automáticamente…</p>
+        </div>
+      </Modal>
+    );
+  }
+
+  if (step === 2) {
+    return (
+      <Modal title="⚠️ Movimientos similares encontrados" onClose={onClose} wide>
+        <div className="space-y-4">
+          <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+            <p className="text-sm font-semibold text-amber-700">{conflictos.length} movimiento{conflictos.length > 1 ? "s" : ""} similar{conflictos.length > 1 ? "es" : ""} — ya existe{conflictos.length > 1 ? "n" : ""} con referencia diferente</p>
+            <p className="text-xs text-amber-600 mt-0.5">Insertados automáticamente: {resultadoParcial?.insertados ?? 0} · Duplicados exactos ignorados: {resultadoParcial?.duplicados_exactos ?? 0}</p>
+          </div>
+          <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+            {conflictos.map((c, i) => (
+              <div key={i} className="border border-gray-200 rounded-lg p-3 bg-white">
+                <div className="grid grid-cols-2 gap-2 text-xs mb-3">
+                  <div className="bg-blue-50 rounded-lg p-2.5 border border-blue-100">
+                    <p className="font-semibold text-blue-700 mb-1">📥 NUEVO (del extracto)</p>
+                    <p className="text-gray-700">{fmtDate(c.nuevo.fecha)} — {c.nuevo.descripcion || "—"}</p>
+                    <p className="font-bold text-gray-900 mt-0.5">{fmtMoney(c.nuevo.importe)}</p>
+                    <p className="text-gray-400 mt-0.5">ref: {c.nuevo.referencia || "—"}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-2.5 border border-gray-200">
+                    <p className="font-semibold text-gray-600 mb-1">📋 EXISTENTE (en sistema)</p>
+                    <p className="text-gray-700">{fmtDate(c.existente.fecha)} — {c.existente.descripcion || "—"}</p>
+                    <p className="font-bold text-gray-900 mt-0.5">{fmtMoney(c.existente.importe)}</p>
+                    <p className="text-gray-400 mt-0.5">ref: {c.existente.referencia || "—"} · {c.existente.origen || "manual"}</p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-4 text-xs pt-2 border-t border-gray-100">
+                  {[["existente","✅ Mantener existente"],["nuevo","🔄 Usar el nuevo (reemplaza)"],["ambos","➕ Importar ambos"]].map(([val, label]) => (
+                    <label key={val} className="flex items-center gap-1.5 cursor-pointer">
+                      <input type="radio" checked={decisiones[i] === val} onChange={() => setDecisiones(p => ({...p, [i]: val}))}/>
+                      <span className="text-gray-600">{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          {error && <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{error}</div>}
+          <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
+            <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">Cancelar</button>
+            <button onClick={confirmarDecisiones} disabled={loading}
+              className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+              {loading ? "Aplicando…" : "Confirmar decisiones"}
+            </button>
+          </div>
         </div>
       </Modal>
     );
@@ -7343,11 +7505,7 @@ function ImportarCSVSantanderModal({ cuentasBancarias, onClose }) {
             ))}
           </select>
         </div>
-
-        <p className="text-sm text-gray-500">
-          Subí el extracto CSV del Santander — se va a importar directo a la tabla de movimientos.
-        </p>
-
+        <p className="text-sm text-gray-500">Subí el extracto CSV del Santander — se va a importar directo a la tabla de movimientos.</p>
         <div
           className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${dragging ? "border-green-400 bg-green-50" : file ? "border-green-400 bg-green-50" : "border-gray-300 hover:border-green-300 hover:bg-gray-50"}`}
           onDragOver={e => { e.preventDefault(); setDragging(true); }}
@@ -7355,40 +7513,19 @@ function ImportarCSVSantanderModal({ cuentasBancarias, onClose }) {
           onDrop={e => { e.preventDefault(); setDragging(false); handleFile(e.dataTransfer.files[0]); }}
           onClick={() => document.getElementById("csv-santander-input").click()}
         >
-          <input id="csv-santander-input" type="file" accept=".csv,text/csv" className="hidden"
-            onChange={e => handleFile(e.target.files[0])} />
+          <input id="csv-santander-input" type="file" accept=".csv,text/csv" className="hidden" onChange={e => handleFile(e.target.files[0])} />
           {file ? (
-            <div>
-              <p className="text-green-700 font-medium text-sm">✓ {file.name}</p>
-              <p className="text-xs text-green-500 mt-1">{(file.size / 1024).toFixed(0)} KB</p>
-            </div>
+            <div><p className="text-green-700 font-medium text-sm">✓ {file.name}</p><p className="text-xs text-green-500 mt-1">{(file.size / 1024).toFixed(0)} KB</p></div>
           ) : (
-            <div>
-              <div className="text-3xl mb-2">📊</div>
-              <p className="text-sm text-gray-500">Arrastrá el CSV aquí o hacé click para seleccionar</p>
-              <p className="text-xs text-gray-400 mt-1">Encoding: latin-1 · Separador: punto y coma</p>
-            </div>
+            <div><div className="text-3xl mb-2">📊</div><p className="text-sm text-gray-500">Arrastrá el CSV aquí o hacé click para seleccionar</p><p className="text-xs text-gray-400 mt-1">Encoding: latin-1 · Separador: punto y coma</p></div>
           )}
         </div>
-
         {error && <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{error}</div>}
-
         <div className="flex justify-end gap-2">
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">Cancelar</button>
-          <button
-            onClick={procesar}
-            disabled={!file || !cuentaId || loading}
-            className="flex items-center gap-2 px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
-          >
-            {loading ? (
-              <>
-                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
-                </svg>
-                Importando…
-              </>
-            ) : "Importar movimientos"}
+          <button onClick={procesar} disabled={!file || !cuentaId || loading}
+            className="flex items-center gap-2 px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50">
+            {loading ? (<><svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg>Importando…</>) : "Importar movimientos"}
           </button>
         </div>
       </div>
