@@ -6300,10 +6300,11 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
   }, 0);
   const ivaPagar = Math.max(0, totIva - ivaComprasEstimado);
 
-  // ── POSICIÓN IVA CON GASTOS EXTERNOS ───────────
-  // Usa el IVA exacto ingresado en gastos con es_externo=true
-  const gastosExternos = filtExp.filter(e => e.es_externo === true);
-  const ivaCredito = gastosExternos.reduce((s,e) => s + (parseFloat(e.monto_iva)||0), 0);
+  // ── POSICIÓN IVA ────────────────────────────────
+  // Crédito: gastos con es_externo=true + gastos con iva_discriminable=true (iva_compra exacto)
+  const ivaCredito = filtExp
+    .filter(e => e.es_externo === true || e.iva_discriminable === true)
+    .reduce((s,e) => s + (parseFloat(e.monto_iva)||0), 0);
   const ivaDebito = totIva;
   const ivaPosicion = ivaDebito - ivaCredito; // positivo = a pagar, negativo = saldo a favor
 
@@ -6532,7 +6533,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
             </div>
             <div className="text-xs text-gray-400 mt-0.5 space-y-0.5">
               <div>Débito: {fmt(ivaDebito)}</div>
-              <div className="text-green-600">Crédito externos: {fmt(ivaCredito)}</div>
+              <div className="text-green-600">Crédito fiscal: {fmt(ivaCredito)}</div>
             </div>
           </div>
           <div className="bg-purple-50 rounded-lg p-3 border-l-4 border-purple-500">
