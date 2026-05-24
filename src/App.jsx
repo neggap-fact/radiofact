@@ -2141,6 +2141,56 @@ function CobroModal({factura, onCobrar, onClose, cuentasBancarias=[]}){
   );
 }
 
+// ── MODAL EDITAR MONTO COBRADO (solo webmaster, facturas Pagadas) ────────────
+function ModalEditarCobro({ inv, onSave, onClose }) {
+  const [monto, setMonto] = useState(inv.montoCobrado > 0 ? inv.montoCobrado : inv.total);
+  const [guardando, setGuardando] = useState(false);
+
+  const handleGuardar = async () => {
+    const montoNum = parseFloat(monto);
+    if (!montoNum || montoNum <= 0) { alert("Ingresá un monto válido"); return; }
+    setGuardando(true);
+    await onSave(inv.id, montoNum);
+    setGuardando(false);
+  };
+
+  return (
+    <Modal title="✏️ Editar monto cobrado" onClose={onClose}>
+      <div className="space-y-4">
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+          <p className="text-xs text-blue-600 font-medium">{inv.numero} — {inv.clientName}</p>
+          <p className="text-xs text-blue-500 mt-1">Total facturado: {fmtMoney(inv.total)}</p>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-700 block mb-1">Monto cobrado real ($)</label>
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-medium">$</span>
+            <input
+              type="number"
+              value={monto}
+              onChange={e => setMonto(e.target.value)}
+              step="0.01"
+              className="w-full pl-8 pr-3 py-3 border-2 border-gray-200 rounded-lg text-base font-semibold focus:outline-none focus:border-blue-400"
+              autoFocus
+            />
+          </div>
+        </div>
+        <div className="flex gap-3 justify-end pt-4 border-t border-gray-200">
+          <button onClick={onClose} className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50 font-medium">
+            Cancelar
+          </button>
+          <button
+            onClick={handleGuardar}
+            disabled={guardando}
+            className="px-5 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold disabled:opacity-50">
+            {guardando ? "Guardando..." : "Guardar"}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function SyncArcaModal({ clients, invoices, onClose, onImportar }) {
   const [puntoVenta, setPuntoVenta] = useState(1);
   const [tipoFactura, setTipoFactura] = useState("A");
@@ -2827,6 +2877,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
   const [ncModal,setNcModal]=useState(null);
   const [manualModal,setManualModal]=useState(false);
   const [modalCobro,setModalCobro]=useState(null);
+  const [modalEditarCobro,setModalEditarCobro]=useState(null);
   const [syncModal,setSyncModal]=useState(false);
   const [cobroModal,setCobroModal]=useState(null);
   const [editContractModal,setEditContractModal]=useState(null);
@@ -3204,6 +3255,11 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
     setModalCobro(null);
   };
 
+  const editarMontoCobrado = async (invId, montoNum) => {
+    await updateInvoice(invId, { montoCobrado: montoNum });
+    setModalEditarCobro(null);
+  };
+
   // ── v3.5: Editar factura pendiente de aprobación ──────────────
   const guardarEdicionFactura = async (datos) => {
     if (!editarFacturaModal) return;
@@ -3441,6 +3497,12 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
                           ret. {fmtMoney(inv.retenciones)}
                         </span>
                       )}
+                      {currentUser.role==="webmaster" && inv.estado==="Pagada" && (
+                        <button onClick={()=>setModalEditarCobro(inv)}
+                          className="text-xs px-2 py-0.5 bg-blue-50 text-blue-600 border border-blue-200 rounded hover:bg-blue-100 font-medium">
+                          ✏️ Editar cobro
+                        </button>
+                      )}
                     </div>
                   </td>
                   <td className="px-3 py-2.5">
@@ -3676,6 +3738,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
         />
       )}
       {modalCobro&&<CobroModal factura={modalCobro} onCobrar={marcarCobrada} onClose={()=>setModalCobro(null)} cuentasBancarias={cuentasBancarias}/>}
+      {modalEditarCobro&&<ModalEditarCobro inv={modalEditarCobro} onSave={editarMontoCobrado} onClose={()=>setModalEditarCobro(null)}/>}
       {syncModal && (
         <SyncArcaModal
           clients={clients}
@@ -3731,6 +3794,12 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
                   <button onClick={()=>{setModalCobro(inv);cerrar();}}
                     className="w-full flex items-center gap-3 px-4 py-3 bg-green-50 text-green-700 rounded-lg text-sm font-medium hover:bg-green-100 transition-colors">
                     <Icon d={Icons.cash} size={16}/>Marcar como cobrada
+                  </button>
+                )}
+                {currentUser.role==="webmaster"&&inv.estado==="Pagada"&&(
+                  <button onClick={()=>{setModalEditarCobro(inv);cerrar();}}
+                    className="w-full flex items-center gap-3 px-4 py-3 bg-blue-50 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-100 transition-colors">
+                    ✏️ Editar monto cobrado
                   </button>
                 )}
                 {canEdit&&inv.cae&&inv.estado==="Emitida"&&!inv.nc_id&&(
