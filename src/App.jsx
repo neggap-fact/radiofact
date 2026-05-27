@@ -6716,12 +6716,20 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
         </div>
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-200">
-            <tr>{["Cliente","Facturas","Última factura","Neto","IVA","Total","Cobrado","Saldo","Acciones"].map(h=><th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">{h}</th>)}</tr>
+            <tr>{["Cliente","Facturas","Última factura","Total","Cobrado","Saldo","Acciones"].map(h=><th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">{h}</th>)}</tr>
           </thead>
           <tbody>
             {byClient.map(c=>{
-              const ultFecha = c.facturas && c.facturas.length > 0 
-                ? new Date(c.facturas[c.facturas.length - 1].fecha_emision || c.facturas[c.facturas.length - 1].createdAt)
+              const facturasActivas = c.facturas.filter(i => i.estado !== "Anulada");
+              const ultFac = facturasActivas.length > 0
+                ? facturasActivas.reduce((max, i) => (i.fecha > max.fecha ? i : max), facturasActivas[0])
+                : null;
+              const ultFecha = ultFac?.fecha
+                ? new Date(
+                    ultFac.fecha.slice(0,4) + "-" +
+                    ultFac.fecha.slice(4,6) + "-" +
+                    ultFac.fecha.slice(6,8) + "T12:00:00"
+                  )
                 : null;
               const tieneDeuda = c.facturado - c.cobrado > 0;
               return(
@@ -6730,10 +6738,8 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
                   <div className="font-medium">{c.razonSocial}</div>
                   {c.alias && <div className="text-xs text-gray-400">{c.alias}</div>}
                 </td>
-                <td className="px-4 py-3 text-xs text-center text-gray-500">{c.facturas.length}</td>
+                <td className="px-4 py-3 text-xs text-center text-gray-500">{facturasActivas.length}</td>
                 <td className="px-4 py-3 text-xs text-gray-500">{ultFecha ? ultFecha.toLocaleDateString("es-AR") : "—"}</td>
-                <td className="px-4 py-3 text-xs text-gray-600">{fmt(c.neto)}</td>
-                <td className="px-4 py-3 text-xs font-medium text-orange-600">{fmt(c.iva)}</td>
                 <td className="px-4 py-3 text-xs font-semibold">{fmt(c.facturado)}</td>
                 <td className="px-4 py-3 text-xs text-green-700">{fmt(c.cobrado)}</td>
                 <td className="px-4 py-3 text-xs font-semibold text-red-600">{tieneDeuda?fmt(c.facturado-c.cobrado):"—"}</td>
