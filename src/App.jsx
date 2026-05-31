@@ -405,6 +405,7 @@ export default function App() {
   const [ingresosBancarios, setIngresosBancarios] = useState([]);
   const [saldosIniciales, setSaldosIniciales] = useState([]);
   const [cuentasBancarias, setCuentasBancarias] = useState([]);
+  const [movimientosBancarios, setMovimientosBancarios] = useState([]);
   const [tarjetasCredito, setTarjetasCredito] = useState([]);
   const [notifications, setNotifications] = useState([]);
 
@@ -1044,6 +1045,11 @@ export default function App() {
       if (data) setCuentasBancarias(data);
     });
 
+    // Cargar movimientos bancarios
+    supabase.from("movimientos_bancarios").select("*").order("fecha", { ascending: false }).then(({ data }) => {
+      if (data) setMovimientosBancarios(data);
+    });
+
     // Cargar tarjetas de crédito
     supabase.from("tarjetas_credito").select("*").order("socio").then(({ data }) => {
       if (data) setTarjetasCredito(data);
@@ -1309,7 +1315,7 @@ export default function App() {
           {page==="aprobaciones"&&currentUser.role==="webmaster"&&<Aprobaciones invoices={invoices} setInvoices={setInvoices} clients={clients} contracts={contracts} users={users} currentUser={currentUser} guardarFacturaSupabase={guardarFacturaSupabase} setNotifications={setNotifications}/>}
           {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} currentUser={currentUser} canEdit={canEdit} plantillas={plantillasGastos} setPlantillas={setPlantillasGastos} proveedores={proveedores} setProveedores={setProveedores} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias} tarjetasCredito={tarjetasCredito} setTarjetasCredito={setTarjetasCredito}/>}
           {page==="proveedores"&&<ProveedoresPage proveedores={proveedores} setProveedores={setProveedores} canEdit={canEdit}/>}
-          {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses} ingresosBancarios={ingresosBancarios} setIngresosBancarios={setIngresosBancarios} saldosIniciales={saldosIniciales} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias} setPage={setPage} setClientePreFiltro={setClientePreFiltro}/>}
+          {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses} ingresosBancarios={ingresosBancarios} setIngresosBancarios={setIngresosBancarios} saldosIniciales={saldosIniciales} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias} movimientosBancarios={movimientosBancarios} setPage={setPage} setClientePreFiltro={setClientePreFiltro}/>}
           {page==="users"&&currentUser.role==="webmaster"&&<Users users={users} setUsers={setUsers} currentUser={currentUser}/>}
           {page==="settings"&&<Settings config={config} setConfig={setConfig} canEdit={canEdit}/>}
           {emailNCModal && (
@@ -6284,7 +6290,7 @@ function EmitirNCModal({ factura, cliente, onClose, onConfirm }) {
   );
 }
 
-function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBancarios,saldosIniciales=[],cuentasBancarias=[],setCuentasBancarias,setPage,setClientePreFiltro}){
+function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBancarios,saldosIniciales=[],cuentasBancarias=[],setCuentasBancarias,movimientosBancarios=[],setPage,setClientePreFiltro}){
   const today=new Date();
   const [fMonth,setFMonth]=useState(String(today.getMonth()+1));
   const [fYear,setFYear]=useState(String(today.getFullYear()));
@@ -6294,7 +6300,9 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
   const [modalCSV,setModalCSV]=useState(false);
   const [mostrarMontos,setMostrarMontos]=useState(false);
   const [modalPDF,setModalPDF]=useState(false);
-  
+  const [movBancCuenta,setMovBancCuenta]=useState("todas");
+  const [movBancPage,setMovBancPage]=useState(1);
+
   // Helper: formatear monto respetando si está oculto
   const fmt = (val) => mostrarMontos ? fmtMoney(val) : "••••••";
 
@@ -6554,7 +6562,89 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
       </div>
 
       {/* ══════════════════════════════════════════ */}
-      {/* 2) FACTURACIÓN E IMPUESTOS                 */}
+      {/* 2) MOVIMIENTOS BANCARIOS                   */}
+      {/* ══════════════════════════════════════════ */}
+      {(() => {
+        const INGRESO_RE = /recibida|recibido|credito|crédito|ingreso/i;
+        const PAGE_SIZE = 50;
+        const filtMov = movimientosBancarios.filter(m => {
+          const d = new Date(m.fecha);
+          const okPer = (!fMonth || d.getMonth()+1 === Number(fMonth)) && (!fYear || d.getFullYear() === Number(fYear));
+          const okCuenta = movBancCuenta === "todas" || m.cuenta_id === movBancCuenta;
+          return okPer && okCuenta;
+        });
+        const totalPages = Math.max(1, Math.ceil(filtMov.length / PAGE_SIZE));
+        const paginated = filtMov.slice((movBancPage-1)*PAGE_SIZE, movBancPage*PAGE_SIZE);
+        return (
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <h3 className="text-sm font-semibold text-gray-700">📋 Movimientos bancarios</h3>
+              <select
+                value={movBancCuenta}
+                onChange={e => { setMovBancCuenta(e.target.value); setMovBancPage(1); }}
+                className="text-xs border border-gray-200 rounded-lg px-2 py-1 text-gray-600"
+              >
+                <option value="todas">Todas las cuentas</option>
+                {cuentasBancarias.filter(c => c.activa !== false).map(c => (
+                  <option key={c.id} value={c.id}>{c.nombre}</option>
+                ))}
+              </select>
+            </div>
+            {filtMov.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-6">Sin movimientos para este período.</p>
+            ) : (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-gray-100">
+                        <th className="text-left py-2 pr-3 text-gray-500 font-medium">Fecha</th>
+                        <th className="text-left py-2 pr-3 text-gray-500 font-medium">Descripción</th>
+                        <th className="text-right py-2 pr-3 text-gray-500 font-medium">Importe</th>
+                        <th className="text-left py-2 text-gray-500 font-medium">Referencia</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginated.map(m => {
+                        const esIngreso = INGRESO_RE.test(m.descripcion || "");
+                        const colorCls = esIngreso ? "text-green-700" : "text-red-600";
+                        return (
+                          <tr key={m.id} className="border-b border-gray-50 hover:bg-gray-50">
+                            <td className="py-1.5 pr-3 text-gray-500 whitespace-nowrap">{m.fecha}</td>
+                            <td className={`py-1.5 pr-3 ${colorCls} max-w-xs truncate`}>{m.descripcion || "—"}</td>
+                            <td className={`py-1.5 pr-3 text-right font-medium whitespace-nowrap ${colorCls}`}>{fmt(parseFloat(m.importe)||0)}</td>
+                            <td className="py-1.5 text-gray-400 max-w-xs truncate">{m.referencia || "—"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
+                    <p className="text-xs text-gray-400">{filtMov.length} movimientos · pág {movBancPage}/{totalPages}</p>
+                    <div className="flex gap-1">
+                      <button
+                        disabled={movBancPage === 1}
+                        onClick={() => setMovBancPage(p => p-1)}
+                        className="text-xs px-2 py-1 border border-gray-200 rounded disabled:opacity-30 hover:bg-gray-50"
+                      >‹ Ant</button>
+                      <button
+                        disabled={movBancPage === totalPages}
+                        onClick={() => setMovBancPage(p => p+1)}
+                        className="text-xs px-2 py-1 border border-gray-200 rounded disabled:opacity-30 hover:bg-gray-50"
+                      >Sig ›</button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* ══════════════════════════════════════════ */}
+      {/* 3) FACTURACIÓN E IMPUESTOS                 */}
       {/* ══════════════════════════════════════════ */}
       <div className="bg-white rounded-xl border border-gray-200 p-4">
         <h3 className="text-sm font-semibold text-gray-700 mb-3">📊 Facturación e impuestos</h3>
