@@ -1315,7 +1315,7 @@ export default function App() {
           {page==="aprobaciones"&&currentUser.role==="webmaster"&&<Aprobaciones invoices={invoices} setInvoices={setInvoices} clients={clients} contracts={contracts} users={users} currentUser={currentUser} guardarFacturaSupabase={guardarFacturaSupabase} setNotifications={setNotifications}/>}
           {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} currentUser={currentUser} canEdit={canEdit} plantillas={plantillasGastos} setPlantillas={setPlantillasGastos} proveedores={proveedores} setProveedores={setProveedores} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias} tarjetasCredito={tarjetasCredito} setTarjetasCredito={setTarjetasCredito}/>}
           {page==="proveedores"&&<ProveedoresPage proveedores={proveedores} setProveedores={setProveedores} canEdit={canEdit}/>}
-          {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses} ingresosBancarios={ingresosBancarios} setIngresosBancarios={setIngresosBancarios} saldosIniciales={saldosIniciales} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias} movimientosBancarios={movimientosBancarios} setPage={setPage} setClientePreFiltro={setClientePreFiltro}/>}
+          {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses} setExpenses={setExpenses} ingresosBancarios={ingresosBancarios} setIngresosBancarios={setIngresosBancarios} saldosIniciales={saldosIniciales} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias} movimientosBancarios={movimientosBancarios} setMovimientosBancarios={setMovimientosBancarios} setPage={setPage} setClientePreFiltro={setClientePreFiltro}/>}
           {page==="users"&&currentUser.role==="webmaster"&&<Users users={users} setUsers={setUsers} currentUser={currentUser}/>}
           {page==="settings"&&<Settings config={config} setConfig={setConfig} canEdit={canEdit}/>}
           {emailNCModal && (
@@ -6290,18 +6290,17 @@ function EmitirNCModal({ factura, cliente, onClose, onConfirm }) {
   );
 }
 
-function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBancarios,saldosIniciales=[],cuentasBancarias=[],setCuentasBancarias,movimientosBancarios=[],setPage,setClientePreFiltro}){
+function Finance({clients,invoices,expenses,setExpenses,ingresosBancarios=[],setIngresosBancarios,saldosIniciales=[],cuentasBancarias=[],setCuentasBancarias,movimientosBancarios=[],setMovimientosBancarios,setPage,setClientePreFiltro}){
   const today=new Date();
   const [fMonth,setFMonth]=useState(String(today.getMonth()+1));
   const [fYear,setFYear]=useState(String(today.getFullYear()));
   const [modalCuentas,setModalCuentas]=useState(false);
   const [modalMovEfectivo,setModalMovEfectivo]=useState(false);
   const [modalExtracto,setModalExtracto]=useState(false);
-  const [modalCSV,setModalCSV]=useState(false);
   const [mostrarMontos,setMostrarMontos]=useState(false);
   const [modalPDF,setModalPDF]=useState(false);
-  const [movBancCuenta,setMovBancCuenta]=useState("todas");
-  const [movBancPage,setMovBancPage]=useState(1);
+  const [movBancExpandida,setMovBancExpandida]=useState(null);
+  const [editandoMovimiento,setEditandoMovimiento]=useState(null);
 
   // Helper: formatear monto respetando si está oculto
   const fmt = (val) => mostrarMontos ? fmtMoney(val) : "••••••";
@@ -6484,16 +6483,9 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
             <button
               onClick={() => setModalExtracto(true)}
               className="flex items-center gap-1 text-xs bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700"
-              title="Importar movimientos desde PDF del banco"
+              title="Importar extracto bancario (Santander o Credicoop)"
             >
-              📤 Importar extracto
-            </button>
-            <button
-              onClick={() => setModalCSV(true)}
-              className="flex items-center gap-1 text-xs bg-green-600 text-white px-3 py-1.5 rounded-lg hover:bg-green-700"
-              title="Importar CSV del Santander"
-            >
-              📊 CSV Santander
+              📊 Importar extracto
             </button>
             <button
               onClick={() => setModalCuentas(true)}
@@ -6562,91 +6554,136 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
       </div>
 
       {/* ══════════════════════════════════════════ */}
-      {/* 2) MOVIMIENTOS BANCARIOS                   */}
+      {/* 2) MOVIMIENTOS BANCARIOS — VISTA POR CATEG */}
       {/* ══════════════════════════════════════════ */}
-      <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-center text-sm text-gray-400">
-        📋 Movimientos bancarios — próximamente con vista unificada por categoría
-      </div>
-      {/* TABLA MOVIMIENTOS — restaurar cuando esté lista la vista por categoría
       {(() => {
-        const INGRESO_RE = /recibida|recibido|credito|crédito|ingreso/i;
-        const PAGE_SIZE = 50;
-        const filtMov = movimientosBancarios.filter(m => {
-          const d = new Date(m.fecha);
-          const okPer = (!fMonth || d.getMonth()+1 === Number(fMonth)) && (!fYear || d.getFullYear() === Number(fYear));
-          const okCuenta = movBancCuenta === "todas" || m.cuenta_id === movBancCuenta;
-          return okPer && okCuenta;
+        const CATEGORIAS_INFO = {
+          transferencia_recibida: { label: "📥 Transferencias recibidas", color: "text-green-700", bg: "bg-green-50", esIngreso: true },
+          transferencia_emitida:  { label: "📤 Transferencias emitidas",  color: "text-red-600",   bg: "bg-red-50",   esIngreso: false },
+          servicio:               { label: "💳 Pagos servicios",          color: "text-red-600",   bg: "bg-red-50",   esIngreso: false },
+          impuesto_banco:         { label: "🏛️ Impuestos banco",          color: "text-red-600",   bg: "bg-red-50",   esIngreso: false },
+          comision:               { label: "🏦 Comisiones",               color: "text-red-600",   bg: "bg-red-50",   esIngreso: false },
+          otro:                   { label: "❓ Otros",                    color: "text-gray-600",  bg: "bg-gray-50",  esIngreso: false },
+        };
+        const filtMov = (movimientosBancarios||[]).filter(m => {
+          const d = new Date(m.fecha + "T12:00:00");
+          return (!fMonth || d.getMonth()+1 === Number(fMonth)) && (!fYear || d.getFullYear() === Number(fYear));
         });
-        const totalPages = Math.max(1, Math.ceil(filtMov.length / PAGE_SIZE));
-        const paginated = filtMov.slice((movBancPage-1)*PAGE_SIZE, movBancPage*PAGE_SIZE);
+        const porCategoria = {};
+        for (const m of filtMov) {
+          const cat = m.categoria || (m.tipo === "ingreso" ? "transferencia_recibida" : "otro");
+          if (!porCategoria[cat]) porCategoria[cat] = { movimientos: [], total: 0 };
+          porCategoria[cat].movimientos.push(m);
+          porCategoria[cat].total += parseFloat(m.importe) || 0;
+        }
+        const ordenCats = ["transferencia_recibida","transferencia_emitida","servicio","impuesto_banco","comision","otro"];
+        const catsConDatos = ordenCats.filter(c => porCategoria[c]);
+
+        const crearGastoDesdeMovimiento = async (m) => {
+          const monto = parseFloat(m.importe) || 0;
+          const payload = {
+            fecha: m.fecha,
+            categoria: "Gastos bancarios",
+            subcategoria: m.descripcion || "Movimiento bancario",
+            proveedor: (cuentasBancarias.find(c => c.id === m.cuenta_id)?.banco) || "Banco",
+            monto,
+            pagado: true,
+            detalle: m.referencia || "",
+          };
+          const { data, error } = await supabase.from("gastos").insert(payload).select().single();
+          if (error) { alert("Error creando gasto: " + error.message); return; }
+          if (typeof setExpenses === "function") setExpenses(prev => [...prev, data]);
+          alert("✓ Gasto creado correctamente.");
+        };
+
         return (
           <div className="bg-white rounded-xl border border-gray-200 p-4">
-            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-gray-700">📋 Movimientos bancarios</h3>
-              <select
-                value={movBancCuenta}
-                onChange={e => { setMovBancCuenta(e.target.value); setMovBancPage(1); }}
-                className="text-xs border border-gray-200 rounded-lg px-2 py-1 text-gray-600"
-              >
-                <option value="todas">Todas las cuentas</option>
-                {cuentasBancarias.filter(c => c.activa !== false).map(c => (
-                  <option key={c.id} value={c.id}>{c.nombre}</option>
-                ))}
-              </select>
+              <span className="text-xs text-gray-400">{filtMov.length} mov. · {MONTHS[Number(fMonth)-1]} {fYear}</span>
             </div>
-            {filtMov.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-6">Sin movimientos para este período.</p>
+            {catsConDatos.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-6">Sin movimientos para este período. Importá un extracto bancario.</p>
             ) : (
-              <>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="border-b border-gray-100">
-                        <th className="text-left py-2 pr-3 text-gray-500 font-medium">Fecha</th>
-                        <th className="text-left py-2 pr-3 text-gray-500 font-medium">Descripción</th>
-                        <th className="text-right py-2 pr-3 text-gray-500 font-medium">Importe</th>
-                        <th className="text-left py-2 text-gray-500 font-medium">Referencia</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {paginated.map(m => {
-                        const esIngreso = INGRESO_RE.test(m.descripcion || "");
-                        const colorCls = esIngreso ? "text-green-700" : "text-red-600";
-                        return (
-                          <tr key={m.id} className="border-b border-gray-50 hover:bg-gray-50">
-                            <td className="py-1.5 pr-3 text-gray-500 whitespace-nowrap">{m.fecha}</td>
-                            <td className={`py-1.5 pr-3 ${colorCls} max-w-xs truncate`}>{m.descripcion || "—"}</td>
-                            <td className={`py-1.5 pr-3 text-right font-medium whitespace-nowrap ${colorCls}`}>{fmt(parseFloat(m.importe)||0)}</td>
-                            <td className="py-1.5 text-gray-400 max-w-xs truncate">{m.referencia || "—"}</td>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="text-left px-3 py-2 text-xs font-medium text-gray-500">Categoría</th>
+                      <th className="text-center px-3 py-2 text-xs font-medium text-gray-500">Movimientos</th>
+                      <th className="text-right px-3 py-2 text-xs font-medium text-gray-500">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {catsConDatos.map(cat => {
+                      const info = CATEGORIAS_INFO[cat] || CATEGORIAS_INFO.otro;
+                      const datos = porCategoria[cat];
+                      const expandida = movBancExpandida === cat;
+                      return (
+                        <>
+                          <tr
+                            key={cat}
+                            className={`border-t border-gray-100 cursor-pointer hover:bg-gray-50 ${expandida ? "bg-gray-50" : ""}`}
+                            onClick={() => setMovBancExpandida(expandida ? null : cat)}
+                          >
+                            <td className={`px-3 py-2.5 font-medium text-sm ${info.color}`}>
+                              {info.label} <span className="text-gray-400 text-xs ml-1">{expandida ? "▲" : "▼"}</span>
+                            </td>
+                            <td className="px-3 py-2.5 text-center text-gray-500 text-xs">{datos.movimientos.length}</td>
+                            <td className={`px-3 py-2.5 text-right font-semibold ${info.color}`}>{fmt(datos.total)}</td>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-                {totalPages > 1 && (
-                  <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
-                    <p className="text-xs text-gray-400">{filtMov.length} movimientos · pág {movBancPage}/{totalPages}</p>
-                    <div className="flex gap-1">
-                      <button
-                        disabled={movBancPage === 1}
-                        onClick={() => setMovBancPage(p => p-1)}
-                        className="text-xs px-2 py-1 border border-gray-200 rounded disabled:opacity-30 hover:bg-gray-50"
-                      >‹ Ant</button>
-                      <button
-                        disabled={movBancPage === totalPages}
-                        onClick={() => setMovBancPage(p => p+1)}
-                        className="text-xs px-2 py-1 border border-gray-200 rounded disabled:opacity-30 hover:bg-gray-50"
-                      >Sig ›</button>
-                    </div>
-                  </div>
-                )}
-              </>
+                          {expandida && datos.movimientos.map(m => (
+                            <tr key={m.id} className={`border-t border-gray-50 ${info.bg}`}>
+                              <td className="px-3 py-1.5 pl-8 text-xs text-gray-700" colSpan={1}>
+                                <span className="text-gray-400 mr-2">{m.fecha}</span>
+                                {m.concepto || m.descripcion || "—"}
+                                {m.referencia && <span className="text-gray-400 ml-2 text-[10px]">ref:{m.referencia}</span>}
+                              </td>
+                              <td className="px-3 py-1.5 text-center">
+                                <div className="flex items-center justify-center gap-1">
+                                  <button
+                                    onClick={() => setEditandoMovimiento(m)}
+                                    className="text-xs px-1.5 py-0.5 text-blue-600 hover:bg-blue-50 rounded"
+                                    title="Editar categoría/concepto"
+                                  >✏️</button>
+                                  {!info.esIngreso && (
+                                    <button
+                                      onClick={() => crearGastoDesdeMovimiento(m)}
+                                      className="text-xs px-1.5 py-0.5 text-green-600 hover:bg-green-50 rounded"
+                                      title="Crear gasto asociado"
+                                    >📎→Gasto</button>
+                                  )}
+                                </div>
+                              </td>
+                              <td className={`px-3 py-1.5 text-right text-xs font-medium ${info.color}`}>{fmt(parseFloat(m.importe)||0)}</td>
+                            </tr>
+                          ))}
+                        </>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         );
       })()}
-      */}
+
+      {/* Modal editar movimiento bancario */}
+      {editandoMovimiento && (
+        <EditarMovimientoModal
+          movimiento={editandoMovimiento}
+          onClose={() => setEditandoMovimiento(null)}
+          onSave={async (id, updates) => {
+            const { error } = await supabase.from("movimientos_bancarios").update(updates).eq("id", id);
+            if (error) { alert("Error: " + error.message); return; }
+            if (typeof setMovimientosBancarios === "function") {
+              setMovimientosBancarios(prev => prev.map(m => m.id === id ? {...m, ...updates} : m));
+            }
+            setEditandoMovimiento(null);
+          }}
+        />
+      )}
 
       {/* ══════════════════════════════════════════ */}
       {/* 3) FACTURACIÓN E IMPUESTOS                 */}
@@ -7032,6 +7069,72 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
                 </section>
               )}
 
+              {/* SECCIÓN 5 — MOVIMIENTOS BANCARIOS POR CUENTA */}
+              {(() => {
+                const movPeriodo = (movimientosBancarios||[]).filter(m => {
+                  const d = new Date(m.fecha + "T12:00:00");
+                  return (!fMonth || d.getMonth()+1 === Number(fMonth)) && (!fYear || d.getFullYear() === Number(fYear));
+                });
+                if (movPeriodo.length === 0) return null;
+                const cuentasActPDF = cuentasBancarias.filter(c => c.activa !== false && !c.tipo_efectivo);
+                const CATS_PDF = {
+                  transferencia_recibida: "📥 Transferencias recibidas",
+                  transferencia_emitida:  "📤 Transferencias emitidas",
+                  servicio:               "💳 Pagos servicios",
+                  impuesto_banco:         "🏛️ Impuestos banco",
+                  comision:               "🏦 Comisiones",
+                  otro:                   "❓ Otros",
+                };
+                return (
+                  <section className="pdf-section">
+                    <div className="pdf-h2" style={{color:'#1e40af', background:'#dbeafe'}}>🏦 MOVIMIENTOS BANCARIOS POR CUENTA</div>
+                    {cuentasActPDF.map(cuenta => {
+                      const movsCuenta = movPeriodo.filter(m => m.cuenta_id === cuenta.id);
+                      if (movsCuenta.length === 0) return null;
+                      const porCatCuenta = {};
+                      for (const m of movsCuenta) {
+                        const cat = m.categoria || "otro";
+                        if (!porCatCuenta[cat]) porCatCuenta[cat] = { total: 0, count: 0 };
+                        porCatCuenta[cat].total += parseFloat(m.importe)||0;
+                        porCatCuenta[cat].count++;
+                      }
+                      const saldosOrden = [...movsCuenta].sort((a,b) => a.fecha.localeCompare(b.fecha));
+                      const saldoIni = saldosOrden[0]?.saldo_posterior || 0;
+                      const saldoFin = saldosOrden[saldosOrden.length-1]?.saldo_posterior || cuenta.saldo_actual || 0;
+                      return (
+                        <div key={cuenta.id} style={{marginBottom:'10px'}}>
+                          <div style={{fontWeight:'bold', fontSize:'10px', color:'#1e40af', marginBottom:'4px'}}>🏦 {cuenta.nombre} — {cuenta.banco}</div>
+                          <table className="pdf-table"><tbody>
+                            {Object.entries(CATS_PDF).filter(([c]) => porCatCuenta[c]).map(([c, label]) => (
+                              <tr key={c} className="pdf-tr-alt">
+                                <td>{label}</td>
+                                <td style={{textAlign:'center', color:'#6b7280'}}>{porCatCuenta[c].count} mov.</td>
+                                <td style={{textAlign:'right', fontWeight:'600'}}>{fmtMoney(porCatCuenta[c].total)}</td>
+                              </tr>
+                            ))}
+                            <tr style={{background:'#eff6ff'}}><td style={{fontWeight:'bold'}}>Saldo inicial período</td><td/><td style={{textAlign:'right', fontWeight:'bold'}}>{fmtMoney(saldoIni)}</td></tr>
+                            <tr style={{background:'#dbeafe'}}><td style={{fontWeight:'bold'}}>Saldo final período</td><td/><td style={{textAlign:'right', fontWeight:'bold', color:'#1e40af'}}>{fmtMoney(saldoFin)}</td></tr>
+                          </tbody></table>
+                        </div>
+                      );
+                    })}
+                  </section>
+                );
+              })()}
+
+              {/* SECCIÓN 6 — RESUMEN IMPOSITIVO */}
+              <section className="pdf-section">
+                <div className="pdf-h2" style={{color:'#7c3aed', background:'#ede9fe'}}>🏛️ RESUMEN IMPOSITIVO</div>
+                <table className="pdf-table"><tbody>
+                  <tr className="pdf-tr-alt"><td>IVA débito fiscal (ventas)</td><td style={{textAlign:'right'}}>{fmtMoney(ivaDebito)}</td></tr>
+                  <tr className="pdf-tr-alt"><td>IVA crédito fiscal (compras)</td><td style={{textAlign:'right', color:'#059669'}}>-{fmtMoney(ivaCredito)}</td></tr>
+                  <tr className="pdf-tr-alt" style={{background:'#ede9fe'}}><td style={{fontWeight:'bold'}}>Posición IVA {ivaPosicion <= 0 ? "(saldo a favor)" : "(a pagar)"}</td><td style={{textAlign:'right', fontWeight:'bold', color: ivaPosicion > 0 ? '#dc2626' : '#059669'}}>{fmtMoney(Math.abs(ivaPosicion))}</td></tr>
+                  <tr className="pdf-tr-alt"><td>IIBB Santa Cruz 3% s/neto</td><td style={{textAlign:'right', fontWeight:'600'}}>{fmtMoney(totIibb)}</td></tr>
+                  <tr className="pdf-tr-alt"><td>Impuestos bancarios del mes</td><td style={{textAlign:'right'}}>{fmtMoney(totImpBanco)}</td></tr>
+                  <tr style={{background:'#ede9fe'}}><td style={{fontWeight:'bold'}}>Total carga fiscal estimada</td><td style={{textAlign:'right', fontWeight:'bold', color:'#7c3aed', fontSize:'11px'}}>{fmtMoney(Math.abs(ivaPosicion) + totIibb + totImpBanco)}</td></tr>
+                </tbody></table>
+              </section>
+
               {/* FOOTER */}
               <div className="pdf-footer" style={{marginTop:'20px', paddingTop:'10px', borderTop:'2px solid #e5e7eb', textAlign:'center'}}>
                 <div style={{fontSize:'8px', color:'#6b7280'}}>Sistema RadioFact v3.5 · LA VANGUARDIA NOTICIAS · CUIT 30-71644424-0</div>
@@ -7050,19 +7153,13 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
           onClose={() => setModalMovEfectivo(false)}
         />
       )}
-      {/* ── MODAL IMPORTAR EXTRACTO BANCARIO ────────── */}
+      {/* ── MODAL IMPORTAR EXTRACTO BANCARIO UNIFICADO ── */}
       {modalExtracto && (
-        <ImportarExtractoModal
+        <ImportarExtractoBancarioModal
           cuentasBancarias={cuentasBancarias}
-          setIngresosBancarios={setIngresosBancarios}
+          setCuentasBancarias={setCuentasBancarias}
+          setMovimientosBancarios={setMovimientosBancarios}
           onClose={() => setModalExtracto(false)}
-        />
-      )}
-      {/* ── MODAL IMPORTAR CSV SANTANDER ─────────────── */}
-      {modalCSV && (
-        <ImportarCSVSantanderModal
-          cuentasBancarias={cuentasBancarias}
-          onClose={() => setModalCSV(false)}
         />
       )}
     </div>
@@ -7145,6 +7242,322 @@ function MovimientoEfectivoModal({ cuentasEfectivo, setCuentasBancarias, onClose
   );
 }
 
+
+// ========================================
+// MODAL EDITAR MOVIMIENTO BANCARIO
+// ========================================
+function EditarMovimientoModal({ movimiento, onClose, onSave }) {
+  const CATEGORIAS = [
+    { value: "impuesto_banco",        label: "🏛️ Impuesto banco" },
+    { value: "transferencia_recibida",label: "📥 Transferencia recibida" },
+    { value: "transferencia_emitida", label: "📤 Transferencia emitida" },
+    { value: "servicio",              label: "💳 Pago servicio" },
+    { value: "comision",              label: "🏦 Comisión" },
+    { value: "otro",                  label: "❓ Otro" },
+  ];
+  const [categoria, setCategoria] = useState(movimiento.categoria || "otro");
+  const [concepto, setConcepto] = useState(movimiento.concepto || "");
+  const [saving, setSaving] = useState(false);
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-5 space-y-4">
+        <h3 className="font-semibold text-sm text-gray-800">✏️ Editar movimiento</h3>
+        <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-600 space-y-0.5">
+          <p>{movimiento.fecha} — {movimiento.descripcion || "—"}</p>
+          <p className="font-semibold">{fmtMoney(parseFloat(movimiento.importe)||0)}</p>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600">Categoría</label>
+          <select value={categoria} onChange={e => setCategoria(e.target.value)}
+            className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+            {CATEGORIAS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+          </select>
+        </div>
+        {(categoria === "transferencia_recibida" || categoria === "transferencia_emitida") && (
+          <div>
+            <label className="text-xs font-medium text-gray-600">Concepto</label>
+            <input value={concepto} onChange={e => setConcepto(e.target.value)}
+              placeholder="Ej: Cobro factura SIPGER, Sueldo Andrea Mercado..."
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+          </div>
+        )}
+        <div className="flex gap-2 pt-2">
+          <button onClick={onClose} className="flex-1 px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">Cancelar</button>
+          <button
+            onClick={async () => { setSaving(true); await onSave(movimiento.id, { categoria, concepto }); setSaving(false); }}
+            disabled={saving}
+            className="flex-1 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+          >
+            {saving ? "Guardando..." : "Guardar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ========================================
+// MODAL IMPORTAR EXTRACTO BANCARIO UNIFICADO
+// Reemplaza ImportarExtractoModal e ImportarCSVSantanderModal.
+// Soporte para Santander (CSV latin-1) y Credicoop (CSV UTF-8).
+// ========================================
+function ImportarExtractoBancarioModal({ cuentasBancarias, setCuentasBancarias, setMovimientosBancarios, onClose }) {
+  const CATEGORIAS_LABELS = {
+    impuesto_banco:        "🏛️ Impuestos banco",
+    transferencia_recibida:"📥 Transferencias rec.",
+    transferencia_emitida: "📤 Transferencias env.",
+    servicio:              "💳 Servicios",
+    comision:              "🏦 Comisiones",
+    otro:                  "❓ Otros",
+  };
+  const CATEGORIAS_OPTS = Object.entries(CATEGORIAS_LABELS).map(([v, l]) => ({ value: v, label: l }));
+  const cuentasActivas = (cuentasBancarias||[]).filter(c => c.activa !== false && !c.tipo_efectivo);
+  const [step, setStep] = useState(1);
+  const [cuentaId, setCuentaId] = useState(cuentasActivas[0]?.id || "");
+  const [banco, setBanco] = useState("santander");
+  const [file, setFile] = useState(null);
+  const [dragging, setDragging] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [error, setError] = useState("");
+  const [movimientos, setMovimientos] = useState([]);
+  const [resumen, setResumen] = useState(null);
+  const [resultado, setResultado] = useState(null);
+
+  const handleFile = (f) => {
+    if (f && (f.name.toLowerCase().endsWith(".csv") || f.type === "text/csv" || f.type === "application/vnd.ms-excel")) {
+      setFile(f); setError("");
+    } else if (f) {
+      setError("El archivo debe ser un CSV.");
+    }
+  };
+
+  const analizar = async () => {
+    if (!file)     { setError("Seleccioná un archivo CSV."); return; }
+    if (!cuentaId) { setError("Seleccioná una cuenta bancaria."); return; }
+    setLoading(true); setError("");
+    try {
+      const fd = new FormData();
+      fd.append("csv", file);
+      fd.append("cuenta_id", cuentaId);
+      const endpoint = banco === "credicoop"
+        ? `${BACKEND_URL}/procesar-extracto-credicoop`
+        : `${BACKEND_URL}/analizar-extracto-santander`;
+      const res = await fetch(endpoint, { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+      setMovimientos((data.movimientos || []).map((m, i) => ({ ...m, _idx: i })));
+      setResumen(data.resumen || null);
+      setStep(2);
+    } catch (e) {
+      setError(e.message || "No se pudo analizar el archivo.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const importarTodo = async () => {
+    setImporting(true); setError("");
+    try {
+      const res = await fetch(`${BACKEND_URL}/importar-movimientos-bancarios`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          movimientos: movimientos.map(({ _idx, ...m }) => m),
+          cuenta_id: cuentaId,
+          saldo_final: resumen?.saldo_final,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+      // Actualizar saldo cuenta en estado local
+      if (resumen?.saldo_final != null) {
+        setCuentasBancarias(prev => prev.map(c =>
+          c.id === cuentaId ? { ...c, saldo_actual: resumen.saldo_final } : c
+        ));
+      }
+      // Recargar movimientos desde Supabase
+      const { data: nuevosMov } = await supabase.from("movimientos_bancarios").select("*").order("fecha", { ascending: false });
+      if (nuevosMov && typeof setMovimientosBancarios === "function") setMovimientosBancarios(nuevosMov);
+      setResultado({ insertados: data.insertados, duplicados: data.duplicados, total: movimientos.length });
+      setStep(3);
+    } catch (e) {
+      setError(e.message || "Error importando.");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const updateMov = (idx, field, value) => {
+    setMovimientos(prev => prev.map(m => m._idx === idx ? { ...m, [field]: value } : m));
+  };
+
+  if (step === 3 && resultado) {
+    return (
+      <Modal title="✓ Extracto importado" onClose={onClose}>
+        <div className="text-center py-8 space-y-3">
+          <p className="text-5xl">✅</p>
+          <p className="text-green-700 font-semibold text-lg">Importación completada</p>
+          <div className="bg-gray-50 rounded-lg p-4 text-sm space-y-1 text-left inline-block mx-auto">
+            <p><span className="text-gray-500">Total analizados:</span> <strong>{resultado.total}</strong></p>
+            <p><span className="text-gray-500">Insertados:</span> <strong className="text-green-600">{resultado.insertados}</strong></p>
+            {resultado.duplicados > 0 && <p><span className="text-amber-600">Duplicados ignorados:</span> <strong className="text-amber-600">{resultado.duplicados}</strong></p>}
+          </div>
+        </div>
+      </Modal>
+    );
+  }
+
+  if (step === 2 && resumen) {
+    const nodup = movimientos.filter(m => !m.es_duplicado).length;
+    return (
+      <Modal title={`📊 Extracto ${banco === "credicoop" ? "Credicoop" : "Santander"} — Resumen`} onClose={onClose} wide>
+        <div className="space-y-4">
+          {/* Tarjetas de resumen */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-green-50 border border-green-200 rounded-xl p-3">
+              <p className="text-xs text-green-600 font-medium">📥 INGRESOS</p>
+              <p className="text-xl font-bold text-green-700 mt-1">{fmtMoney(resumen.total_ingresos)}</p>
+              <p className="text-xs text-green-500 mt-0.5">{movimientos.filter(m=>m.tipo==="ingreso").length} movimientos</p>
+            </div>
+            <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+              <p className="text-xs text-red-600 font-medium">📤 EGRESOS</p>
+              <p className="text-xl font-bold text-red-700 mt-1">{fmtMoney(resumen.total_egresos)}</p>
+              <p className="text-xs text-red-500 mt-0.5">{movimientos.filter(m=>m.tipo==="egreso").length} movimientos</p>
+            </div>
+          </div>
+          {/* Desglose por categoría */}
+          <div className="bg-gray-50 rounded-xl p-3 border border-gray-200">
+            <p className="text-xs font-semibold text-gray-600 mb-2">DESGLOSE POR CATEGORÍA</p>
+            <div className="space-y-1">
+              {Object.entries(CATEGORIAS_LABELS).map(([cat, label]) => {
+                const val = resumen.por_categoria?.[cat] || 0;
+                if (val === 0) return null;
+                return (
+                  <div key={cat} className="flex items-center justify-between text-xs">
+                    <span className="text-gray-600">{label}</span>
+                    <span className={`font-semibold ${cat === "transferencia_recibida" ? "text-green-700" : "text-red-600"}`}>{fmtMoney(val)}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="border-t border-gray-200 mt-2 pt-2 space-y-0.5 text-xs text-gray-500">
+              {resumen.saldo_inicial != null && <div>Saldo inicial: <strong>{fmtMoney(resumen.saldo_inicial)}</strong></div>}
+              {resumen.saldo_final != null && <div>Saldo final: <strong>{fmtMoney(resumen.saldo_final)}</strong></div>}
+            </div>
+          </div>
+          {/* Tabla de movimientos */}
+          <div className="overflow-auto max-h-64 rounded-lg border border-gray-200">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50 sticky top-0">
+                <tr>
+                  <th className="px-2 py-2 text-left font-medium text-gray-500">Fecha</th>
+                  <th className="px-2 py-2 text-left font-medium text-gray-500">Descripción</th>
+                  <th className="px-2 py-2 text-left font-medium text-gray-500">Categoría</th>
+                  <th className="px-2 py-2 text-left font-medium text-gray-500">Concepto</th>
+                  <th className="px-2 py-2 text-right font-medium text-gray-500">Importe</th>
+                  <th className="px-2 py-2 text-center font-medium text-gray-500">Dup.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {movimientos.map(m => (
+                  <tr key={m._idx} className={`border-t border-gray-50 ${m.es_duplicado ? "opacity-40 bg-gray-50" : ""}`}>
+                    <td className="px-2 py-1.5 text-gray-500 whitespace-nowrap">{m.fecha}</td>
+                    <td className="px-2 py-1.5 text-gray-700 max-w-[160px] truncate" title={m.descripcion}>{m.descripcion || "—"}</td>
+                    <td className="px-2 py-1.5">
+                      <select value={m.categoria || "otro"} onChange={e => updateMov(m._idx, "categoria", e.target.value)}
+                        className="text-xs border border-gray-200 rounded px-1 py-0.5 focus:outline-none max-w-[130px]">
+                        {CATEGORIAS_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-2 py-1.5">
+                      {(m.categoria === "transferencia_recibida" || m.categoria === "transferencia_emitida") && (
+                        <input value={m.concepto || ""} onChange={e => updateMov(m._idx, "concepto", e.target.value)}
+                          placeholder="Concepto…"
+                          className="text-xs border border-gray-200 rounded px-1 py-0.5 focus:outline-none w-28"/>
+                      )}
+                    </td>
+                    <td className={`px-2 py-1.5 text-right font-medium whitespace-nowrap ${m.tipo === "ingreso" ? "text-green-700" : "text-red-600"}`}>{fmtMoney(parseFloat(m.importe)||0)}</td>
+                    <td className="px-2 py-1.5 text-center">{m.es_duplicado ? <span className="text-amber-500 text-[10px]">DUP</span> : ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {movimientos.filter(m=>m.es_duplicado).length > 0 && (
+            <p className="text-xs text-amber-600">⚠️ {movimientos.filter(m=>m.es_duplicado).length} movimientos ya existen en el sistema (serán ignorados al importar).</p>
+          )}
+          {error && <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{error}</div>}
+          <div className="flex justify-between items-center pt-2 border-t border-gray-100">
+            <button onClick={() => setStep(1)} className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">← Volver</button>
+            <button
+              onClick={importarTodo}
+              disabled={importing || nodup === 0}
+              className="flex items-center gap-2 px-5 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium"
+            >
+              {importing ? "Importando..." : `Importar todo (${nodup} mov.)`}
+            </button>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal title="📊 Importar extracto bancario" onClose={onClose}>
+      <div className="space-y-4">
+        <div>
+          <label className="text-xs font-medium text-gray-600">Cuenta bancaria</label>
+          <select value={cuentaId} onChange={e => setCuentaId(e.target.value)}
+            className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+            <option value="">— Elegir cuenta —</option>
+            {cuentasActivas.map(c => <option key={c.id} value={c.id}>{c.nombre}{c.banco ? ` — ${c.banco}` : ""}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600">Banco / formato</label>
+          <div className="flex gap-2 mt-1">
+            {[["santander", "Santander"], ["credicoop", "Credicoop"]].map(([val, label]) => (
+              <button
+                key={val}
+                onClick={() => setBanco(val)}
+                className={`flex-1 py-2 text-sm rounded-lg border font-medium transition ${banco === val ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-gray-400 mt-1">
+            {banco === "credicoop" ? "CSV UTF-8 · separador punto y coma · FECHA;DESCRIPCION;COMBTE;DEBITO;CREDITO;SALDO;CODIGO" : "CSV latin-1 · separador punto y coma · Fecha;Suc;...;Concepto;Importe"}
+          </p>
+        </div>
+        <div
+          className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${dragging ? "border-blue-400 bg-blue-50" : file ? "border-green-400 bg-green-50" : "border-gray-300 hover:border-blue-300 hover:bg-gray-50"}`}
+          onDragOver={e => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={e => { e.preventDefault(); setDragging(false); handleFile(e.dataTransfer.files[0]); }}
+          onClick={() => document.getElementById("extracto-unif-input").click()}
+        >
+          <input id="extracto-unif-input" type="file" accept=".csv,text/csv" className="hidden" onChange={e => handleFile(e.target.files[0])} />
+          {file ? (
+            <div><p className="text-green-700 font-medium text-sm">✓ {file.name}</p><p className="text-xs text-green-500 mt-1">{(file.size / 1024).toFixed(0)} KB</p></div>
+          ) : (
+            <div><div className="text-3xl mb-2">📊</div><p className="text-sm text-gray-500">Arrastrá el CSV aquí o hacé click para seleccionar</p></div>
+          )}
+        </div>
+        {error && <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{error}</div>}
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">Cancelar</button>
+          <button onClick={analizar} disabled={!file || !cuentaId || loading}
+            className="flex items-center gap-2 px-5 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium">
+            {loading ? (<><svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg>Analizando...</>) : "Analizar"}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
 
 // ========================================
 // MODAL IMPORTAR EXTRACTO BANCARIO (PDF → IA)
