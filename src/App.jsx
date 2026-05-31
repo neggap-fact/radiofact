@@ -8925,7 +8925,7 @@ function badgeCategoria(cat) {
   return <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${info.badge}`}>{info.label}</span>;
 }
 
-function MovimientosBancarios({ movimientosBancarios = [], cuentasBancarias = [], setMovimientosBancarios, expenses = [], setExpenses }) {
+function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, expenses = [], setExpenses }) {
   const PAGE_SIZE = 50;
   const today = new Date();
 
@@ -8937,22 +8937,37 @@ function MovimientosBancarios({ movimientosBancarios = [], cuentasBancarias = []
   const [fBuscar,   setFBuscar]   = useState("");
   const [page,      setPage]      = useState(1);
 
+  // ── estado local — se recarga desde Supabase al cambiar cuenta/mes/año ──
+  const [movimientosLocales, setMovimientosLocales] = useState([]);
+  const [cargando, setCargando] = useState(false);
+
+  const cargarMovimientos = useCallback(async () => {
+    setCargando(true);
+    let query = supabase.from("movimientos_bancarios").select("*").order("fecha", { ascending: false });
+    if (fCuenta !== "todas") query = query.eq("cuenta_id", fCuenta);
+    if (fMonth && fYear) {
+      const mes = String(fMonth).padStart(2, "0");
+      query = query.gte("fecha", `${fYear}-${mes}-01`).lte("fecha", `${fYear}-${mes}-31`);
+    }
+    const { data } = await query;
+    if (data) {
+      setMovimientosLocales(data);
+      if (typeof setMovimientosBancarios === "function") setMovimientosBancarios(data);
+    }
+    setCargando(false);
+  }, [fCuenta, fMonth, fYear]);
+
+  useEffect(() => { cargarMovimientos(); }, [cargarMovimientos]);
+
   // ── modales ──
-  const [editando,  setEditando]  = useState(null);   // movimiento a editar
-  const [aGasto,    setAGasto]    = useState(null);   // movimiento → gasto
+  const [editando,  setEditando]  = useState(null);
+  const [aGasto,    setAGasto]    = useState(null);
 
   // mapa cuenta_id → cuenta
   const cuentaMap = Object.fromEntries(cuentasBancarias.map(c => [c.id, c]));
 
-  // mapa gasto_id de movimientos existentes (para saber cuáles ya tienen gasto)
-  const gastosMovIds = new Set(movimientosBancarios.filter(m => m.gasto_id).map(m => m.id));
-
-  // ── aplicar filtros ──
-  const filtrados = movimientosBancarios.filter(m => {
-    if (fCuenta !== "todas" && m.cuenta_id !== fCuenta) return false;
-    const d = new Date(m.fecha + "T12:00:00");
-    if (fMonth && d.getMonth() + 1 !== Number(fMonth)) return false;
-    if (fYear  && d.getFullYear()  !== Number(fYear))  return false;
+  // ── filtros locales (categoría y búsqueda se aplican en cliente) ──
+  const filtrados = movimientosLocales.filter(m => {
     if (fCat === "sin_cat" && m.categoria) return false;
     if (fCat !== "todas" && fCat !== "sin_cat" && m.categoria !== fCat) return false;
     if (fBuscar.trim()) {
@@ -8969,9 +8984,10 @@ function MovimientosBancarios({ movimientosBancarios = [], cuentasBancarias = []
   let sumIngr = 0, sumEgr = 0, sumImpCom = 0;
   for (const m of filtrados) {
     const imp = parseFloat(m.importe) || 0;
-    const esI = CAT_INFO[m.categoria]?.esIngreso ?? (m.tipo === "ingreso");
+    const cat = resolverCategoria(m);
+    const esI = CAT_INFO[cat]?.esIngreso ?? (m.tipo === "ingreso");
     if (esI) sumIngr += imp; else sumEgr += imp;
-    if (m.categoria === "impuesto_banco" || m.categoria === "comision") sumImpCom += imp;
+    if (cat === "impuesto_banco" || cat === "comision") sumImpCom += imp;
   }
   const saldoNeto = sumIngr - sumEgr;
 
@@ -8981,7 +8997,7 @@ function MovimientosBancarios({ movimientosBancarios = [], cuentasBancarias = []
   const guardarConcept = async (m, nuevoConcepto) => {
     const { error } = await supabase.from("movimientos_bancarios").update({ concepto: nuevoConcepto }).eq("id", m.id);
     if (error) { alert("Error: " + error.message); return; }
-    setMovimientosBancarios(prev => prev.map(x => x.id === m.id ? { ...x, concepto: nuevoConcepto } : x));
+    setMovimientosLocales(prev => prev.map(x => x.id === m.id ? { ...x, concepto: nuevoConcepto } : x));
   };
 
   return (
@@ -8992,6 +9008,14 @@ function MovimientosBancarios({ movimientosBancarios = [], cuentasBancarias = []
           <h2 className="text-lg font-bold text-gray-800">🏦 Movimientos Bancarios</h2>
           <p className="text-xs text-gray-500 mt-0.5">{filtrados.length} movimiento{filtrados.length !== 1 ? "s" : ""} filtrados</p>
         </div>
+        <button
+          onClick={cargarMovimientos}
+          disabled={cargando}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 disabled:opacity-50"
+        >
+          <span className={cargando ? "animate-spin inline-block" : ""}>🔄</span>
+          {cargando ? "Cargando…" : "Recargar"}
+        </button>
       </div>
 
       {/* ── FILTROS ── */}
@@ -9153,7 +9177,7 @@ function MovimientosBancarios({ movimientosBancarios = [], cuentasBancarias = []
           onSave={async (id, updates) => {
             const { error } = await supabase.from("movimientos_bancarios").update(updates).eq("id", id);
             if (error) { alert("Error: " + error.message); return; }
-            setMovimientosBancarios(prev => prev.map(m => m.id === id ? { ...m, ...updates } : m));
+            setMovimientosLocales(prev => prev.map(m => m.id === id ? { ...m, ...updates } : m));
             setEditando(null);
           }}
         />
@@ -9167,9 +9191,8 @@ function MovimientosBancarios({ movimientosBancarios = [], cuentasBancarias = []
             const { data: inserted, error } = await supabase.from("gastos").insert(nuevoGasto).select().single();
             if (error) { alert("Error al crear gasto: " + error.message); return; }
             if (typeof setExpenses === "function") setExpenses(prev => [...prev, inserted]);
-            // Vincular gasto al movimiento
             await supabase.from("movimientos_bancarios").update({ gasto_id: inserted.id }).eq("id", aGasto.id);
-            setMovimientosBancarios(prev => prev.map(m => m.id === aGasto.id ? { ...m, gasto_id: inserted.id } : m));
+            setMovimientosLocales(prev => prev.map(m => m.id === aGasto.id ? { ...m, gasto_id: inserted.id } : m));
             setAGasto(null);
           }}
         />
