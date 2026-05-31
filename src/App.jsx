@@ -7442,6 +7442,7 @@ function ImportarCSVSantanderModal({ cuentasBancarias, onClose }) {
             <p><span className="text-gray-500">Insertados:</span> <span className="font-bold text-green-600">{resultado.insertados}</span></p>
             {resultado.duplicados_exactos > 0 && <p><span className="text-amber-600">Duplicados exactos ignorados:</span> <span className="font-bold text-amber-600">{resultado.duplicados_exactos}</span></p>}
             {resultado.conflictos_resueltos > 0 && <p><span className="text-blue-600">Conflictos resueltos:</span> <span className="font-bold text-blue-600">{resultado.conflictos_resueltos}</span></p>}
+            {resultado.saldo_final != null && <p><span className="text-gray-500">Saldo final actualizado:</span> <span className="font-bold text-indigo-600">{fmtMoney(resultado.saldo_final)}</span></p>}
           </div>
           <p className="text-xs text-gray-400">Se cierra automáticamente…</p>
         </div>
