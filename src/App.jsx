@@ -8876,8 +8876,28 @@ const CAT_INFO = {
   transferencia_emitida:  { label: "📤 Transf. emitida",        badge: "bg-red-100 text-red-700",      esIngreso: false },
   servicio:               { label: "💳 Pago servicio",          badge: "bg-blue-100 text-blue-700",    esIngreso: false },
   comision:               { label: "🏦 Comisión",               badge: "bg-gray-200 text-gray-700",    esIngreso: false },
+  iva:                    { label: "📋 IVA / Percepción",       badge: "bg-yellow-100 text-yellow-700",esIngreso: false },
   otro:                   { label: "❓ Otro",                   badge: "bg-gray-100 text-gray-500",    esIngreso: false },
 };
+
+// Deduce categoría desde la descripción cuando m.categoria es null/vacío
+function inferirCategoria(descripcion, tipo) {
+  const d = (descripcion || "").toLowerCase();
+  if (d.includes("25.413") || d.includes("impuesto ley")) return "impuesto_banco";
+  if (d.includes("iva") || d.includes("percepcion") || d.includes("percepción")) return "iva";
+  if (d.includes("comisi")) return "comision";
+  if (d.includes("pago de servicio") || d.includes("pago servicio")) return "servicio";
+  if (d.includes("transferencia recibida") || d.includes("recibido") || d.includes("credito") || d.includes("crédito")) return "transferencia_recibida";
+  if (d.includes("transferencia") || d.includes("transf")) {
+    return tipo === "ingreso" ? "transferencia_recibida" : "transferencia_emitida";
+  }
+  return null;
+}
+
+function resolverCategoria(m) {
+  if (m.categoria && m.categoria !== "otro") return m.categoria;
+  return inferirCategoria(m.descripcion, m.tipo) || m.categoria || "otro";
+}
 
 function badgeCategoria(cat) {
   const info = CAT_INFO[cat];
@@ -9142,7 +9162,11 @@ function MovimientosBancarios({ movimientosBancarios = [], cuentasBancarias = []
 function FilaMovimiento({ m, cuenta, onEdit, onToGasto, onSaveConcepto }) {
   const [editConcepto, setEditConcepto] = useState(false);
   const [conceptoLocal, setConceptoLocal] = useState(m.concepto || "");
-  const esIngreso = CAT_INFO[m.categoria]?.esIngreso ?? (m.tipo === "ingreso");
+  const catResuelta = resolverCategoria(m);
+  const esIngreso = CAT_INFO[catResuelta]?.esIngreso ?? (m.tipo === "ingreso");
+  const rowCls = esIngreso
+    ? "border-b border-gray-100 border-l-4 border-l-green-400 bg-green-50 hover:bg-green-100 group"
+    : "border-b border-gray-100 border-l-4 border-l-red-400 bg-red-50 hover:bg-red-100 group";
 
   const handleConceptoKey = (e) => {
     if (e.key === "Enter") { onSaveConcepto(conceptoLocal); setEditConcepto(false); }
@@ -9150,7 +9174,7 @@ function FilaMovimiento({ m, cuenta, onEdit, onToGasto, onSaveConcepto }) {
   };
 
   return (
-    <tr className="border-b border-gray-50 hover:bg-gray-50 group">
+    <tr className={rowCls}>
       {/* Fecha */}
       <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">
         {m.fecha ? `${m.fecha.slice(8,10)}/${m.fecha.slice(5,7)}/${m.fecha.slice(0,4)}` : "—"}
@@ -9164,7 +9188,7 @@ function FilaMovimiento({ m, cuenta, onEdit, onToGasto, onSaveConcepto }) {
         <span title={m.descripcion}>{(m.descripcion || "—").slice(0, 45)}{(m.descripcion || "").length > 45 ? "…" : ""}</span>
       </td>
       {/* Categoría */}
-      <td className="px-3 py-2.5">{badgeCategoria(m.categoria)}</td>
+      <td className="px-3 py-2.5">{badgeCategoria(catResuelta)}</td>
       {/* Concepto editable */}
       <td className="px-3 py-2.5 text-xs min-w-[140px]">
         {editConcepto ? (
