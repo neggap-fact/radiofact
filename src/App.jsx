@@ -6564,6 +6564,10 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
       {/* ══════════════════════════════════════════ */}
       {/* 2) MOVIMIENTOS BANCARIOS                   */}
       {/* ══════════════════════════════════════════ */}
+      <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-center text-sm text-gray-400">
+        📋 Movimientos bancarios — próximamente con vista unificada por categoría
+      </div>
+      {/* TABLA MOVIMIENTOS — restaurar cuando esté lista la vista por categoría
       {(() => {
         const INGRESO_RE = /recibida|recibido|credito|crédito|ingreso/i;
         const PAGE_SIZE = 50;
@@ -6642,6 +6646,7 @@ function Finance({clients,invoices,expenses,ingresosBancarios=[],setIngresosBanc
           </div>
         );
       })()}
+      */}
 
       {/* ══════════════════════════════════════════ */}
       {/* 3) FACTURACIÓN E IMPUESTOS                 */}
