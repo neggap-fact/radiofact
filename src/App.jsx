@@ -6563,6 +6563,8 @@ function Finance({clients,invoices,expenses,setExpenses,ingresosBancarios=[],set
           transferencia_recibida: { label: "📥 Transferencias recibidas", color: "text-green-700", bg: "bg-green-50", esIngreso: true },
           transferencia_emitida:  { label: "📤 Transferencias emitidas",  color: "text-red-600",   bg: "bg-red-50",   esIngreso: false },
           servicio:               { label: "💳 Pagos servicios",          color: "text-red-600",   bg: "bg-red-50",   esIngreso: false },
+          pago_servicio:          { label: "💡 Servicios públicos",        color: "text-red-600",   bg: "bg-red-50",   esIngreso: false },
+          pago_impuesto:          { label: "💰 Pagos AFIP / impuestos",   color: "text-red-600",   bg: "bg-red-50",   esIngreso: false },
           impuesto_banco:         { label: "🏛️ Impuestos banco",          color: "text-red-600",   bg: "bg-red-50",   esIngreso: false },
           comision:               { label: "🏦 Comisiones",               color: "text-red-600",   bg: "bg-red-50",   esIngreso: false },
           otro:                   { label: "❓ Otros",                    color: "text-gray-600",  bg: "bg-gray-50",  esIngreso: false },
@@ -7083,6 +7085,8 @@ function Finance({clients,invoices,expenses,setExpenses,ingresosBancarios=[],set
                   transferencia_recibida: "📥 Transferencias recibidas",
                   transferencia_emitida:  "📤 Transferencias emitidas",
                   servicio:               "💳 Pagos servicios",
+                  pago_servicio:          "💡 Servicios públicos (SPSE / Distrigas)",
+                  pago_impuesto:          "💰 Pagos AFIP / VEP",
                   impuesto_banco:         "🏛️ Impuestos banco",
                   comision:               "🏦 Comisiones",
                   otro:                   "❓ Otros",
@@ -8872,9 +8876,11 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
 
 const CAT_INFO = {
   impuesto_banco:         { label: "🏛️ Impuesto banco",        badge: "bg-orange-100 text-orange-700", esIngreso: false },
+  pago_impuesto:          { label: "💰 Pago impuesto AFIP",    badge: "bg-amber-100 text-amber-700",   esIngreso: false },
   transferencia_recibida: { label: "📥 Transf. recibida",       badge: "bg-green-100 text-green-700",  esIngreso: true  },
   transferencia_emitida:  { label: "📤 Transf. emitida",        badge: "bg-red-100 text-red-700",      esIngreso: false },
   servicio:               { label: "💳 Pago servicio",          badge: "bg-blue-100 text-blue-700",    esIngreso: false },
+  pago_servicio:          { label: "💡 Pago servicio público",  badge: "bg-cyan-100 text-cyan-700",    esIngreso: false },
   comision:               { label: "🏦 Comisión",               badge: "bg-gray-200 text-gray-700",    esIngreso: false },
   iva:                    { label: "📋 IVA / Percepción",       badge: "bg-yellow-100 text-yellow-700",esIngreso: false },
   otro:                   { label: "❓ Otro",                   badge: "bg-gray-100 text-gray-500",    esIngreso: false },
@@ -8901,12 +8907,11 @@ function inferirCategoria(descripcion, tipo) {
     d.includes("debito transf") || d.includes("transferencia a")
   ) return "transferencia_emitida";
   // Pagos a AFIP / VEP
-  if (d.includes("afip") || d.includes("vep")) return "servicio";
-  // Servicios públicos / empresas
-  if (
-    d.includes("spse") || d.includes("distrigas") || d.includes("servicios") ||
-    d.includes("pago de servicio") || d.includes("pago servicio")
-  ) return "servicio";
+  if (d.includes("afip") || d.includes("vep") || d.includes("imp.afip")) return "pago_impuesto";
+  // Servicios públicos específicos
+  if (d.includes("spse") || d.includes("distrigas")) return "pago_servicio";
+  // Servicios genéricos
+  if (d.includes("servicios") || d.includes("pago de servicio") || d.includes("pago servicio")) return "servicio";
   // Transferencias genéricas
   if (d.includes("transferencia") || d.includes("transf")) {
     return tipo === "ingreso" ? "transferencia_recibida" : "transferencia_emitida";
