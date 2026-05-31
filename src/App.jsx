@@ -8883,11 +8883,31 @@ const CAT_INFO = {
 // Deduce categoría desde la descripción cuando m.categoria es null/vacío
 function inferirCategoria(descripcion, tipo) {
   const d = (descripcion || "").toLowerCase();
+  // Impuesto bancario
   if (d.includes("25.413") || d.includes("impuesto ley")) return "impuesto_banco";
+  // IVA / percepciones
   if (d.includes("iva") || d.includes("percepcion") || d.includes("percepción")) return "iva";
+  // Comisiones
   if (d.includes("comisi")) return "comision";
-  if (d.includes("pago de servicio") || d.includes("pago servicio")) return "servicio";
-  if (d.includes("transferencia recibida") || d.includes("recibido") || d.includes("credito") || d.includes("crédito")) return "transferencia_recibida";
+  // Ingresos / transferencias recibidas
+  if (
+    d.includes("transferencia recibida") || d.includes("recibido") ||
+    d.includes("proveedores recibido") || d.includes("servicios de pago") ||
+    d.includes("credito") || d.includes("crédito")
+  ) return "transferencia_recibida";
+  // Transferencias emitidas
+  if (
+    d.includes("transferencia realizada") || d.includes("transferencia inmediata") ||
+    d.includes("debito transf") || d.includes("transferencia a")
+  ) return "transferencia_emitida";
+  // Pagos a AFIP / VEP
+  if (d.includes("afip") || d.includes("vep")) return "servicio";
+  // Servicios públicos / empresas
+  if (
+    d.includes("spse") || d.includes("distrigas") || d.includes("servicios") ||
+    d.includes("pago de servicio") || d.includes("pago servicio")
+  ) return "servicio";
+  // Transferencias genéricas
   if (d.includes("transferencia") || d.includes("transf")) {
     return tipo === "ingreso" ? "transferencia_recibida" : "transferencia_emitida";
   }
