@@ -1225,6 +1225,7 @@ export default function App() {
 
   const pages = [
     {id:"finance",label:"Finanzas",icon:Icons.finance},
+    {id:"movimientos",label:"Movimientos",icon:Icons.bank},
     {id:"clients",label:"Clientes",icon:Icons.clients},
     {id:"contracts",label:"Contratos",icon:Icons.contracts},
     {id:"billing",label:"Facturación",icon:Icons.billing},
@@ -1316,6 +1317,7 @@ export default function App() {
           {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} currentUser={currentUser} canEdit={canEdit} plantillas={plantillasGastos} setPlantillas={setPlantillasGastos} proveedores={proveedores} setProveedores={setProveedores} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias} tarjetasCredito={tarjetasCredito} setTarjetasCredito={setTarjetasCredito}/>}
           {page==="proveedores"&&<ProveedoresPage proveedores={proveedores} setProveedores={setProveedores} canEdit={canEdit}/>}
           {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses} setExpenses={setExpenses} ingresosBancarios={ingresosBancarios} setIngresosBancarios={setIngresosBancarios} saldosIniciales={saldosIniciales} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias} movimientosBancarios={movimientosBancarios} setMovimientosBancarios={setMovimientosBancarios} setPage={setPage} setClientePreFiltro={setClientePreFiltro}/>}
+          {page==="movimientos"&&<MovimientosBancarios movimientosBancarios={movimientosBancarios} cuentasBancarias={cuentasBancarias} setMovimientosBancarios={setMovimientosBancarios} expenses={expenses} setExpenses={setExpenses}/>}
           {page==="users"&&currentUser.role==="webmaster"&&<Users users={users} setUsers={setUsers} currentUser={currentUser}/>}
           {page==="settings"&&<Settings config={config} setConfig={setConfig} canEdit={canEdit}/>}
           {emailNCModal && (
@@ -8860,6 +8862,498 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
           />
         );
       })()}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MOVIMIENTOS BANCARIOS — página completa con filtros, resumen y tabla/cards
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CAT_INFO = {
+  impuesto_banco:         { label: "🏛️ Impuesto banco",        badge: "bg-orange-100 text-orange-700", esIngreso: false },
+  transferencia_recibida: { label: "📥 Transf. recibida",       badge: "bg-green-100 text-green-700",  esIngreso: true  },
+  transferencia_emitida:  { label: "📤 Transf. emitida",        badge: "bg-red-100 text-red-700",      esIngreso: false },
+  servicio:               { label: "💳 Pago servicio",          badge: "bg-blue-100 text-blue-700",    esIngreso: false },
+  comision:               { label: "🏦 Comisión",               badge: "bg-gray-200 text-gray-700",    esIngreso: false },
+  otro:                   { label: "❓ Otro",                   badge: "bg-gray-100 text-gray-500",    esIngreso: false },
+};
+
+function badgeCategoria(cat) {
+  const info = CAT_INFO[cat];
+  if (!info) return <span className="px-2 py-0.5 rounded-full text-[10px] bg-gray-100 text-gray-400">Sin cat.</span>;
+  return <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${info.badge}`}>{info.label}</span>;
+}
+
+function MovimientosBancarios({ movimientosBancarios = [], cuentasBancarias = [], setMovimientosBancarios, expenses = [], setExpenses }) {
+  const PAGE_SIZE = 50;
+  const today = new Date();
+
+  // ── filtros ──
+  const [fCuenta,   setFCuenta]   = useState("todas");
+  const [fMonth,    setFMonth]    = useState(String(today.getMonth() + 1));
+  const [fYear,     setFYear]     = useState(String(today.getFullYear()));
+  const [fCat,      setFCat]      = useState("todas");
+  const [fBuscar,   setFBuscar]   = useState("");
+  const [page,      setPage]      = useState(1);
+
+  // ── modales ──
+  const [editando,  setEditando]  = useState(null);   // movimiento a editar
+  const [aGasto,    setAGasto]    = useState(null);   // movimiento → gasto
+
+  // mapa cuenta_id → cuenta
+  const cuentaMap = Object.fromEntries(cuentasBancarias.map(c => [c.id, c]));
+
+  // mapa gasto_id de movimientos existentes (para saber cuáles ya tienen gasto)
+  const gastosMovIds = new Set(movimientosBancarios.filter(m => m.gasto_id).map(m => m.id));
+
+  // ── aplicar filtros ──
+  const filtrados = movimientosBancarios.filter(m => {
+    if (fCuenta !== "todas" && m.cuenta_id !== fCuenta) return false;
+    const d = new Date(m.fecha + "T12:00:00");
+    if (fMonth && d.getMonth() + 1 !== Number(fMonth)) return false;
+    if (fYear  && d.getFullYear()  !== Number(fYear))  return false;
+    if (fCat === "sin_cat" && m.categoria) return false;
+    if (fCat !== "todas" && fCat !== "sin_cat" && m.categoria !== fCat) return false;
+    if (fBuscar.trim()) {
+      const q = fBuscar.toLowerCase();
+      if (!(m.descripcion || "").toLowerCase().includes(q) && !(m.concepto || "").toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const totalPages = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
+  const paginados  = filtrados.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  // ── resumen rápido ──
+  let sumIngr = 0, sumEgr = 0, sumImpCom = 0;
+  for (const m of filtrados) {
+    const imp = parseFloat(m.importe) || 0;
+    const esI = CAT_INFO[m.categoria]?.esIngreso ?? (m.tipo === "ingreso");
+    if (esI) sumIngr += imp; else sumEgr += imp;
+    if (m.categoria === "impuesto_banco" || m.categoria === "comision") sumImpCom += imp;
+  }
+  const saldoNeto = sumIngr - sumEgr;
+
+  const limpiarFiltros = () => { setFCuenta("todas"); setFMonth(String(today.getMonth()+1)); setFYear(String(today.getFullYear())); setFCat("todas"); setFBuscar(""); setPage(1); };
+
+  // ── editar concepto inline ──
+  const guardarConcept = async (m, nuevoConcepto) => {
+    const { error } = await supabase.from("movimientos_bancarios").update({ concepto: nuevoConcepto }).eq("id", m.id);
+    if (error) { alert("Error: " + error.message); return; }
+    setMovimientosBancarios(prev => prev.map(x => x.id === m.id ? { ...x, concepto: nuevoConcepto } : x));
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* ── HEADER ── */}
+      <div className="flex items-center justify-between bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-3 border border-gray-200">
+        <div>
+          <h2 className="text-lg font-bold text-gray-800">🏦 Movimientos Bancarios</h2>
+          <p className="text-xs text-gray-500 mt-0.5">{filtrados.length} movimiento{filtrados.length !== 1 ? "s" : ""} filtrados</p>
+        </div>
+      </div>
+
+      {/* ── FILTROS ── */}
+      <div className="bg-white rounded-xl border border-gray-200 p-3 space-y-2">
+        <div className="flex flex-wrap gap-2">
+          {/* Cuenta */}
+          <select value={fCuenta} onChange={e => { setFCuenta(e.target.value); setPage(1); }}
+            className="px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none text-gray-700">
+            <option value="todas">Todas las cuentas</option>
+            {cuentasBancarias.filter(c => c.activa !== false).map(c => (
+              <option key={c.id} value={c.id}>{c.nombre}{c.banco ? ` — ${c.banco}` : ""}</option>
+            ))}
+          </select>
+          {/* Mes */}
+          <select value={fMonth} onChange={e => { setFMonth(e.target.value); setPage(1); }}
+            className="px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none text-gray-700">
+            <option value="">Todos los meses</option>
+            {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+          </select>
+          {/* Año */}
+          <select value={fYear} onChange={e => { setFYear(e.target.value); setPage(1); }}
+            className="px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none text-gray-700">
+            {[2024, 2025, 2026].map(y => <option key={y}>{y}</option>)}
+          </select>
+          {/* Categoría */}
+          <select value={fCat} onChange={e => { setFCat(e.target.value); setPage(1); }}
+            className="px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none text-gray-700">
+            <option value="todas">Todas las categorías</option>
+            {Object.entries(CAT_INFO).map(([v, i]) => <option key={v} value={v}>{i.label}</option>)}
+            <option value="sin_cat">Sin categorizar</option>
+          </select>
+          {/* Buscador */}
+          <input
+            value={fBuscar}
+            onChange={e => { setFBuscar(e.target.value); setPage(1); }}
+            placeholder="Buscar descripción / concepto…"
+            className="px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none text-gray-700 min-w-[180px] flex-1"
+          />
+          <button onClick={limpiarFiltros}
+            className="px-3 py-1.5 text-xs text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50">
+            Limpiar
+          </button>
+        </div>
+      </div>
+
+      {/* ── RESUMEN RÁPIDO ── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="bg-green-50 border border-green-200 rounded-xl p-3">
+          <p className="text-xs text-green-600 font-medium">📥 Ingresos</p>
+          <p className="text-lg font-bold text-green-700 mt-1">{fmtMoney(sumIngr)}</p>
+        </div>
+        <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+          <p className="text-xs text-red-600 font-medium">📤 Egresos</p>
+          <p className="text-lg font-bold text-red-700 mt-1">{fmtMoney(sumEgr)}</p>
+        </div>
+        <div className="bg-orange-50 border border-orange-200 rounded-xl p-3">
+          <p className="text-xs text-orange-600 font-medium">🏛️ Impuestos + comisiones</p>
+          <p className="text-lg font-bold text-orange-700 mt-1">{fmtMoney(sumImpCom)}</p>
+        </div>
+        <div className={`border rounded-xl p-3 ${saldoNeto >= 0 ? "bg-blue-50 border-blue-200" : "bg-red-50 border-red-200"}`}>
+          <p className={`text-xs font-medium ${saldoNeto >= 0 ? "text-blue-600" : "text-red-600"}`}>💰 Saldo neto</p>
+          <p className={`text-lg font-bold mt-1 ${saldoNeto >= 0 ? "text-blue-700" : "text-red-700"}`}>{fmtMoney(saldoNeto)}</p>
+        </div>
+      </div>
+
+      {/* ── TABLA (desktop) / CARDS (mobile) ── */}
+      {filtrados.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400 text-sm">
+          Sin movimientos para los filtros seleccionados.
+        </div>
+      ) : (
+        <>
+          {/* TABLA — desktop */}
+          <div className="hidden md:block bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  {["Fecha","Banco","Descripción","Categoría","Concepto","Importe","Acciones"].map(h => (
+                    <th key={h} className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {paginados.map(m => (
+                  <FilaMovimiento
+                    key={m.id}
+                    m={m}
+                    cuenta={cuentaMap[m.cuenta_id]}
+                    onEdit={() => setEditando(m)}
+                    onToGasto={() => setAGasto(m)}
+                    onSaveConcepto={nuevoConcepto => guardarConcept(m, nuevoConcepto)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* CARDS — mobile */}
+          <div className="md:hidden space-y-2">
+            {paginados.map(m => {
+              const cuenta = cuentaMap[m.cuenta_id];
+              const esIngreso = CAT_INFO[m.categoria]?.esIngreso ?? (m.tipo === "ingreso");
+              return (
+                <div key={m.id} className="bg-white rounded-xl border border-gray-200 p-3 space-y-2">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-xs text-gray-400">{m.fecha} · {cuenta?.nombre || "—"}</p>
+                      <p className="text-sm font-medium text-gray-800 mt-0.5 line-clamp-2">{m.descripcion || "—"}</p>
+                      {m.concepto && <p className="text-xs text-blue-600 mt-0.5">{m.concepto}</p>}
+                    </div>
+                    <p className={`text-base font-bold whitespace-nowrap ml-3 ${esIngreso ? "text-green-700" : "text-red-600"}`}>
+                      {esIngreso ? "+" : "-"}{fmtMoney(parseFloat(m.importe) || 0)}
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    {badgeCategoria(m.categoria)}
+                    <div className="flex gap-2">
+                      <button onClick={() => setEditando(m)} className="text-xs text-blue-600 hover:underline">✏️ Editar</button>
+                      {m.gasto_id
+                        ? <span className="text-xs text-green-600 font-medium">✓ En gastos</span>
+                        : !esIngreso && <button onClick={() => setAGasto(m)} className="text-xs text-indigo-600 hover:underline">📎→Gasto</button>
+                      }
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* PAGINACIÓN */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between bg-white rounded-xl border border-gray-200 px-4 py-3">
+              <p className="text-xs text-gray-400">{filtrados.length} movimientos · pág {page}/{totalPages}</p>
+              <div className="flex gap-1">
+                <button disabled={page === 1} onClick={() => setPage(p => p - 1)}
+                  className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg disabled:opacity-30 hover:bg-gray-50">‹ Ant</button>
+                {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
+                  const p = totalPages <= 7 ? i + 1 : page <= 4 ? i + 1 : page >= totalPages - 3 ? totalPages - 6 + i : page - 3 + i;
+                  return (
+                    <button key={p} onClick={() => setPage(p)}
+                      className={`text-xs px-3 py-1.5 border rounded-lg ${p === page ? "bg-blue-600 text-white border-blue-600" : "border-gray-200 hover:bg-gray-50"}`}>
+                      {p}
+                    </button>
+                  );
+                })}
+                <button disabled={page === totalPages} onClick={() => setPage(p => p + 1)}
+                  className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg disabled:opacity-30 hover:bg-gray-50">Sig ›</button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── MODALES ── */}
+      {editando && (
+        <EditarMovimientoBancarioModal
+          movimiento={editando}
+          onClose={() => setEditando(null)}
+          onSave={async (id, updates) => {
+            const { error } = await supabase.from("movimientos_bancarios").update(updates).eq("id", id);
+            if (error) { alert("Error: " + error.message); return; }
+            setMovimientosBancarios(prev => prev.map(m => m.id === id ? { ...m, ...updates } : m));
+            setEditando(null);
+          }}
+        />
+      )}
+      {aGasto && (
+        <ConvertirAGastoModal
+          movimiento={aGasto}
+          cuenta={cuentaMap[aGasto.cuenta_id]}
+          onClose={() => setAGasto(null)}
+          onSave={async (nuevoGasto) => {
+            const { data: inserted, error } = await supabase.from("gastos").insert(nuevoGasto).select().single();
+            if (error) { alert("Error al crear gasto: " + error.message); return; }
+            if (typeof setExpenses === "function") setExpenses(prev => [...prev, inserted]);
+            // Vincular gasto al movimiento
+            await supabase.from("movimientos_bancarios").update({ gasto_id: inserted.id }).eq("id", aGasto.id);
+            setMovimientosBancarios(prev => prev.map(m => m.id === aGasto.id ? { ...m, gasto_id: inserted.id } : m));
+            setAGasto(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Fila de movimiento (tabla desktop) ───────────────────────────────────────
+function FilaMovimiento({ m, cuenta, onEdit, onToGasto, onSaveConcepto }) {
+  const [editConcepto, setEditConcepto] = useState(false);
+  const [conceptoLocal, setConceptoLocal] = useState(m.concepto || "");
+  const esIngreso = CAT_INFO[m.categoria]?.esIngreso ?? (m.tipo === "ingreso");
+
+  const handleConceptoKey = (e) => {
+    if (e.key === "Enter") { onSaveConcepto(conceptoLocal); setEditConcepto(false); }
+    if (e.key === "Escape") { setConceptoLocal(m.concepto || ""); setEditConcepto(false); }
+  };
+
+  return (
+    <tr className="border-b border-gray-50 hover:bg-gray-50 group">
+      {/* Fecha */}
+      <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">
+        {m.fecha ? `${m.fecha.slice(8,10)}/${m.fecha.slice(5,7)}/${m.fecha.slice(0,4)}` : "—"}
+      </td>
+      {/* Banco */}
+      <td className="px-3 py-2.5 text-xs text-gray-600 whitespace-nowrap max-w-[100px] truncate">
+        {cuenta?.nombre || "—"}
+      </td>
+      {/* Descripción */}
+      <td className="px-3 py-2.5 text-xs text-gray-700 max-w-[200px]">
+        <span title={m.descripcion}>{(m.descripcion || "—").slice(0, 45)}{(m.descripcion || "").length > 45 ? "…" : ""}</span>
+      </td>
+      {/* Categoría */}
+      <td className="px-3 py-2.5">{badgeCategoria(m.categoria)}</td>
+      {/* Concepto editable */}
+      <td className="px-3 py-2.5 text-xs min-w-[140px]">
+        {editConcepto ? (
+          <input
+            autoFocus
+            value={conceptoLocal}
+            onChange={e => setConceptoLocal(e.target.value)}
+            onKeyDown={handleConceptoKey}
+            onBlur={() => { onSaveConcepto(conceptoLocal); setEditConcepto(false); }}
+            className="w-full px-2 py-1 border border-blue-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
+        ) : (
+          <span
+            onClick={() => { setConceptoLocal(m.concepto || ""); setEditConcepto(true); }}
+            className={`cursor-text ${m.concepto ? "text-gray-700" : "text-gray-300 italic"} hover:text-blue-600`}
+          >
+            {m.concepto || "Agregar concepto…"}
+          </span>
+        )}
+      </td>
+      {/* Importe */}
+      <td className={`px-3 py-2.5 text-right text-sm font-semibold whitespace-nowrap ${esIngreso ? "text-green-700" : "text-red-600"}`}>
+        {esIngreso ? "+" : "-"}{fmtMoney(parseFloat(m.importe) || 0)}
+      </td>
+      {/* Acciones */}
+      <td className="px-3 py-2.5 whitespace-nowrap">
+        <div className="flex items-center gap-2">
+          <button onClick={onEdit} title="Editar"
+            className="text-xs text-blue-600 hover:text-blue-800 opacity-0 group-hover:opacity-100 transition-opacity">
+            ✏️
+          </button>
+          {m.gasto_id
+            ? <span className="text-[10px] text-green-600 font-medium bg-green-50 px-1.5 py-0.5 rounded">✓ En gastos</span>
+            : !esIngreso && (
+              <button onClick={onToGasto} title="Convertir a gasto"
+                className="text-xs text-indigo-600 hover:text-indigo-800 opacity-0 group-hover:opacity-100 transition-opacity">
+                📎→Gasto
+              </button>
+            )
+          }
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+// ── Modal editar movimiento (categoría, concepto, notas) ─────────────────────
+function EditarMovimientoBancarioModal({ movimiento: m, onClose, onSave }) {
+  const [categoria, setCategoria] = useState(m.categoria || "otro");
+  const [concepto,  setConcepto]  = useState(m.concepto  || "");
+  const [notas,     setNotas]     = useState(m.notas     || "");
+  const [saving,    setSaving]    = useState(false);
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-5 space-y-4">
+        <h3 className="font-semibold text-sm text-gray-800">✏️ Editar movimiento</h3>
+        <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-600 space-y-0.5">
+          <p className="font-medium">{m.fecha} · {(m.descripcion || "—").slice(0, 60)}</p>
+          <p className={`font-bold text-sm ${CAT_INFO[m.categoria]?.esIngreso ? "text-green-700" : "text-red-600"}`}>
+            {fmtMoney(parseFloat(m.importe) || 0)}
+          </p>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600 block mb-1">Categoría</label>
+          <select value={categoria} onChange={e => setCategoria(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+            {Object.entries(CAT_INFO).map(([v, i]) => <option key={v} value={v}>{i.label}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600 block mb-1">Concepto</label>
+          <input value={concepto} onChange={e => setConcepto(e.target.value)}
+            placeholder="Ej: Cobro factura SIPGER, Sueldo Andrea…"
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600 block mb-1">Notas</label>
+          <textarea value={notas} onChange={e => setNotas(e.target.value)} rows={2}
+            placeholder="Notas internas…"
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none resize-none"/>
+        </div>
+        <div className="flex gap-2 pt-1">
+          <button onClick={onClose} className="flex-1 px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">Cancelar</button>
+          <button
+            onClick={async () => { setSaving(true); await onSave(m.id, { categoria, concepto, notas }); setSaving(false); }}
+            disabled={saving}
+            className="flex-1 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium">
+            {saving ? "Guardando…" : "Guardar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Modal convertir movimiento → gasto ───────────────────────────────────────
+function ConvertirAGastoModal({ movimiento: m, cuenta, onClose, onSave }) {
+  const [form, setForm] = useState({
+    descripcion: m.concepto || m.descripcion || "",
+    categoria:   "Gastos bancarios",
+    subcategoria: "",
+    proveedor:   cuenta?.banco || cuenta?.nombre || "",
+    monto:       String(m.importe || ""),
+    fecha:       m.fecha || todayStr(),
+    pagado:      true,
+  });
+  const [saving, setSaving] = useState(false);
+  const upd = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const guardar = async () => {
+    const monto = parseFloat(form.monto);
+    if (!monto || monto <= 0) { alert("Monto inválido"); return; }
+    setSaving(true);
+    const payload = {
+      fecha:        form.fecha,
+      categoria:    form.categoria,
+      subcategoria: form.subcategoria || null,
+      proveedor:    form.proveedor    || null,
+      monto,
+      pagado:       form.pagado,
+      detalle:      form.descripcion  || null,
+    };
+    await onSave(payload);
+    setSaving(false);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-5 space-y-3">
+        <h3 className="font-semibold text-sm text-gray-800">📎 Convertir a gasto</h3>
+        <div className="bg-blue-50 rounded-lg p-3 text-xs text-blue-700 space-y-0.5">
+          <p>Movimiento: <strong>{(m.descripcion || "—").slice(0, 50)}</strong></p>
+          <p>Importe: <strong>{fmtMoney(parseFloat(m.importe) || 0)}</strong></p>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600 block mb-1">Descripción del gasto</label>
+          <input value={form.descripcion} onChange={e => upd("descripcion", e.target.value)}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-xs font-medium text-gray-600 block mb-1">Categoría</label>
+            <select value={form.categoria} onChange={e => upd("categoria", e.target.value)}
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+              {EXPENSE_CATS.map(c => <option key={c}>{c}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-600 block mb-1">Subcategoría</label>
+            <input value={form.subcategoria} onChange={e => upd("subcategoria", e.target.value)}
+              placeholder="Opcional"
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-xs font-medium text-gray-600 block mb-1">Proveedor</label>
+            <input value={form.proveedor} onChange={e => upd("proveedor", e.target.value)}
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-600 block mb-1">Monto</label>
+            <input type="number" value={form.monto} onChange={e => upd("monto", e.target.value)}
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none text-right"/>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-xs font-medium text-gray-600 block mb-1">Fecha</label>
+            <input type="date" value={form.fecha} onChange={e => upd("fecha", e.target.value)}
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"/>
+          </div>
+          <div className="flex items-end pb-1">
+            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <input type="checkbox" checked={form.pagado} onChange={e => upd("pagado", e.target.checked)}
+                className="rounded"/>
+              Pagado
+            </label>
+          </div>
+        </div>
+        <div className="flex gap-2 pt-1">
+          <button onClick={onClose} className="flex-1 px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">Cancelar</button>
+          <button onClick={guardar} disabled={saving}
+            className="flex-1 px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 font-medium">
+            {saving ? "Guardando…" : "Crear gasto"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
