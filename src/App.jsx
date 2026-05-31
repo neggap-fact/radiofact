@@ -9286,7 +9286,7 @@ function ConvertirAGastoModal({ movimiento: m, cuenta, onClose, onSave }) {
       proveedor:    form.proveedor    || null,
       monto,
       pagado:       form.pagado,
-      detalle:      form.descripcion  || null,
+      descripcion:  form.descripcion  || null,
     };
     await onSave(payload);
     setSaving(false);
