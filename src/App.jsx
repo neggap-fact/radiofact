@@ -8646,7 +8646,9 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
     if (fCuenta !== "todas") query = query.eq("cuenta_id", fCuenta);
     if (fMonth && fYear) {
       const mes = String(fMonth).padStart(2, "0");
-      query = query.gte("fecha", `${fYear}-${mes}-01`).lte("fecha", `${fYear}-${mes}-31`);
+      const lastDay = new Date(parseInt(fYear), parseInt(fMonth), 0).getDate();
+      const fin = String(lastDay).padStart(2, "0");
+      query = query.gte("fecha", `${fYear}-${mes}-01`).lte("fecha", `${fYear}-${mes}-${fin}`);
     }
     const { data } = await query;
     if (data) {
