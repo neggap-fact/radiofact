@@ -4594,7 +4594,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
   const empty={descripcion:"",categoria:"Gastos Fijos",subcategoria:"",monto:"",fecha:todayStr(),proveedor:"",comprobante:"",url_comprobante:"",pagado:true,notas:"",es_tarjeta:false,tarjeta_id:"",socio:"",es_externo:false,monto_neto:""};
   
   const filtered=expenses.filter(e=>{
-    const d=new Date(e.fecha);
+    const d=new Date(e.fecha+'T00:00:00');
     const matchMes=!fMonth||d.getMonth()+1===Number(fMonth);
     const matchAnio=!fYear||d.getFullYear()===Number(fYear);
     const matchCat=!fCat||e.categoria===fCat;
@@ -4764,7 +4764,7 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
 
   const totFiltered=filtered.filter(e=>!e.es_externo||e.pagado).reduce((s,e)=>s+e.monto,0);
   const baseFiltered=expenses.filter(e=>{
-    const d=new Date(e.fecha);
+    const d=new Date(e.fecha+'T00:00:00');
     const matchMes=!fMonth||d.getMonth()+1===Number(fMonth);
     const matchAnio=!fYear||d.getFullYear()===Number(fYear);
     const q=fSearch.toLowerCase();
