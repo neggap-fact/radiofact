@@ -8650,8 +8650,9 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
       const fin = String(lastDay).padStart(2, "0");
       query = query.gte("fecha", `${fYear}-${mes}-01`).lte("fecha", `${fYear}-${mes}-${fin}`);
     }
-    const { data } = await query;
-if (data) {
+    const { data, error } = await query;
+    console.log('[MovBanc] cuenta:', fCuenta, '| mes:', fMonth, '| año:', fYear, '| results:', data?.length ?? 'null', '| error:', error?.message ?? null);
+    if (data) {
       setMovimientosLocales(data);
       if (typeof setMovimientosBancarios === "function") setMovimientosBancarios(data);
     }
