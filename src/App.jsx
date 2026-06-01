@@ -377,11 +377,11 @@ const INIT_CONTRACTS = [
   {id:"ct4",clientId:"c3",descripcion:"Publicidad AM + FM - Paquete completo",montoNeto:80000,iva:8400,total:88400,fechaInicio:"2025-01-01",duracionMeses:12,diaFacturacion:1,textoOpcional:"OC 2025-001",active:true},
 ];
 const INIT_INVOICES = [
-  {id:"inv1",contractId:"ct1",clientId:"c1",clientName:"Supermercado El Sol S.A.",clientEmail:"administracion@elsol.com.ar",tipoFactura:"A",numero:"A-0001-00000001",month:1,year:2026,periodo:"Enero 2026",detalle:"Publicidad Radio AM — Período: Enero 2026",neto:50000,iva:5250,total:55250,estado:"Pagada",cae:"12345678901234",fechaPago:"2026-01-10",emailEnviado:true},
-  {id:"inv2",contractId:"ct2",clientId:"c1",clientName:"Supermercado El Sol S.A.",clientEmail:"administracion@elsol.com.ar",tipoFactura:"A",numero:"A-0001-00000002",month:1,year:2026,periodo:"Enero 2026",detalle:"Publicidad Web - Banner — Período: Enero 2026",neto:20000,iva:2100,total:22100,estado:"Pagada",cae:"12345678901235",fechaPago:"2026-01-10",emailEnviado:true},
-  {id:"inv3",contractId:"ct3",clientId:"c2",clientName:"Farmacia Central",clientEmail:"farmaciacentral@gmail.com",tipoFactura:"B",numero:"B-0001-00000003",month:1,year:2026,periodo:"Enero 2026",detalle:"Publicidad Radio FM — Período: Enero 2026",neto:30000,iva:3150,total:33150,estado:"Emitida",cae:"",fechaPago:"",emailEnviado:false},
-  {id:"inv4",contractId:"ct4",clientId:"c3",clientName:"Automotores del Sur S.R.L.",clientEmail:"ventas@automotoresdelsur.com.ar",tipoFactura:"A",numero:"A-0001-00000004",month:1,year:2026,periodo:"Enero 2026",detalle:"Publicidad AM + FM — Período: Enero 2026 — OC 2025-001",neto:80000,iva:8400,total:88400,estado:"Emitida",cae:"",fechaPago:"",emailEnviado:false},
-  {id:"inv5",contractId:"ct1",clientId:"c1",clientName:"Supermercado El Sol S.A.",clientEmail:"administracion@elsol.com.ar",tipoFactura:"A",numero:"A-0001-00000005",month:2,year:2026,periodo:"Febrero 2026",detalle:"Publicidad Radio AM — Período: Febrero 2026",neto:50000,iva:5250,total:55250,estado:"Emitida",cae:"",fechaPago:"",emailEnviado:false},
+  {id:"inv1",contractId:"ct1",clientId:"c1",clientName:"Supermercado El Sol S.A.",clientEmail:"administracion@elsol.com.ar",tipoFactura:"A",numero:"A-0001-00000001",month:1,year:2026,periodo:"Enero 2026",detalle:"Publicidad Radio AM",neto:50000,iva:5250,total:55250,estado:"Pagada",cae:"12345678901234",fechaPago:"2026-01-10",emailEnviado:true},
+  {id:"inv2",contractId:"ct2",clientId:"c1",clientName:"Supermercado El Sol S.A.",clientEmail:"administracion@elsol.com.ar",tipoFactura:"A",numero:"A-0001-00000002",month:1,year:2026,periodo:"Enero 2026",detalle:"Publicidad Web - Banner",neto:20000,iva:2100,total:22100,estado:"Pagada",cae:"12345678901235",fechaPago:"2026-01-10",emailEnviado:true},
+  {id:"inv3",contractId:"ct3",clientId:"c2",clientName:"Farmacia Central",clientEmail:"farmaciacentral@gmail.com",tipoFactura:"B",numero:"B-0001-00000003",month:1,year:2026,periodo:"Enero 2026",detalle:"Publicidad Radio FM",neto:30000,iva:3150,total:33150,estado:"Emitida",cae:"",fechaPago:"",emailEnviado:false},
+  {id:"inv4",contractId:"ct4",clientId:"c3",clientName:"Automotores del Sur S.R.L.",clientEmail:"ventas@automotoresdelsur.com.ar",tipoFactura:"A",numero:"A-0001-00000004",month:1,year:2026,periodo:"Enero 2026",detalle:"Publicidad AM + FM — OC 2025-001",neto:80000,iva:8400,total:88400,estado:"Emitida",cae:"",fechaPago:"",emailEnviado:false},
+  {id:"inv5",contractId:"ct1",clientId:"c1",clientName:"Supermercado El Sol S.A.",clientEmail:"administracion@elsol.com.ar",tipoFactura:"A",numero:"A-0001-00000005",month:2,year:2026,periodo:"Febrero 2026",detalle:"Publicidad Radio AM",neto:50000,iva:5250,total:55250,estado:"Emitida",cae:"",fechaPago:"",emailEnviado:false},
 ];
 const INIT_EXPENSES = [
   {id:"ex1",descripcion:"Sueldo operador técnico",categoria:"Personal",monto:180000,fecha:"2026-01-31",proveedor:"Juan Pérez",comprobante:"REC-001",pagado:true,notas:""},
@@ -3067,12 +3067,10 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
     } else {
       periodoTexto = `${MONTHS[billMonth-1]} ${billYear}`;
     }
-    // El DETALLE no lleva fechas: solo descripción + texto opcional + texto extra del Review.
-    // Las fechas van en su línea aparte del PDF (Período Facturado Desde/Hasta).
-    const partes = [ct.descripcion];
-    if (ct.textoOpcional) partes.push(ct.textoOpcional);
-    if (extraText) partes.push(extraText);
-    const detail = partes.filter(Boolean).join(" — ");
+    // DETALLE = descripción del contrato + texto extra libre (OC, expediente, etc.)
+    // SIN período ni mes — el campo "periodo" se guarda aparte y no aparece en el cuerpo impreso.
+    // extraText viene inicializado desde ct.textoOpcional en el ReviewModal y es editable.
+    const detail = [ct.descripcion, extraText].filter(Boolean).join(" — ");
     return{
       id:`inv-${Date.now()}-${Math.random()}`,
       contractId:ct.id,clientId:ct.clientId,
@@ -3970,7 +3968,11 @@ function PreviewFacturaModal({ contrato, cliente, fechas, textoOpcional, onClose
 }
 
 function ReviewModal({contracts,clients,billMonth,billYear,onApprove,onClose,onEditContract,onToggleActive,onEmitirIndividual}){
-  const [texts,setTexts]=useState({});
+  const [texts,setTexts]=useState(()=>{
+    const o={};
+    contracts.forEach(ct=>{o[ct.id]=ct.textoOpcional||"";});
+    return o;
+  });
   const [sel,setSel]=useState(contracts.map(c=>c.id));
   const [submitting, setSubmitting] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
@@ -4148,7 +4150,7 @@ function ReviewModal({contracts,clients,billMonth,billYear,onApprove,onClose,onE
                     </div>
                   </div>
 
-                  <input value={texts[ct.id]||ct.textoOpcional||""} onChange={e=>setTexts(p=>({...p,[ct.id]:e.target.value}))}
+                  <input value={texts[ct.id]||""} onChange={e=>setTexts(p=>({...p,[ct.id]:e.target.value}))}
                     disabled={submitting}
                     placeholder="Texto adicional (OC, expediente...)"
                     className="w-full px-2 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 disabled:bg-gray-50 mb-1"/>
