@@ -8652,6 +8652,7 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
     }
     const { data, error } = await query;
     console.log('[MovBanc] cuenta:', fCuenta, '| mes:', fMonth, '| año:', fYear, '| results:', data?.length ?? 'null', '| error:', error?.message ?? null);
+    supabase.from("movimientos_bancarios").select("id,cuenta_id,fecha").eq("cuenta_id","f7879a2b-f001-475e-830d-2769fb1ede8f").limit(5).then(({data:d})=>console.log('[MovBanc] Credicoop sin filtro fecha (5 primeros):', d));
     if (data) {
       setMovimientosLocales(data);
       if (typeof setMovimientosBancarios === "function") setMovimientosBancarios(data);
