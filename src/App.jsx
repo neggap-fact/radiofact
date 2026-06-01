@@ -6317,7 +6317,7 @@ function Finance({clients,invoices,expenses,setExpenses,ingresosBancarios=[],set
 
   // ── FILTROS DE PERÍODO ─────────────────────────
   const filtInv=invoices.filter(i=>(!fMonth||i.month===Number(fMonth))&&(!fYear||i.year===Number(fYear)));
-  const filtExp=expenses.filter(e=>{const d=new Date(e.fecha);return(!fMonth||d.getMonth()+1===Number(fMonth))&&(!fYear||d.getFullYear()===Number(fYear));});
+  const filtExp=expenses.filter(e=>{const d=new Date(e.fecha+'T00:00:00');return(!fMonth||d.getMonth()+1===Number(fMonth))&&(!fYear||d.getFullYear()===Number(fYear));});
 
   // ── FACTURACIÓN ────────────────────────────────
   const totFin = totalizarFacturas(filtInv);
@@ -6377,7 +6377,7 @@ function Finance({clients,invoices,expenses,setExpenses,ingresosBancarios=[],set
 
   // ── INGRESOS BANCARIOS DEL PERÍODO ─────────────
   const filtIng = (ingresosBancarios||[]).filter(i => {
-    const d = new Date(i.fecha);
+    const d = new Date(i.fecha+'T00:00:00');
     return (!fMonth || d.getMonth()+1 === Number(fMonth)) && (!fYear || d.getFullYear() === Number(fYear));
   });
   const totIngresos = filtIng.reduce((s,i) => s + parseFloat(i.monto||0), 0);
