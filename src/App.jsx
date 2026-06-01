@@ -8651,7 +8651,6 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
       query = query.gte("fecha", `${fYear}-${mes}-01`).lte("fecha", `${fYear}-${mes}-${fin}`);
     }
     const { data, error } = await query;
-    if (error) console.error('[MovBanc] Error Supabase:', error.message);
     if (data) {
       setMovimientosLocales(data);
       if (typeof setMovimientosBancarios === "function") setMovimientosBancarios(data);
