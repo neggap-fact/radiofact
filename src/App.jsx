@@ -6342,15 +6342,17 @@ function Finance({clients,invoices,expenses,setExpenses,ingresosBancarios=[],set
   const totalEfectivo = cuentasEfectivo.filter(c => c.activa !== false).reduce((s,c) => s + (parseFloat(c.saldo_actual)||0), 0);
   const totalEnBancos = cuentasBanco.filter(c => c.activa !== false).reduce((s,c) => s + (parseFloat(c.saldo_actual)||0), 0);
 
-  // ── GASTOS DISCRIMINADOS ───────────────────────
-  const gastosBancarios = filtExp.filter(e=>["Gastos bancarios"].includes(e.categoria));
-  const gastosImpuestos = filtExp.filter(e=>e.categoria==="Impuestos");
-  const gastosOperativos = filtExp.filter(e=>!["Gastos bancarios","Impuestos"].includes(e.categoria));
+  // ── GASTOS DISCRIMINADOS (misma regla que PDF de gastos) ──
+  // Excluir tarjetas (pago futuro) y externos (no propios), solo pagados
+  const gastosComputables = filtExp.filter(e => !e.es_tarjeta && !e.es_externo && e.pagado);
+  const gastosBancarios = gastosComputables.filter(e => e.categoria === "Gastos bancarios");
+  const gastosImpuestos = gastosComputables.filter(e => e.categoria === "Impuestos");
+  const gastosOperativos = gastosComputables.filter(e => !["Gastos bancarios","Impuestos"].includes(e.categoria));
 
   const totImpBanco = gastosBancarios.reduce((s,e)=>s+e.monto,0);
   const totImpuestosOtros = gastosImpuestos.reduce((s,e)=>s+e.monto,0);
   const totOperativos = gastosOperativos.reduce((s,e)=>s+e.monto,0);
-  const totGastos = filtExp.reduce((s,e)=>s+e.monto,0);
+  const totGastos = gastosComputables.reduce((s,e)=>s+e.monto,0);
   const totImpuestosTotal = totIva + totIibb + totImpuestosOtros + totImpBanco;
 
   // ── IVA DISCRIMINABLE (DEDUCIBLE) ──────────────
