@@ -8651,8 +8651,7 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
       query = query.gte("fecha", `${fYear}-${mes}-01`).lte("fecha", `${fYear}-${mes}-${fin}`);
     }
     const { data } = await query;
-    console.log('Movimientos Credicoop:', (data||[]).filter(m => m.cuenta_id === 'f7879a2b-f001-475e-830d-2769fb1ede8f'));
-    if (data) {
+if (data) {
       setMovimientosLocales(data);
       if (typeof setMovimientosBancarios === "function") setMovimientosBancarios(data);
     }
