@@ -1397,7 +1397,7 @@ function Dashboard({clients,contracts,invoices,expenses,notifications,setPage}){
   const today=new Date();
   const m=today.getMonth()+1,y=today.getFullYear();
   const mi=invoices.filter(i=>i.month===m&&i.year===y);
-  const me=expenses.filter(e=>{const d=new Date(e.fecha);return d.getMonth()+1===m&&d.getFullYear()===y;});
+  const me=expenses.filter(e=>{const d=new Date(e.fecha+'T00:00:00');return d.getMonth()+1===m&&d.getFullYear()===y;});
   // Totales descontando facturas anuladas (NC)
   const tot = totalizarFacturas(mi);
   const facturado = tot.total;
