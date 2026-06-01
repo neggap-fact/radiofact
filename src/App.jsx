@@ -1474,7 +1474,7 @@ function Dashboard({clients,contracts,invoices,expenses,notifications,setPage}){
             <button onClick={()=>setPage("expenses")} className="text-xs text-blue-600 hover:underline">Ver todos →</button>
           </div>
           {expenses.length===0?<p className="text-xs text-gray-400 py-4 text-center">Sin gastos</p>:
-            [...expenses].filter(e=>e.pagado).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)).slice(0,8).map(ex=>(
+            [...expenses].filter(e=>e.pagado).sort((a,b)=>new Date(b.fecha+'T00:00:00')-new Date(a.fecha+'T00:00:00')).slice(0,8).map(ex=>(
               <div key={ex.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0 hover:bg-gray-50 rounded cursor-pointer" onClick={()=>setPage("expenses")}>
                 <div>
                   <p className="text-xs font-medium">{ex.proveedor||ex.descripcion}</p>
@@ -1883,7 +1883,7 @@ function Contracts({contracts,setContracts,clients,invoices,currentUser,canEdit}
       <div className="space-y-3">
         {filtered.map(ct=>{
           const client=clients.find(c=>c.id===ct.clientId);
-          const end=new Date(ct.fechaInicio);
+          const end=new Date(ct.fechaInicio+'T00:00:00');
           end.setMonth(end.getMonth()+Number(ct.duracionMeses));
           const diff=Math.round((end-new Date())/(1000*60*60*24));
           return(
