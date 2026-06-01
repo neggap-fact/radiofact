@@ -4610,28 +4610,38 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
     setDescargandoPDF(true);
     try {
       const mesNombre = MONTHS[Number(fMonth)-1] || "Todos";
+      const gastosSinExtNiTarj = filtered.filter(e => !e.es_tarjeta && !e.es_externo);
       const payload = {
         periodo: fMonth && fYear ? `${mesNombre} ${fYear}` : "Todos los períodos",
         filtro_categoria: fCat || "Todas las categorías",
         gastos: filtered.map(e => ({
-          fecha:        e.fecha,
-          descripcion:  e.descripcion,
-          categoria:    e.categoria,
-          subcategoria: e.subcategoria || "",
-          proveedor:    e.proveedor || "",
-          comprobante:  e.comprobante || "",
-          monto:        e.monto,
-          monto_iva:    e.monto_iva || 0,
-          pagado:       e.pagado,
-          es_tarjeta:   e.es_tarjeta || false,
+          fecha:             e.fecha,
+          descripcion:       e.descripcion,
+          categoria:         e.categoria,
+          subcategoria:      e.subcategoria      || "",
+          proveedor:         e.proveedor         || "",
+          comprobante:       e.comprobante        || "",
+          monto:             e.monto,
+          monto_iva:         e.monto_iva          || 0,
+          pagado:            e.pagado,
+          es_tarjeta:        e.es_tarjeta         || false,
+          es_externo:        e.es_externo         || false,
+          iva_discriminable: e.iva_discriminable   || false,
+          cuenta_origen_id:  e.cuenta_origen_id    || null,
         })),
-        // Totales por categoría para el resumen
+        cuentas_bancarias: Object.fromEntries(
+          (cuentasBancarias||[]).map(c => [c.id, c.banco || c.nombre || "Banco"])
+        ),
         totales_por_categoria: EXPENSE_CATS.map(cat => ({
           categoria: cat,
-          total: filtered.filter(e => e.categoria === cat && (!e.es_externo||e.pagado)).reduce((s,e) => s + e.monto, 0),
-          cantidad: filtered.filter(e => e.categoria === cat && (!e.es_externo||e.pagado)).length,
+          total:    gastosSinExtNiTarj.filter(e => e.categoria === cat).reduce((s,e) => s + e.monto, 0),
+          cantidad: gastosSinExtNiTarj.filter(e => e.categoria === cat).length,
         })).filter(x => x.total > 0),
-        total_general: filtered.filter(e=>!e.es_externo||e.pagado).reduce((s,e) => s + e.monto, 0),
+        total_computable:  gastosSinExtNiTarj.reduce((s,e) => s + e.monto, 0),
+        total_tarjetas:    filtered.filter(e =>  e.es_tarjeta).reduce((s,e) => s + e.monto, 0),
+        total_externos:    filtered.filter(e =>  e.es_externo).reduce((s,e) => s + e.monto, 0),
+        total_iva_credito: filtered.filter(e => e.iva_discriminable || e.es_externo).reduce((s,e) => s + (parseFloat(e.monto_iva)||0), 0),
+        total_general:     gastosSinExtNiTarj.reduce((s,e) => s + e.monto, 0),
         empresa: "La Vanguardia Noticias",
         generado_en: new Date().toLocaleDateString("es-AR", {day:"2-digit",month:"long",year:"numeric"}),
       };
