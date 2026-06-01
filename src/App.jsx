@@ -6310,7 +6310,7 @@ function Finance({clients,invoices,expenses,setExpenses,ingresosBancarios=[],set
   const [modalMovEfectivo,setModalMovEfectivo]=useState(false);
   const [modalExtracto,setModalExtracto]=useState(false);
   const [mostrarMontos,setMostrarMontos]=useState(false);
-  const [modalPDF,setModalPDF]=useState(false);
+  const [generandoPDF,setGenerandoPDF]=useState(false);
 
   // Helper: formatear monto respetando si está oculto
   const fmt = (val) => mostrarMontos ? fmtMoney(val) : "••••••";
@@ -6425,13 +6425,61 @@ function Finance({clients,invoices,expenses,setExpenses,ingresosBancarios=[],set
           <p className="text-xs text-gray-500 mt-0.5">{fMonth?MONTHS[Number(fMonth)-1]:""} {fYear}</p>
         </div>
         <div className="flex items-center gap-2">
-          <button 
-            onClick={() => setModalPDF(true)}
-            className="flex items-center gap-2 px-4 py-2 hover:bg-white rounded-lg transition border border-gray-200 bg-red-50 text-red-700"
-            title="Descargar resumen en PDF"
+          <button
+            onClick={async () => {
+              setGenerandoPDF(true);
+              try {
+                const movimientosPeriodo = (movimientosBancarios||[]).filter(m => {
+                  const d2 = new Date(m.fecha + "T12:00:00");
+                  return (!fMonth || d2.getMonth()+1 === Number(fMonth)) && (!fYear || d2.getFullYear() === Number(fYear));
+                });
+                const payload = {
+                  periodo: `${MONTHS[Number(fMonth)-1] || "Todos"} ${fYear}`,
+                  generado_en: new Date().toLocaleDateString("es-AR"),
+                  totalEnBancos, totalEfectivo, totalActivos,
+                  cuentasActivas: cuentasActivas.map(c=>({nombre:c.nombre,banco:c.banco,saldo_actual:c.saldo_actual,tipo_efectivo:c.tipo_efectivo})),
+                  totPV3, cobPV3, totPV1, cobPV1,
+                  totNeto, totIva, totFact,
+                  facPV3count: facPV3.length, facPV1count: facPV1.length,
+                  totCob, totAd,
+                  factPagadasCount: filtInv.filter(i=>i.estado==="Pagada").length,
+                  factPendientesCount: filtInv.filter(i=>i.estado!=="Pagada"&&i.estado!=="Anulada").length,
+                  totOperativos, totImpuestosOtros, totImpBanco, totGastos,
+                  gastosOperativosCount: gastosOperativos.length,
+                  ivaComprasEstimado, ivaPagar, totIibb,
+                  ivaDebito, ivaCredito, ivaPosicion,
+                  impCredicoop: impuestosPorBanco.credicoop.total,
+                  impSantander: impuestosPorBanco.santander.total,
+                  impOtros: impuestosPorBanco.otros.total,
+                  byClientPendientes: byClient.filter(c=>c.facturado-c.cobrado>0).map(c=>({razonSocial:c.razonSocial,facturas:c.facturas.length,saldo:c.facturado-c.cobrado})),
+                  cuentasBancoActivas: cuentasBancarias.filter(c=>c.activa!==false&&!c.tipo_efectivo).map(c=>({id:c.id,nombre:c.nombre,banco:c.banco,saldo_actual:c.saldo_actual})),
+                  movimientosPeriodo: movimientosPeriodo.map(m=>({cuenta_id:m.cuenta_id,categoria:m.categoria,importe:m.importe,fecha:m.fecha,saldo_posterior:m.saldo_posterior})),
+                };
+                const res = await fetch(`${BACKEND_URL}/pdf-finanzas`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(payload),
+                });
+                if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.error || `Error ${res.status}`); }
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `finanzas-${MONTHS[Number(fMonth)-1]}-${fYear}.pdf`;
+                a.click();
+                URL.revokeObjectURL(url);
+              } catch(e) {
+                alert("Error generando PDF: " + e.message);
+              } finally {
+                setGenerandoPDF(false);
+              }
+            }}
+            disabled={generandoPDF}
+            className="flex items-center gap-2 px-4 py-2 hover:bg-white rounded-lg transition border border-gray-200 bg-red-50 text-red-700 disabled:opacity-50"
+            title="Descargar resumen financiero en PDF"
           >
             <span className="text-lg">📄</span>
-            <span className="text-xs font-medium">PDF</span>
+            <span className="text-xs font-medium">{generandoPDF ? "Generando..." : "PDF"}</span>
           </button>
           <button 
             onClick={() => setMostrarMontos(!mostrarMontos)}
@@ -6794,237 +6842,6 @@ function Finance({clients,invoices,expenses,setExpenses,ingresosBancarios=[],set
         />
       )}
 
-      {/* ── MODAL PDF RESUMEN A4 ──────────────────────── */}
-      {modalPDF && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70 p-4 overflow-y-auto">
-          <style>{`
-            @page { size: A4; margin: 2cm; }
-            @media print {
-              body * { visibility: hidden; }
-              .pdf-print-area, .pdf-print-area * { visibility: visible; }
-              .pdf-print-area {
-                position: absolute; left: 0; top: 0;
-                width: 100%; padding: 0 !important; box-shadow: none !important;
-              }
-              .no-print { display: none !important; }
-              .pdf-section { page-break-inside: avoid; break-inside: avoid; }
-            }
-            .pdf-print-area {
-              width: 17cm;
-              margin: 0 auto;
-              background: white;
-              font-family: Arial, Helvetica, sans-serif;
-              font-size: 10px;
-              color: #1f2937;
-            }
-            .pdf-section { page-break-inside: avoid; break-inside: avoid; margin-bottom: 14px; }
-            .pdf-h2 { font-size:11px; font-weight:bold; padding:5px 8px; margin:0 0 8px 0; border-radius:3px; }
-            .pdf-table { width:100%; border-collapse:collapse; font-size:10px; }
-            .pdf-table td, .pdf-table th { padding:4px 6px; }
-            .pdf-table th { text-align:left; background:#f3f4f6; font-size:9px; }
-            .pdf-tr-alt { border-bottom: 1px solid #e5e7eb; }
-          `}</style>
-
-          <div className="bg-white rounded-lg shadow-2xl max-w-3xl w-full my-4">
-            {/* Botones */}
-            <div className="no-print flex justify-between items-center p-3 border-b bg-gray-50 rounded-t-lg sticky top-0">
-              <h3 className="text-base font-semibold text-gray-800">📄 Resumen Financiero — {MONTHS[Number(fMonth)-1]} {fYear}</h3>
-              <div className="flex gap-2">
-                <button onClick={() => window.print()} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium">🖨️ Guardar PDF</button>
-                <button onClick={() => setModalPDF(false)} className="px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">✕ Cerrar</button>
-              </div>
-            </div>
-
-            {/* Contenido A4 */}
-            <div className="pdf-print-area p-6">
-              {/* HEADER */}
-              <div style={{borderBottom:'3px solid #1e40af', paddingBottom:'10px', marginBottom:'16px'}}>
-                <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-                  <div>
-                    <div style={{fontSize:'20px', fontWeight:'bold', color:'#1e40af', lineHeight:1}}>RadioFact</div>
-                    <div style={{fontSize:'9px', color:'#6b7280', marginTop:'2px'}}>Sistema de Gestión Financiera</div>
-                  </div>
-                  <div style={{textAlign:'right'}}>
-                    <div style={{fontSize:'11px', fontWeight:'bold', color:'#1f2937'}}>Resumen Financiero</div>
-                    <div style={{fontSize:'9px', color:'#6b7280', marginTop:'2px'}}>Período: {MONTHS[Number(fMonth)-1]} {fYear}</div>
-                    <div style={{fontSize:'8px', color:'#9ca3af', marginTop:'1px'}}>Generado: {new Date().toLocaleDateString("es-AR")} {new Date().toLocaleTimeString("es-AR",{hour:'2-digit',minute:'2-digit'})}</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* ACTIVOS */}
-              <section className="pdf-section">
-                <div className="pdf-h2" style={{color:'#059669', background:'#d1fae5'}}>💰 RESUMEN DE ACTIVOS</div>
-                <table className="pdf-table"><tbody>
-                  <tr className="pdf-tr-alt"><td>🏦 En bancos</td><td style={{textAlign:'right', fontWeight:'600'}}>{fmtMoney(totalEnBancos)}</td></tr>
-                  <tr className="pdf-tr-alt"><td>💵 Efectivo</td><td style={{textAlign:'right', fontWeight:'600'}}>{fmtMoney(totalEfectivo)}</td></tr>
-                  <tr style={{background:'#d1fae5'}}><td style={{fontWeight:'bold'}}>TOTAL ACTIVOS</td><td style={{textAlign:'right', fontWeight:'bold', color:'#059669', fontSize:'11px'}}>{fmtMoney(totalActivos)}</td></tr>
-                </tbody></table>
-              </section>
-
-              {/* CUENTAS */}
-              <section className="pdf-section">
-                <div className="pdf-h2" style={{color:'#0891b2', background:'#cffafe'}}>🏦 CUENTAS Y EFECTIVO (Detalle)</div>
-                <table className="pdf-table">
-                  <thead><tr><th>Nombre</th><th>Banco</th><th style={{textAlign:'right'}}>Saldo</th></tr></thead>
-                  <tbody>{cuentasActivas.map(c=>(
-                    <tr key={c.id} className="pdf-tr-alt">
-                      <td>{c.tipo_efectivo?'💵':'🏦'} {c.nombre}</td>
-                      <td style={{color:'#6b7280'}}>{c.banco}</td>
-                      <td style={{textAlign:'right', fontWeight:'600'}}>{fmtMoney(c.saldo_actual)}</td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </section>
-
-              {/* FACTURACIÓN */}
-              <section className="pdf-section">
-                <div className="pdf-h2" style={{color:'#1d4ed8', background:'#dbeafe'}}>📊 FACTURACIÓN</div>
-                <table className="pdf-table"><tbody>
-                  <tr className="pdf-tr-alt"><td>📻 PV 3 RadioFact (ARCA SDK)</td><td style={{textAlign:'right', fontWeight:'600'}}>{fmtMoney(totPV3)}</td></tr>
-                  <tr className="pdf-tr-alt"><td>📋 PV 1 ARCA Web (manual)</td><td style={{textAlign:'right', fontWeight:'600'}}>{fmtMoney(totPV1)}</td></tr>
-                  <tr className="pdf-tr-alt"><td>Neto</td><td style={{textAlign:'right'}}>{fmtMoney(totNeto)}</td></tr>
-                  <tr className="pdf-tr-alt"><td>IVA débito fiscal</td><td style={{textAlign:'right'}}>{fmtMoney(totIva)}</td></tr>
-                  <tr style={{background:'#dbeafe'}}><td style={{fontWeight:'bold'}}>TOTAL FACTURADO</td><td style={{textAlign:'right', fontWeight:'bold', color:'#1d4ed8', fontSize:'11px'}}>{fmtMoney(totFact)}</td></tr>
-                </tbody></table>
-              </section>
-
-              {/* COBRANZAS */}
-              <section className="pdf-section">
-                <div className="pdf-h2" style={{color:'#15803d', background:'#dcfce7'}}>✓ COBRANZAS</div>
-                <table className="pdf-table"><tbody>
-                  <tr className="pdf-tr-alt"><td>✅ Cobrado</td><td style={{textAlign:'right', fontWeight:'600', color:'#15803d'}}>{fmtMoney(totCob)}</td></tr>
-                  <tr className="pdf-tr-alt"><td>⏳ Pendiente / Por cobrar</td><td style={{textAlign:'right', fontWeight:'600', color:'#dc2626'}}>{fmtMoney(totAd)}</td></tr>
-                </tbody></table>
-              </section>
-
-              {/* GASTOS */}
-              <section className="pdf-section">
-                <div className="pdf-h2" style={{color:'#b91c1c', background:'#fee2e2'}}>💸 GASTOS DEL PERÍODO</div>
-                <table className="pdf-table"><tbody>
-                  <tr className="pdf-tr-alt"><td>Gastos operativos</td><td style={{textAlign:'right'}}>{fmtMoney(totOperativos)}</td></tr>
-                  <tr className="pdf-tr-alt"><td>Impuestos pagados (categoría)</td><td style={{textAlign:'right'}}>{fmtMoney(totImpuestosOtros)}</td></tr>
-                  <tr className="pdf-tr-alt"><td>Gastos bancarios</td><td style={{textAlign:'right'}}>{fmtMoney(totImpBanco)}</td></tr>
-                  <tr style={{background:'#fee2e2'}}><td style={{fontWeight:'bold'}}>TOTAL GASTOS</td><td style={{textAlign:'right', fontWeight:'bold', color:'#b91c1c', fontSize:'11px'}}>{fmtMoney(totGastos)}</td></tr>
-                </tbody></table>
-                <div style={{fontSize:'8px', color:'#9ca3af', marginTop:'4px', fontStyle:'italic'}}>💡 Suma gastos operativos + gastos bancarios + impuestos pagados (del mes anterior). El IVA y el IIBB del mes corriente se pagan el mes entrante.</div>
-              </section>
-
-              {/* IMPUESTOS */}
-              <section className="pdf-section">
-                <div className="pdf-h2" style={{color:'#c2410c', background:'#ffedd5'}}>🏛️ IMPUESTOS (a pagar próximo mes)</div>
-                <table className="pdf-table"><tbody>
-                  <tr className="pdf-tr-alt"><td>IVA débito fiscal (ventas)</td><td style={{textAlign:'right'}}>{fmtMoney(totIva)}</td></tr>
-                  <tr className="pdf-tr-alt"><td>IVA crédito fiscal (compras)</td><td style={{textAlign:'right'}}>-{fmtMoney(ivaComprasEstimado)}</td></tr>
-                  <tr className="pdf-tr-alt" style={{background:'#fff7ed'}}><td style={{fontWeight:'bold'}}>IVA a pagar</td><td style={{textAlign:'right', fontWeight:'bold', color:'#c2410c'}}>{fmtMoney(ivaPagar)}</td></tr>
-                  <tr className="pdf-tr-alt"><td>IIBB Santa Cruz (3% s/neto)</td><td style={{textAlign:'right', fontWeight:'600'}}>{fmtMoney(totIibb)}</td></tr>
-                </tbody></table>
-              </section>
-
-              {/* GASTOS BANCARIOS POR BANCO */}
-              <section className="pdf-section">
-                <div className="pdf-h2" style={{color:'#a16207', background:'#fef3c7'}}>🏛️ GASTOS BANCARIOS POR BANCO</div>
-                <table className="pdf-table"><tbody>
-                  <tr className="pdf-tr-alt"><td>Credicoop Corriente LVN</td><td style={{textAlign:'right'}}>{fmtMoney(impuestosPorBanco.credicoop.total)}</td></tr>
-                  <tr className="pdf-tr-alt"><td>Banco Santander LVN</td><td style={{textAlign:'right'}}>{fmtMoney(impuestosPorBanco.santander.total)}</td></tr>
-                  <tr style={{background:'#fef3c7'}}><td style={{fontWeight:'bold'}}>TOTAL</td><td style={{textAlign:'right', fontWeight:'bold', color:'#a16207'}}>{fmtMoney(impuestosPorBanco.credicoop.total + impuestosPorBanco.santander.total + impuestosPorBanco.otros.total)}</td></tr>
-                </tbody></table>
-              </section>
-
-              {/* SALDOS PENDIENTES */}
-              {byClient.filter(c=>c.facturado-c.cobrado>0).length > 0 && (
-                <section className="pdf-section">
-                  <div className="pdf-h2" style={{color:'#dc2626', background:'#fee2e2'}}>⚠️ SALDOS PENDIENTES DE COBRO</div>
-                  <table className="pdf-table">
-                    <thead><tr><th>Cliente</th><th style={{textAlign:'center'}}>Fact.</th><th style={{textAlign:'right'}}>Saldo</th></tr></thead>
-                    <tbody>{byClient.filter(c=>c.facturado-c.cobrado>0).map(c=>(
-                      <tr key={c.id} className="pdf-tr-alt">
-                        <td>{c.razonSocial}</td>
-                        <td style={{textAlign:'center'}}>{c.facturas.length}</td>
-                        <td style={{textAlign:'right', color:'#dc2626', fontWeight:'600'}}>{fmtMoney(c.facturado-c.cobrado)}</td>
-                      </tr>
-                    ))}</tbody>
-                  </table>
-                </section>
-              )}
-
-              {/* SECCIÓN 5 — MOVIMIENTOS BANCARIOS POR CUENTA */}
-              {(() => {
-                const movPeriodo = (movimientosBancarios||[]).filter(m => {
-                  const d = new Date(m.fecha + "T12:00:00");
-                  return (!fMonth || d.getMonth()+1 === Number(fMonth)) && (!fYear || d.getFullYear() === Number(fYear));
-                });
-                if (movPeriodo.length === 0) return null;
-                const cuentasActPDF = cuentasBancarias.filter(c => c.activa !== false && !c.tipo_efectivo);
-                const CATS_PDF = {
-                  transferencia_recibida: "📥 Transferencias recibidas",
-                  transferencia_emitida:  "📤 Transferencias emitidas",
-                  servicio:               "💳 Pagos servicios",
-                  pago_servicio:          "💡 Servicios públicos (SPSE / Distrigas)",
-                  pago_impuesto:          "💰 Pagos AFIP / VEP",
-                  impuesto_banco:         "🏛️ Impuestos banco",
-                  comision:               "🏦 Comisiones",
-                  otro:                   "❓ Otros",
-                };
-                return (
-                  <section className="pdf-section">
-                    <div className="pdf-h2" style={{color:'#1e40af', background:'#dbeafe'}}>🏦 MOVIMIENTOS BANCARIOS POR CUENTA</div>
-                    {cuentasActPDF.map(cuenta => {
-                      const movsCuenta = movPeriodo.filter(m => m.cuenta_id === cuenta.id);
-                      if (movsCuenta.length === 0) return null;
-                      const porCatCuenta = {};
-                      for (const m of movsCuenta) {
-                        const cat = m.categoria || "otro";
-                        if (!porCatCuenta[cat]) porCatCuenta[cat] = { total: 0, count: 0 };
-                        porCatCuenta[cat].total += parseFloat(m.importe)||0;
-                        porCatCuenta[cat].count++;
-                      }
-                      const saldosOrden = [...movsCuenta].sort((a,b) => a.fecha.localeCompare(b.fecha));
-                      const saldoIni = saldosOrden[0]?.saldo_posterior || 0;
-                      const saldoFin = saldosOrden[saldosOrden.length-1]?.saldo_posterior || cuenta.saldo_actual || 0;
-                      return (
-                        <div key={cuenta.id} style={{marginBottom:'10px'}}>
-                          <div style={{fontWeight:'bold', fontSize:'10px', color:'#1e40af', marginBottom:'4px'}}>🏦 {cuenta.nombre} — {cuenta.banco}</div>
-                          <table className="pdf-table"><tbody>
-                            {Object.entries(CATS_PDF).filter(([c]) => porCatCuenta[c]).map(([c, label]) => (
-                              <tr key={c} className="pdf-tr-alt">
-                                <td>{label}</td>
-                                <td style={{textAlign:'center', color:'#6b7280'}}>{porCatCuenta[c].count} mov.</td>
-                                <td style={{textAlign:'right', fontWeight:'600'}}>{fmtMoney(porCatCuenta[c].total)}</td>
-                              </tr>
-                            ))}
-                            <tr style={{background:'#eff6ff'}}><td style={{fontWeight:'bold'}}>Saldo inicial período</td><td/><td style={{textAlign:'right', fontWeight:'bold'}}>{fmtMoney(saldoIni)}</td></tr>
-                            <tr style={{background:'#dbeafe'}}><td style={{fontWeight:'bold'}}>Saldo final período</td><td/><td style={{textAlign:'right', fontWeight:'bold', color:'#1e40af'}}>{fmtMoney(saldoFin)}</td></tr>
-                          </tbody></table>
-                        </div>
-                      );
-                    })}
-                  </section>
-                );
-              })()}
-
-              {/* SECCIÓN 6 — RESUMEN IMPOSITIVO */}
-              <section className="pdf-section">
-                <div className="pdf-h2" style={{color:'#7c3aed', background:'#ede9fe'}}>🏛️ RESUMEN IMPOSITIVO</div>
-                <table className="pdf-table"><tbody>
-                  <tr className="pdf-tr-alt"><td>IVA débito fiscal (ventas)</td><td style={{textAlign:'right'}}>{fmtMoney(ivaDebito)}</td></tr>
-                  <tr className="pdf-tr-alt"><td>IVA crédito fiscal (compras)</td><td style={{textAlign:'right', color:'#059669'}}>-{fmtMoney(ivaCredito)}</td></tr>
-                  <tr className="pdf-tr-alt" style={{background:'#ede9fe'}}><td style={{fontWeight:'bold'}}>Posición IVA {ivaPosicion <= 0 ? "(saldo a favor)" : "(a pagar)"}</td><td style={{textAlign:'right', fontWeight:'bold', color: ivaPosicion > 0 ? '#dc2626' : '#059669'}}>{fmtMoney(Math.abs(ivaPosicion))}</td></tr>
-                  <tr className="pdf-tr-alt"><td>IIBB Santa Cruz 3% s/neto</td><td style={{textAlign:'right', fontWeight:'600'}}>{fmtMoney(totIibb)}</td></tr>
-                  <tr className="pdf-tr-alt"><td>Impuestos bancarios del mes</td><td style={{textAlign:'right'}}>{fmtMoney(totImpBanco)}</td></tr>
-                  <tr style={{background:'#ede9fe'}}><td style={{fontWeight:'bold'}}>Total carga fiscal estimada</td><td style={{textAlign:'right', fontWeight:'bold', color:'#7c3aed', fontSize:'11px'}}>{fmtMoney(Math.abs(ivaPosicion) + totIibb + totImpBanco)}</td></tr>
-                </tbody></table>
-              </section>
-
-              {/* FOOTER */}
-              <div className="pdf-footer" style={{marginTop:'20px', paddingTop:'10px', borderTop:'2px solid #e5e7eb', textAlign:'center'}}>
-                <div style={{fontSize:'8px', color:'#6b7280'}}>Sistema RadioFact v3.5 · LA VANGUARDIA NOTICIAS · CUIT 30-71644424-0</div>
-                <div style={{fontSize:'7px', color:'#9ca3af', marginTop:'2px'}}>© {new Date().getFullYear()} RadioFact. Todos los derechos reservados. · Generado automáticamente</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── MODAL MOVIMIENTO DE EFECTIVO ────────────── */}
       {modalMovEfectivo && (
