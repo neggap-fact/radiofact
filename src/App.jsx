@@ -8647,21 +8647,26 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
   // ── estado local — se recarga desde Supabase al cambiar cuenta/mes/año ──
   const [movimientosLocales, setMovimientosLocales] = useState([]);
   const [cargando, setCargando] = useState(false);
+  const [errorCarga, setErrorCarga] = useState("");
 
   const cargarMovimientos = useCallback(async () => {
     setCargando(true);
+    setErrorCarga("");
     let query = supabase.from("movimientos_bancarios").select("*").order("fecha", { ascending: false });
     if (fCuenta !== "todas") query = query.eq("cuenta_id", fCuenta);
     if (fMonth && fYear) {
       const mes = String(fMonth).padStart(2, "0");
+      // getDate() con día 0 devuelve el último día del mes anterior → cubre 28/29/30/31 correctamente
       const lastDay = new Date(parseInt(fYear), parseInt(fMonth), 0).getDate();
       const fin = String(lastDay).padStart(2, "0");
       query = query.gte("fecha", `${fYear}-${mes}-01`).lte("fecha", `${fYear}-${mes}-${fin}`);
     }
     const { data, error } = await query;
-    if (data) {
-      setMovimientosLocales(data);
-      if (typeof setMovimientosBancarios === "function") setMovimientosBancarios(data);
+    if (error) {
+      setErrorCarga(`Error al cargar movimientos: ${error.message}`);
+    } else {
+      setMovimientosLocales(data || []);
+      if (typeof setMovimientosBancarios === "function") setMovimientosBancarios(data || []);
     }
     setCargando(false);
   }, [fCuenta, fMonth, fYear]);
@@ -8790,12 +8795,19 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
         </div>
       </div>
 
-      {/* ── TABLA (desktop) / CARDS (mobile) ── */}
-      {filtrados.length === 0 ? (
-        <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400 text-sm">
-          Sin movimientos para los filtros seleccionados.
+      {/* ── ERROR DE CARGA ── */}
+      {errorCarga && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-700">
+          ⚠️ {errorCarga}
         </div>
-      ) : (
+      )}
+
+      {/* ── TABLA (desktop) / CARDS (mobile) ── */}
+      {!errorCarga && filtrados.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400 text-sm">
+          {cargando ? "Cargando…" : "Sin movimientos para los filtros seleccionados."}
+        </div>
+      ) : !errorCarga && (
         <>
           {/* TABLA — desktop */}
           <div className="hidden md:block bg-white rounded-xl border border-gray-200 overflow-hidden">
