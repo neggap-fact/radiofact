@@ -7026,6 +7026,7 @@ function ImportarExtractoBancarioModal({ cuentasBancarias, setCuentasBancarias, 
   const [movimientos, setMovimientos] = useState([]);
   const [resumen, setResumen] = useState(null);
   const [resultado, setResultado] = useState(null);
+  const [erroresParseo, setErroresParseo] = useState(0);
 
   const handleFile = (f) => {
     if (f && (f.name.toLowerCase().endsWith(".csv") || f.type === "text/csv" || f.type === "application/vnd.ms-excel")) {
@@ -7051,6 +7052,7 @@ function ImportarExtractoBancarioModal({ cuentasBancarias, setCuentasBancarias, 
       if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
       setMovimientos((data.movimientos || []).map((m, i) => ({ ...m, _idx: i })));
       setResumen(data.resumen || null);
+      setErroresParseo(data.errores_parseo || 0);
       setStep(2);
     } catch (e) {
       setError(e.message || "No se pudo analizar el archivo.");
@@ -7105,6 +7107,7 @@ function ImportarExtractoBancarioModal({ cuentasBancarias, setCuentasBancarias, 
             <p><span className="text-gray-500">Total analizados:</span> <strong>{resultado.total}</strong></p>
             <p><span className="text-gray-500">Insertados:</span> <strong className="text-green-600">{resultado.insertados}</strong></p>
             {resultado.duplicados > 0 && <p><span className="text-amber-600">Duplicados ignorados:</span> <strong className="text-amber-600">{resultado.duplicados}</strong></p>}
+            {erroresParseo > 0 && <p><span className="text-red-600">Filas con error de parseo:</span> <strong className="text-red-600">{erroresParseo}</strong></p>}
           </div>
         </div>
       </Modal>
@@ -7189,6 +7192,9 @@ function ImportarExtractoBancarioModal({ cuentasBancarias, setCuentasBancarias, 
           </div>
           {movimientos.filter(m=>m.es_duplicado).length > 0 && (
             <p className="text-xs text-amber-600">⚠️ {movimientos.filter(m=>m.es_duplicado).length} movimientos ya existen en el sistema (serán ignorados al importar).</p>
+          )}
+          {erroresParseo > 0 && (
+            <p className="text-xs text-red-600">⚠️ {erroresParseo} fila(s) con importe no reconocido fueron descartadas (formato inválido).</p>
           )}
           {error && <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{error}</div>}
           <div className="flex justify-between items-center pt-2 border-t border-gray-100">
