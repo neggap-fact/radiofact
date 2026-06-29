@@ -6313,6 +6313,8 @@ function Finance({clients,invoices,expenses,setExpenses,ingresosBancarios=[],set
   const [modalExtracto,setModalExtracto]=useState(false);
   const [mostrarMontos,setMostrarMontos]=useState(false);
   const [generandoPDF,setGenerandoPDF]=useState(false);
+  const [editingSaldoId,setEditingSaldoId]=useState(null);
+  const [editingSaldoVal,setEditingSaldoVal]=useState("");
 
   // Helper: formatear monto respetando si está oculto
   const fmt = (val) => mostrarMontos ? fmtMoney(val) : "••••••";
@@ -6418,6 +6420,15 @@ function Finance({clients,invoices,expenses,setExpenses,ingresosBancarios=[],set
     const {error} = await supabase.from("cuentas_bancarias").delete().eq("id", cuenta.id);
     if(error){ alert("Error: "+error.message); return; }
     setCuentasBancarias(prev => prev.filter(c => c.id !== cuenta.id));
+  };
+
+  const guardarSaldo = async (cuenta) => {
+    const nuevoSaldo = parseFloat(editingSaldoVal);
+    if (isNaN(nuevoSaldo)) { setEditingSaldoId(null); return; }
+    const {error} = await supabase.from("cuentas_bancarias").update({saldo_actual: nuevoSaldo}).eq("id", cuenta.id);
+    if (error) { alert("Error: "+error.message); return; }
+    setCuentasBancarias(prev => prev.map(c => c.id === cuenta.id ? {...c, saldo_actual: nuevoSaldo} : c));
+    setEditingSaldoId(null);
   };
 
   return(
@@ -6591,7 +6602,22 @@ function Finance({clients,invoices,expenses,setExpenses,ingresosBancarios=[],set
                     <span className="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded">Inactiva</span>
                   )}
                 </div>
-                <p className={`text-lg font-bold ${amountClass}`}>{fmt(c.saldo_actual)}</p>
+                {editingSaldoId === c.id ? (
+                  <div className="flex items-center gap-1 mt-1">
+                    <input
+                      type="number"
+                      value={editingSaldoVal}
+                      onChange={e => setEditingSaldoVal(e.target.value)}
+                      onKeyDown={e => { if(e.key==="Enter") guardarSaldo(c); if(e.key==="Escape") setEditingSaldoId(null); }}
+                      autoFocus
+                      className="text-sm font-bold w-full border border-blue-300 rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    />
+                    <button onClick={() => guardarSaldo(c)} className="text-xs px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700">✓</button>
+                    <button onClick={() => setEditingSaldoId(null)} className="text-xs px-2 py-0.5 bg-gray-200 text-gray-600 rounded hover:bg-gray-300">✕</button>
+                  </div>
+                ) : (
+                  <p className={`text-lg font-bold ${amountClass}`}>{fmt(c.saldo_actual)}</p>
+                )}
                 <div className={`flex gap-1 mt-2 pt-2 border-t ${borderClass}`}>
                   <button
                     onClick={() => desactivarCuenta(c)}
@@ -6599,6 +6625,13 @@ function Finance({clients,invoices,expenses,setExpenses,ingresosBancarios=[],set
                     title={c.activa === false ? "Activar" : "Desactivar"}
                   >
                     {c.activa === false ? "Activar" : "Desactivar"}
+                  </button>
+                  <button
+                    onClick={() => { setEditingSaldoId(c.id); setEditingSaldoVal(String(parseFloat(c.saldo_actual)||0)); }}
+                    className="text-xs px-2 py-1 bg-white border border-blue-200 text-blue-600 rounded hover:bg-blue-50"
+                    title="Editar saldo"
+                  >
+                    ✏️
                   </button>
                   <button
                     onClick={() => borrarCuenta(c)}
