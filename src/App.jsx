@@ -1317,7 +1317,7 @@ export default function App() {
           {page==="expenses"&&<Expenses expenses={expenses} setExpenses={setExpenses} currentUser={currentUser} canEdit={canEdit} plantillas={plantillasGastos} setPlantillas={setPlantillasGastos} proveedores={proveedores} setProveedores={setProveedores} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias} tarjetasCredito={tarjetasCredito} setTarjetasCredito={setTarjetasCredito}/>}
           {page==="proveedores"&&<ProveedoresPage proveedores={proveedores} setProveedores={setProveedores} canEdit={canEdit}/>}
           {page==="finance"&&<Finance clients={clients} invoices={invoices} expenses={expenses} setExpenses={setExpenses} ingresosBancarios={ingresosBancarios} setIngresosBancarios={setIngresosBancarios} saldosIniciales={saldosIniciales} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias} movimientosBancarios={movimientosBancarios} setMovimientosBancarios={setMovimientosBancarios} setPage={setPage} setClientePreFiltro={setClientePreFiltro}/>}
-          {page==="movimientos"&&<MovimientosBancarios movimientosBancarios={movimientosBancarios} cuentasBancarias={cuentasBancarias} setMovimientosBancarios={setMovimientosBancarios} expenses={expenses} setExpenses={setExpenses}/>}
+          {page==="movimientos"&&<MovimientosBancarios movimientosBancarios={movimientosBancarios} cuentasBancarias={cuentasBancarias} setMovimientosBancarios={setMovimientosBancarios} expenses={expenses} setExpenses={setExpenses} clients={clients} invoices={invoices} setInvoices={setInvoices}/>}
           {page==="users"&&currentUser.role==="webmaster"&&<Users users={users} setUsers={setUsers} currentUser={currentUser}/>}
           {page==="settings"&&<Settings config={config} setConfig={setConfig} canEdit={canEdit}/>}
           {emailNCModal && (
@@ -8665,7 +8665,7 @@ function badgeCategoria(cat) {
   return <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${info.badge}`}>{info.label}</span>;
 }
 
-function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, expenses = [], setExpenses }) {
+function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, expenses = [], setExpenses, clients = [], invoices = [], setInvoices }) {
   const PAGE_SIZE = 50;
   const today = new Date();
 
@@ -8707,8 +8707,9 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
   useEffect(() => { cargarMovimientos(); }, [cargarMovimientos]);
 
   // ── modales ──
-  const [editando,  setEditando]  = useState(null);
-  const [aGasto,    setAGasto]    = useState(null);
+  const [editando,    setEditando]    = useState(null);
+  const [aGasto,      setAGasto]      = useState(null);
+  const [conciliando, setConciliando] = useState(null);
 
   // mapa cuenta_id → cuenta
   const cuentaMap = Object.fromEntries(cuentasBancarias.map(c => [c.id, c]));
@@ -8861,6 +8862,7 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
                     onEdit={() => setEditando(m)}
                     onToGasto={() => setAGasto(m)}
                     onSaveConcepto={nuevoConcepto => guardarConcept(m, nuevoConcepto)}
+                    onConciliar={() => setConciliando(m)}
                   />
                 ))}
               </tbody>
@@ -8892,6 +8894,9 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
                         ? <span className="text-xs text-green-600 font-medium">✓ En gastos</span>
                         : !esIngreso && <button onClick={() => setAGasto(m)} className="text-xs text-indigo-600 hover:underline">📎→Gasto</button>
                       }
+                      {!m.factura_id && !m.gasto_id && (
+                        <button onClick={() => setConciliando(m)} className="text-xs text-violet-600 hover:underline">🔍 Conciliar</button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -8951,12 +8956,26 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
           }}
         />
       )}
+      {conciliando && (
+        <ConciliarMovimientoModal
+          movimiento={conciliando}
+          invoices={invoices}
+          onClose={() => setConciliando(null)}
+          onConfirmar={(movId, updates, facturaUpdate) => {
+            setMovimientosLocales(prev => prev.map(m => m.id === movId ? { ...m, ...updates } : m));
+            if (facturaUpdate && typeof setInvoices === "function") {
+              setInvoices(prev => prev.map(inv => inv.id === facturaUpdate.id ? { ...inv, ...facturaUpdate.changes } : inv));
+            }
+            setConciliando(null);
+          }}
+        />
+      )}
     </div>
   );
 }
 
 // ── Fila de movimiento (tabla desktop) ───────────────────────────────────────
-function FilaMovimiento({ m, cuenta, onEdit, onToGasto, onSaveConcepto }) {
+function FilaMovimiento({ m, cuenta, onEdit, onToGasto, onSaveConcepto, onConciliar }) {
   const [editConcepto, setEditConcepto] = useState(false);
   const [conceptoLocal, setConceptoLocal] = useState(m.concepto || "");
   const catResuelta = resolverCategoria(m);
@@ -9023,6 +9042,15 @@ function FilaMovimiento({ m, cuenta, onEdit, onToGasto, onSaveConcepto }) {
               <button onClick={onToGasto} title="Convertir a gasto"
                 className="text-xs text-indigo-600 hover:text-indigo-800 opacity-0 group-hover:opacity-100 transition-opacity">
                 📎→Gasto
+              </button>
+            )
+          }
+          {m.factura_id
+            ? <span className="text-[10px] text-blue-600 font-medium bg-blue-50 px-1.5 py-0.5 rounded">✓ Conciliado</span>
+            : !m.gasto_id && (
+              <button onClick={onConciliar} title="Conciliar"
+                className="text-xs text-violet-600 hover:text-violet-800 opacity-0 group-hover:opacity-100 transition-opacity">
+                🔍
               </button>
             )
           }
@@ -9172,6 +9200,134 @@ function ConvertirAGastoModal({ movimiento: m, cuenta, onClose, onSave }) {
           <button onClick={guardar} disabled={saving}
             className="flex-1 px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 font-medium">
             {saving ? "Guardando…" : "Crear gasto"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Modal conciliación bancaria ──────────────────────────────────────────────
+function ConciliarMovimientoModal({ movimiento: m, invoices, onClose, onConfirmar }) {
+  const [cargando,    setCargando]    = useState(true);
+  const [resultado,   setResultado]   = useState(null);
+  const [confirmando, setConfirmando] = useState(false);
+  const [error,       setError]       = useState("");
+
+  useEffect(() => {
+    fetch(`${BACKEND_URL}/conciliar-movimiento`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ movimiento_id: m.id }),
+    })
+      .then(r => r.json())
+      .then(data => { setResultado(data); setCargando(false); })
+      .catch(e => { setError("Error al buscar sugerencias: " + e.message); setCargando(false); });
+  }, []);
+
+  const confirmar = async (sug) => {
+    setConfirmando(true);
+    const updates = sug.tipo === "cobro_factura"
+      ? { factura_id: sug.factura_id }
+      : { gasto_id: sug.gasto_id };
+
+    const { error: errMov } = await supabase
+      .from("movimientos_bancarios").update(updates).eq("id", m.id);
+    if (errMov) { alert("Error: " + errMov.message); setConfirmando(false); return; }
+
+    let facturaUpdate = null;
+    if (sug.tipo === "cobro_factura") {
+      const { error: errFac } = await supabase
+        .from("facturas").update({ estado: "Pagada", fecha_pago: m.fecha }).eq("id", sug.factura_id);
+      if (!errFac) {
+        facturaUpdate = { id: sug.factura_id, changes: { estado: "Pagada", fechaPago: m.fecha } };
+      }
+    }
+
+    onConfirmar(m.id, updates, facturaUpdate);
+  };
+
+  const esIngreso = m.tipo === "ingreso";
+  const confianzaColor = (c) =>
+    c >= 90 ? "bg-green-100 text-green-700" :
+    c >= 60 ? "bg-yellow-100 text-yellow-700" :
+               "bg-gray-100 text-gray-600";
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-5 space-y-4 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold text-sm text-gray-800">🔍 Conciliación bancaria</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">✕</button>
+        </div>
+
+        {/* Movimiento */}
+        <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-600 space-y-0.5">
+          <p className="font-medium text-gray-800">{m.fecha} · {(m.descripcion || "—").slice(0, 60)}</p>
+          <p className={`font-bold text-sm ${esIngreso ? "text-green-700" : "text-red-600"}`}>
+            {esIngreso ? "+" : "-"}{fmtMoney(parseFloat(m.importe) || 0)}
+          </p>
+          {resultado?.cuit_extraido && (
+            <p className="text-gray-400">CUIT detectado: <span className="font-mono">{resultado.cuit_extraido}</span></p>
+          )}
+        </div>
+
+        {/* Estado */}
+        {cargando && <p className="text-sm text-gray-500 text-center py-4">Buscando coincidencias…</p>}
+        {error && <p className="text-sm text-red-600 text-center py-2">{error}</p>}
+
+        {!cargando && !error && resultado && (
+          resultado.sugerencias.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-4">No se encontraron sugerencias de conciliación.</p>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs text-gray-500 font-medium">{resultado.sugerencias.length} sugerencia{resultado.sugerencias.length !== 1 ? "s" : ""} encontrada{resultado.sugerencias.length !== 1 ? "s" : ""}:</p>
+              {resultado.sugerencias.map((sug, i) => (
+                <div key={i} className="border border-gray-200 rounded-lg p-3 flex items-center justify-between gap-3 hover:bg-gray-50">
+                  <div className="flex-1 min-w-0">
+                    {sug.tipo === "cobro_factura" ? (
+                      <>
+                        <p className="text-xs font-semibold text-gray-800">
+                          Factura #{sug.numero} — {sug.cliente || sug.cuit_cliente || "—"}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {fmtMoney(parseFloat(sug.total)||0)} · {sug.estado}
+                          {sug.cuit_cliente && <span className="ml-2 text-gray-400 font-mono">{sug.cuit_cliente}</span>}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-xs font-semibold text-gray-800">
+                          {sug.descripcion || "Gasto"} — {sug.proveedor || "—"}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {fmtMoney(parseFloat(sug.monto)||0)} · {sug.categoria}
+                          {sug.cuit_proveedor && <span className="ml-2 text-gray-400 font-mono">{sug.cuit_proveedor}</span>}
+                        </p>
+                      </>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${confianzaColor(sug.confianza)}`}>
+                      {sug.confianza}%
+                    </span>
+                    <button
+                      onClick={() => confirmar(sug)}
+                      disabled={confirmando}
+                      className="text-xs px-3 py-1.5 bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50 font-medium"
+                    >
+                      Confirmar
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        )}
+
+        <div className="flex justify-end pt-1">
+          <button onClick={onClose} className="text-xs px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">
+            Cancelar
           </button>
         </div>
       </div>
