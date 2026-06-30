@@ -2131,7 +2131,7 @@ function CobroModal({factura, onCobrar, onClose, cuentasBancarias=[]}){
               </option>
             ))}
           </select>
-          <p className="text-xs text-gray-500 mt-1">El saldo se actualizará automáticamente con el monto cobrado</p>
+          <p className="text-xs text-gray-500 mt-1">Queda registrado como referencia — el saldo real se actualiza solo al importar el extracto bancario</p>
         </div>
 
         {/* BOTONES DE ACCIÓN */}
@@ -2143,7 +2143,7 @@ function CobroModal({factura, onCobrar, onClose, cuentasBancarias=[]}){
           </button>
           <button 
             onClick={handleConfirmar}
-            disabled={!cuentaDestinoId || montoCobradoNum <= 0}
+            disabled={montoCobradoNum <= 0}
             className="px-5 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold disabled:opacity-50 disabled:cursor-not-allowed">
             ✓ Confirmar cobro
           </button>
@@ -3238,21 +3238,6 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
     if (esUUID) {
       const { error } = await supabase.from("facturas").update(payload).eq("id", inv.id);
       if (error) { alert("Error guardando cobro: " + error.message); return; }
-    }
-    // Actualizar saldo de cuenta destino (si se eligió una)
-    if (cuentaDestinoId && setCuentasBancarias) {
-      const cuenta = (cuentasBancarias||[]).find(c => c.id === cuentaDestinoId);
-      if (cuenta) {
-        const nuevoSaldo = (parseFloat(cuenta.saldo_actual)||0) + montoNeto;
-        const { error: errCuenta } = await supabase.from("cuentas_bancarias")
-          .update({ saldo_actual: nuevoSaldo }).eq("id", cuentaDestinoId);
-        if (errCuenta) { alert("⚠️ Cobro registrado pero falló actualización de saldo: " + errCuenta.message); }
-        else {
-          setCuentasBancarias(prev => prev.map(c =>
-            c.id === cuentaDestinoId ? { ...c, saldo_actual: nuevoSaldo } : c
-          ));
-        }
-      }
     }
     updateInvoice(inv.id, {
       estado: "Pagada",
@@ -6519,23 +6504,29 @@ function Finance({clients,invoices,expenses,setExpenses,ingresosBancarios=[],set
       </div>
 
       {/* ══════════════════════════════════════════ */}
-      {/* 1) RESUMEN DE ACTIVOS — ARRIBA              */}
+      {/* 1) SALDO EN CUENTAS — fuente: extractos   */}
       {/* ══════════════════════════════════════════ */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div className="bg-gradient-to-r from-emerald-500 to-teal-500 rounded-xl p-5 text-white shadow-md">
-          <p className="text-xs text-emerald-100 uppercase tracking-wide font-medium">TOTAL ACTIVOS</p>
-          <p className="text-2xl font-bold mt-1">{fmt(totalActivos)}</p>
-          <p className="text-xs text-emerald-100 mt-1">{cuentasActivas.length} cuenta(s) activa(s)</p>
+      <div className="space-y-1">
+        <div className="flex items-center gap-2">
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Saldo en cuentas</h3>
+          <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-medium">Fuente: extractos bancarios importados</span>
         </div>
-        <div className="bg-gradient-to-r from-blue-500 to-cyan-500 rounded-xl p-5 text-white shadow-md">
-          <p className="text-xs text-blue-100 uppercase tracking-wide font-medium">🏦 EN BANCOS</p>
-          <p className="text-2xl font-bold mt-1">{fmt(totalEnBancos)}</p>
-          <p className="text-xs text-blue-100 mt-1">{cuentasBanco.filter(c=>c.activa!==false).length} cuenta(s)</p>
-        </div>
-        <div className="bg-gradient-to-r from-amber-500 to-yellow-500 rounded-xl p-5 text-white shadow-md">
-          <p className="text-xs text-amber-100 uppercase tracking-wide font-medium">💵 EFECTIVO</p>
-          <p className="text-2xl font-bold mt-1">{fmt(totalEfectivo)}</p>
-          <p className="text-xs text-amber-100 mt-1">{cuentasEfectivo.filter(c=>c.activa!==false).length} caja(s)</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="bg-gradient-to-r from-emerald-500 to-teal-500 rounded-xl p-5 text-white shadow-md">
+            <p className="text-xs text-emerald-100 uppercase tracking-wide font-medium">TOTAL ACTIVOS</p>
+            <p className="text-2xl font-bold mt-1">{fmt(totalActivos)}</p>
+            <p className="text-xs text-emerald-100 mt-1">{cuentasActivas.length} cuenta(s) activa(s)</p>
+          </div>
+          <div className="bg-gradient-to-r from-blue-500 to-cyan-500 rounded-xl p-5 text-white shadow-md">
+            <p className="text-xs text-blue-100 uppercase tracking-wide font-medium">🏦 EN BANCOS</p>
+            <p className="text-2xl font-bold mt-1">{fmt(totalEnBancos)}</p>
+            <p className="text-xs text-blue-100 mt-1">{cuentasBanco.filter(c=>c.activa!==false).length} cuenta(s)</p>
+          </div>
+          <div className="bg-gradient-to-r from-amber-500 to-yellow-500 rounded-xl p-5 text-white shadow-md">
+            <p className="text-xs text-amber-100 uppercase tracking-wide font-medium">💵 EFECTIVO</p>
+            <p className="text-2xl font-bold mt-1">{fmt(totalEfectivo)}</p>
+            <p className="text-xs text-amber-100 mt-1">{cuentasEfectivo.filter(c=>c.activa!==false).length} caja(s)</p>
+          </div>
         </div>
       </div>
 
@@ -6653,7 +6644,10 @@ function Finance({clients,invoices,expenses,setExpenses,ingresosBancarios=[],set
       {/* 3) FACTURACIÓN E IMPUESTOS                 */}
       {/* ══════════════════════════════════════════ */}
       <div className="bg-white rounded-xl border border-gray-200 p-4">
-        <h3 className="text-sm font-semibold text-gray-700 mb-3">📊 Facturación e impuestos</h3>
+        <div className="flex items-center gap-2 mb-3">
+          <h3 className="text-sm font-semibold text-gray-700">📊 Facturación e impuestos</h3>
+          <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">Fuente: facturas emitidas</span>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
           <div className="bg-blue-50 rounded-lg p-3 border-l-4 border-blue-500">
             <p className="text-xs text-gray-500">Facturado TOTAL</p>
@@ -6712,7 +6706,10 @@ function Finance({clients,invoices,expenses,setExpenses,ingresosBancarios=[],set
       {/* 3) COBRANZAS                               */}
       {/* ══════════════════════════════════════════ */}
       <div className="bg-white rounded-xl border border-gray-200 p-4">
-        <h3 className="text-sm font-semibold text-gray-700 mb-3">💰 Cobranzas</h3>
+        <div className="flex items-center gap-2 mb-3">
+          <h3 className="text-sm font-semibold text-gray-700">💰 Facturado / Cobrado</h3>
+          <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">Fuente: facturas emitidas</span>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="bg-green-50 rounded-lg p-3 border-l-4 border-green-500">
             <p className="text-xs text-gray-500">Cobrado</p>
