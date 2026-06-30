@@ -562,6 +562,7 @@ export default function App() {
             creado_por: f.creado_por || null,
             aprobado_por: f.aprobado_por || null,
             fecha_aprobacion: f.fecha_aprobacion || null,
+            cuentaDestinoId: f.cuenta_destino_id || null,
           };
         }));
       }
@@ -1295,7 +1296,7 @@ export default function App() {
           {page==="clients"&&<Clients clients={clients} setClients={setClients} contracts={contracts} invoices={invoices} currentUser={currentUser} canEdit={canEdit} registrarEmailEnHistorial={registrarEmailEnHistorial}/>}
           {page==="contracts"&&<Contracts contracts={contracts} setContracts={setContracts} clients={clients} invoices={invoices} currentUser={currentUser} canEdit={canEdit}/>}
           {/* FIX 1: agregado guardarFacturaSupabase como prop */}
-          {page==="billing"&&<Billing clients={clients} contracts={contracts} setContracts={setContracts} invoices={invoices} setInvoices={setInvoices} notifications={notifications} setNotifications={setNotifications} config={config} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase} emitirNotaCredito={emitirNotaCredito} registrarEmailEnHistorial={registrarEmailEnHistorial} marcarEmailEnviadoSupabase={marcarEmailEnviadoSupabase} actualizarEmailsCliente={actualizarEmailsCliente} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias} currentUser={currentUser} clientePreFiltro={clientePreFiltro} setClientePreFiltro={setClientePreFiltro}/>}
+          {page==="billing"&&<Billing clients={clients} contracts={contracts} setContracts={setContracts} invoices={invoices} setInvoices={setInvoices} notifications={notifications} setNotifications={setNotifications} config={config} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase} emitirNotaCredito={emitirNotaCredito} registrarEmailEnHistorial={registrarEmailEnHistorial} marcarEmailEnviadoSupabase={marcarEmailEnviadoSupabase} actualizarEmailsCliente={actualizarEmailsCliente} cuentasBancarias={cuentasBancarias} setCuentasBancarias={setCuentasBancarias} movimientosBancarios={movimientosBancarios} currentUser={currentUser} clientePreFiltro={clientePreFiltro} setClientePreFiltro={setClientePreFiltro}/>}
           {page==="factura-directa"&&<FacturaDirecta clients={clients} setClients={setClients} invoices={invoices} setInvoices={setInvoices} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase} currentUser={currentUser}/>}
           {page==="notas-credito"&&<CreditNotes
             creditNotes={creditNotes}
@@ -2033,25 +2034,43 @@ function ContractModal({data,clients,onSave,onClose}){
 // Consulta el último número autorizado por ARCA en un PV+Tipo y compara con
 // lo que tenemos guardado. Trae los faltantes uno por uno.
 // ── MODAL DE COBRO ────────────────────────────────────────────────────────────
-function CobroModal({factura, onCobrar, onClose, cuentasBancarias=[]}){
-  const [montoCobrado, setMontoCobrado] = useState(factura.total);
-  const [retencionesDetalle, setRetencionesDetalle] = useState("");
+function CobroModal({factura, onCobrar, onClose, cuentasBancarias=[], movimientosBancarios=[], modo="nuevo"}){
   const cuentasActivas = (cuentasBancarias||[]).filter(c => c.activa !== false);
-  const [cuentaDestinoId, setCuentaDestinoId] = useState(cuentasActivas[0]?.id || "");
-  
+  const [montoCobrado, setMontoCobrado] = useState(
+    modo === "editar" ? (factura.montoCobrado || factura.total) : factura.total
+  );
+  const [retencionesDetalle, setRetencionesDetalle] = useState(
+    modo === "editar" ? (factura.retencionesDetalle || "") : ""
+  );
+  const [cuentaDestinoId, setCuentaDestinoId] = useState(
+    modo === "editar" ? (factura.cuentaDestinoId || cuentasActivas[0]?.id || "") : (cuentasActivas[0]?.id || "")
+  );
+  const [fechaCobro, setFechaCobro] = useState(
+    modo === "editar" ? (factura.fechaPago || todayStr()) : todayStr()
+  );
+  const [movimientoId, setMovimientoId] = useState("");
+
   // Auto-calcular descuentos/retenciones basado en monto cobrado
   const totalFactura = parseFloat(factura.total) || 0;
   const montoCobradoNum = parseFloat(montoCobrado) || 0;
   const descuentoCalculado = Math.max(0, totalFactura - montoCobradoNum);
   const hayDescuento = descuentoCalculado > 0;
 
+  // Movimientos del extracto con monto similar (±5%) para sugerir vinculación
+  const movSimilares = (movimientosBancarios||[]).filter(m => {
+    if (m.tipo !== "ingreso") return false;
+    const imp = parseFloat(m.importe) || 0;
+    const ref = montoCobradoNum || totalFactura;
+    if (ref <= 0) return false;
+    return Math.abs(imp - ref) / ref <= 0.05;
+  });
+
   const handleConfirmar = () => {
-    // montoCobrado ya es el monto real, descuentoCalculado es la retención
-    onCobrar(factura, montoCobrado, descuentoCalculado, retencionesDetalle, cuentaDestinoId);
+    onCobrar(factura, montoCobrado, descuentoCalculado, retencionesDetalle, cuentaDestinoId, fechaCobro, movimientoId);
   };
 
   return(
-    <Modal title="💰 Registrar cobro" onClose={onClose}>
+    <Modal title={modo === "editar" ? "✏️ Editar cobro" : "💰 Registrar cobro"} onClose={onClose}>
       <div className="space-y-4">
         {/* SECCIÓN 1: DATOS DE LA FACTURA */}
         <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
@@ -2117,11 +2136,22 @@ function CobroModal({factura, onCobrar, onClose, cuentasBancarias=[]}){
           )}
         </div>
 
-        {/* SECCIÓN 5: SELECCIONAR CUENTA DESTINO */}
+        {/* SECCIÓN 5: FECHA DE COBRO */}
+        <div>
+          <label className="text-xs font-medium text-gray-700 block mb-1">📅 Fecha de cobro</label>
+          <input
+            type="date"
+            value={fechaCobro}
+            onChange={e => setFechaCobro(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-400"
+          />
+        </div>
+
+        {/* SECCIÓN 6: SELECCIONAR CUENTA DESTINO */}
         <div>
           <label className="text-xs font-medium text-gray-700 block mb-1">🏦 ¿A qué cuenta entró el dinero?</label>
-          <select 
-            value={cuentaDestinoId} 
+          <select
+            value={cuentaDestinoId}
             onChange={e=>setCuentaDestinoId(e.target.value)}
             className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-400">
             <option value="">— Sin asignar —</option>
@@ -2134,18 +2164,37 @@ function CobroModal({factura, onCobrar, onClose, cuentasBancarias=[]}){
           <p className="text-xs text-gray-500 mt-1">Queda registrado como referencia — el saldo real se actualiza solo al importar el extracto bancario</p>
         </div>
 
+        {/* SECCIÓN 7: MOVIMIENTO BANCARIO ASOCIADO */}
+        {movSimilares.length > 0 && (
+          <div>
+            <label className="text-xs font-medium text-gray-700 block mb-1">🔗 Vincular movimiento bancario (opcional)</label>
+            <select
+              value={movimientoId}
+              onChange={e => setMovimientoId(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-400">
+              <option value="">— Sin vincular —</option>
+              {movSimilares.map(m => (
+                <option key={m.id} value={m.id}>
+                  {m.fecha} · {fmtMoney(m.importe)} · {(m.descripcion||"").slice(0,55)}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-500 mt-1">Movimientos del extracto con monto similar (±5%)</p>
+          </div>
+        )}
+
         {/* BOTONES DE ACCIÓN */}
         <div className="flex gap-3 justify-end pt-4 border-t border-gray-200">
-          <button 
-            onClick={onClose} 
+          <button
+            onClick={onClose}
             className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50 font-medium">
             Cancelar
           </button>
-          <button 
+          <button
             onClick={handleConfirmar}
             disabled={montoCobradoNum <= 0}
             className="px-5 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold disabled:opacity-50 disabled:cursor-not-allowed">
-            ✓ Confirmar cobro
+            {modo === "editar" ? "✓ Guardar cambios" : "✓ Confirmar cobro"}
           </button>
         </div>
       </div>
@@ -2153,55 +2202,6 @@ function CobroModal({factura, onCobrar, onClose, cuentasBancarias=[]}){
   );
 }
 
-// ── MODAL EDITAR MONTO COBRADO (solo webmaster, facturas Pagadas) ────────────
-function ModalEditarCobro({ inv, onSave, onClose }) {
-  const [monto, setMonto] = useState(inv.montoCobrado > 0 ? inv.montoCobrado : inv.total);
-  const [guardando, setGuardando] = useState(false);
-
-  const handleGuardar = async () => {
-    const montoNum = parseFloat(monto);
-    if (!montoNum || montoNum <= 0) { alert("Ingresá un monto válido"); return; }
-    setGuardando(true);
-    await onSave(inv.id, montoNum);
-    setGuardando(false);
-  };
-
-  return (
-    <Modal title="✏️ Editar cobro" onClose={onClose}>
-      <div className="space-y-3">
-        <div className="flex items-center justify-between bg-blue-50 rounded-lg px-3 py-2 text-xs text-blue-600">
-          <span className="font-medium truncate">{inv.clientName}</span>
-          <span className="ml-3 whitespace-nowrap font-semibold">{fmtMoney(inv.total)}</span>
-        </div>
-        <div>
-          <label className="text-xs font-medium text-gray-600 block mb-1">Monto cobrado ($)</label>
-          <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
-            <input
-              type="number"
-              value={monto}
-              onChange={e => setMonto(e.target.value)}
-              step="0.01"
-              className="w-full pl-7 pr-3 py-2.5 border-2 border-gray-200 rounded-lg text-base font-semibold focus:outline-none focus:border-blue-400"
-              autoFocus
-            />
-          </div>
-        </div>
-        <div className="flex gap-2 justify-end pt-2 border-t border-gray-100">
-          <button onClick={onClose} className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-50">
-            Cancelar
-          </button>
-          <button
-            onClick={handleGuardar}
-            disabled={guardando}
-            className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold disabled:opacity-50">
-            {guardando ? "Guardando..." : "Guardar"}
-          </button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
 
 function SyncArcaModal({ clients, invoices, onClose, onImportar }) {
   const [puntoVenta, setPuntoVenta] = useState(1);
@@ -2880,7 +2880,7 @@ function ModalCobro({inv,onSave,onClose}){
   );
 }
 
-function Billing({clients,contracts,setContracts,invoices,setInvoices,notifications,setNotifications,config,canEdit,descargarPDF,guardarFacturaSupabase,emitirNotaCredito,registrarEmailEnHistorial,marcarEmailEnviadoSupabase,actualizarEmailsCliente,cuentasBancarias=[],setCuentasBancarias,currentUser,clientePreFiltro,setClientePreFiltro}){
+function Billing({clients,contracts,setContracts,invoices,setInvoices,notifications,setNotifications,config,canEdit,descargarPDF,guardarFacturaSupabase,emitirNotaCredito,registrarEmailEnHistorial,marcarEmailEnviadoSupabase,actualizarEmailsCliente,cuentasBancarias=[],setCuentasBancarias,movimientosBancarios=[],currentUser,clientePreFiltro,setClientePreFiltro}){
   const today=new Date();
   const [selMonth,setSelMonth]=useState(today.getMonth()+1);
   const [selYear,setSelYear]=useState(today.getFullYear());
@@ -3215,6 +3215,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
     if (data.retenciones  !== undefined) supaData.retenciones        = data.retenciones;
     if (data.retencionesDetalle !== undefined) supaData.retenciones_detalle = data.retencionesDetalle;
     if (data.cae          !== undefined) supaData.cae                = data.cae;
+    if (data.cuentaDestinoId !== undefined) supaData.cuenta_destino_id = data.cuentaDestinoId || null;
     if (Object.keys(supaData).length > 0) {
       const { error } = await supabase.from("facturas").update(supaData).eq("id", id);
       if (error) console.error("Error actualizando factura:", error.message);
@@ -3222,13 +3223,13 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
   };
 
 
-  const marcarCobrada = async (inv, montoCobrado, retenciones, retencionesDetalle, cuentaDestinoId) => {
+  const marcarCobrada = async (inv, montoCobrado, retenciones, retencionesDetalle, cuentaDestinoId, fechaCobro, movimientoId) => {
     const montoNum = parseFloat(montoCobrado) || inv.total;
     const retenNum = parseFloat(retenciones) || 0;
-    const montoNeto = montoNum - retenNum; // lo que efectivamente entra a la cuenta
+    const fechaPago = fechaCobro || todayStr();
     const payload = {
       estado: "Pagada",
-      fecha_pago: todayStr(),
+      fecha_pago: fechaPago,
       monto_cobrado: montoNum,
       retenciones: retenNum,
       retenciones_detalle: retencionesDetalle || "",
@@ -3238,10 +3239,13 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
     if (esUUID) {
       const { error } = await supabase.from("facturas").update(payload).eq("id", inv.id);
       if (error) { alert("Error guardando cobro: " + error.message); return; }
+      if (movimientoId) {
+        await supabase.from("movimientos_bancarios").update({ factura_id: inv.id }).eq("id", movimientoId);
+      }
     }
     updateInvoice(inv.id, {
       estado: "Pagada",
-      fechaPago: todayStr(),
+      fechaPago: fechaPago,
       montoCobrado: montoNum,
       retenciones: retenNum,
       retencionesDetalle: retencionesDetalle || "",
@@ -3250,8 +3254,33 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
     setModalCobro(null);
   };
 
-  const editarMontoCobrado = async (invId, montoNum) => {
-    await updateInvoice(invId, { montoCobrado: montoNum });
+  const editarCobro = async (inv, montoCobrado, retenciones, retencionesDetalle, cuentaDestinoId, fechaCobro, movimientoId) => {
+    const montoN = parseFloat(montoCobrado) || inv.montoCobrado;
+    const retenN = parseFloat(retenciones) || 0;
+    const fechaPago = fechaCobro || inv.fechaPago || todayStr();
+    const payload = {
+      monto_cobrado: montoN,
+      retenciones: retenN,
+      retenciones_detalle: retencionesDetalle || "",
+      cuenta_destino_id: cuentaDestinoId || null,
+      fecha_pago: fechaPago,
+    };
+    const esUUID = inv.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(inv.id);
+    if (esUUID) {
+      const { error } = await supabase.from("facturas").update(payload).eq("id", inv.id);
+      if (error) { alert("Error guardando cobro: " + error.message); return; }
+      if (movimientoId) {
+        await supabase.from("movimientos_bancarios").update({ factura_id: inv.id }).eq("id", movimientoId);
+      }
+    }
+    setInvoices(prev => prev.map(i => i.id === inv.id ? {
+      ...i,
+      montoCobrado: montoN,
+      retenciones: retenN,
+      retencionesDetalle: retencionesDetalle || "",
+      cuentaDestinoId: cuentaDestinoId || null,
+      fechaPago: fechaPago,
+    } : i));
     setModalEditarCobro(null);
   };
 
@@ -3732,8 +3761,8 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
           }}
         />
       )}
-      {modalCobro&&<CobroModal factura={modalCobro} onCobrar={marcarCobrada} onClose={()=>setModalCobro(null)} cuentasBancarias={cuentasBancarias}/>}
-      {modalEditarCobro&&<ModalEditarCobro inv={modalEditarCobro} onSave={editarMontoCobrado} onClose={()=>setModalEditarCobro(null)}/>}
+      {modalCobro&&<CobroModal factura={modalCobro} onCobrar={marcarCobrada} onClose={()=>setModalCobro(null)} cuentasBancarias={cuentasBancarias} movimientosBancarios={movimientosBancarios}/>}
+      {modalEditarCobro&&<CobroModal modo="editar" factura={modalEditarCobro} onCobrar={editarCobro} onClose={()=>setModalEditarCobro(null)} cuentasBancarias={cuentasBancarias} movimientosBancarios={movimientosBancarios}/>}
       {syncModal && (
         <SyncArcaModal
           clients={clients}
