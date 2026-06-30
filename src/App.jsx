@@ -8711,6 +8711,11 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
   const [aGasto,      setAGasto]      = useState(null);
   const [conciliando, setConciliando] = useState(null);
 
+  // ── selección múltiple ──
+  const [seleccionados, setSeleccionados] = useState(new Set());
+  const [catLote,       setCatLote]       = useState("otro");
+  const [aplicandoLote, setAplicandoLote] = useState(false);
+
   // mapa cuenta_id → cuenta
   const cuentaMap = Object.fromEntries(cuentasBancarias.map(c => [c.id, c]));
 
@@ -8727,6 +8732,10 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
 
   const totalPages = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
   const paginados  = filtrados.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  // ── selección múltiple: derivados ──
+  const todosSeleccionados = paginados.length > 0 && paginados.every(m => seleccionados.has(m.id));
+  const algunoSeleccionado = paginados.some(m => seleccionados.has(m.id));
 
   // ── resumen rápido ──
   let sumIngr = 0, sumEgr = 0, sumImpCom = 0;
@@ -8746,6 +8755,62 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
     const { error } = await supabase.from("movimientos_bancarios").update({ concepto: nuevoConcepto }).eq("id", m.id);
     if (error) { alert("Error: " + error.message); return; }
     setMovimientosLocales(prev => prev.map(x => x.id === m.id ? { ...x, concepto: nuevoConcepto } : x));
+  };
+
+  // ── acciones de lote ──
+  const toggleSeleccion = (id) => setSeleccionados(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+
+  const toggleTodos = () => {
+    if (todosSeleccionados) {
+      setSeleccionados(prev => { const n = new Set(prev); paginados.forEach(m => n.delete(m.id)); return n; });
+    } else {
+      setSeleccionados(prev => { const n = new Set(prev); paginados.forEach(m => n.add(m.id)); return n; });
+    }
+  };
+
+  const aplicarCategoria = async () => {
+    if (!seleccionados.size) return;
+    setAplicandoLote(true);
+    const ids = [...seleccionados];
+    const { error } = await supabase.from("movimientos_bancarios").update({ categoria: catLote }).in("id", ids);
+    if (error) { alert("Error: " + error.message); setAplicandoLote(false); return; }
+    setMovimientosLocales(prev => prev.map(m => seleccionados.has(m.id) ? { ...m, categoria: catLote } : m));
+    setSeleccionados(new Set());
+    setAplicandoLote(false);
+  };
+
+  const marcarEnGastos = async () => {
+    if (!seleccionados.size) return;
+    setAplicandoLote(true);
+    const targets = movimientosLocales.filter(m => seleccionados.has(m.id) && !m.gasto_id && m.tipo !== "ingreso");
+    let procesados = 0;
+    for (const mov of targets) {
+      const nuevoGasto = {
+        descripcion: mov.descripcion || "",
+        categoria: "Gastos bancarios",
+        subcategoria: "",
+        monto: parseFloat(mov.importe) || 0,
+        fecha: mov.fecha,
+        proveedor: cuentaMap[mov.cuenta_id]?.banco || cuentaMap[mov.cuenta_id]?.nombre || "",
+        pagado: true,
+        notas: "",
+        es_tarjeta: false,
+        es_externo: false,
+      };
+      const { data: inserted, error } = await supabase.from("gastos").insert(nuevoGasto).select().single();
+      if (error) continue;
+      if (typeof setExpenses === "function") setExpenses(prev => [...prev, inserted]);
+      await supabase.from("movimientos_bancarios").update({ gasto_id: inserted.id }).eq("id", mov.id);
+      setMovimientosLocales(prev => prev.map(m => m.id === mov.id ? { ...m, gasto_id: inserted.id } : m));
+      procesados++;
+    }
+    setSeleccionados(new Set());
+    setAplicandoLote(false);
+    if (procesados > 0) alert(`${procesados} movimiento${procesados !== 1 ? "s registrados" : " registrado"} en gastos.`);
   };
 
   return (
@@ -8848,6 +8913,15 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
+                  <th className="px-3 py-2.5 w-8">
+                    <input
+                      type="checkbox"
+                      checked={todosSeleccionados}
+                      ref={el => { if (el) el.indeterminate = algunoSeleccionado && !todosSeleccionados; }}
+                      onChange={toggleTodos}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 focus:ring-offset-0 cursor-pointer"
+                    />
+                  </th>
                   {["Fecha","Banco","Descripción","Categoría","Concepto","Importe","Acciones"].map(h => (
                     <th key={h} className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
                   ))}
@@ -8863,6 +8937,8 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
                     onToGasto={() => setAGasto(m)}
                     onSaveConcepto={nuevoConcepto => guardarConcept(m, nuevoConcepto)}
                     onConciliar={() => setConciliando(m)}
+                    seleccionado={seleccionados.has(m.id)}
+                    onToggleSeleccion={() => toggleSeleccion(m.id)}
                   />
                 ))}
               </tbody>
@@ -8875,14 +8951,20 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
               const cuenta = cuentaMap[m.cuenta_id];
               const esIngreso = CAT_INFO[m.categoria]?.esIngreso ?? (m.tipo === "ingreso");
               return (
-                <div key={m.id} className="bg-white rounded-xl border border-gray-200 p-3 space-y-2">
-                  <div className="flex items-start justify-between">
-                    <div>
+                <div key={m.id} className={`bg-white rounded-xl border p-3 space-y-2 ${seleccionados.has(m.id) ? "border-blue-400 bg-blue-50" : "border-gray-200"}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <input
+                      type="checkbox"
+                      checked={seleccionados.has(m.id)}
+                      onChange={() => toggleSeleccion(m.id)}
+                      className="mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500 focus:ring-offset-0 shrink-0 cursor-pointer"
+                    />
+                    <div className="flex-1 min-w-0">
                       <p className="text-xs text-gray-400">{m.fecha} · {cuenta?.nombre || "—"}</p>
                       <p className="text-sm font-medium text-gray-800 mt-0.5 line-clamp-2">{m.descripcion || "—"}</p>
                       {m.concepto && <p className="text-xs text-blue-600 mt-0.5">{m.concepto}</p>}
                     </div>
-                    <p className={`text-base font-bold whitespace-nowrap ml-3 ${esIngreso ? "text-green-700" : "text-red-600"}`}>
+                    <p className={`text-base font-bold whitespace-nowrap ml-1 ${esIngreso ? "text-green-700" : "text-red-600"}`}>
                       {esIngreso ? "+" : "-"}{fmtMoney(parseFloat(m.importe) || 0)}
                     </p>
                   </div>
@@ -8926,6 +9008,46 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
             </div>
           )}
         </>
+      )}
+
+      {/* ── BARRA FLOTANTE DE ACCIONES EN LOTE ── */}
+      {seleccionados.size > 0 && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 flex-wrap justify-center bg-gray-900 text-white px-4 py-3 rounded-2xl shadow-2xl border border-gray-700 max-w-[95vw]">
+          <span className="text-xs font-semibold whitespace-nowrap">
+            {seleccionados.size} seleccionado{seleccionados.size !== 1 ? "s" : ""}
+          </span>
+          <div className="w-px h-4 bg-gray-600"/>
+          <select
+            value={catLote}
+            onChange={e => setCatLote(e.target.value)}
+            className="px-2 py-1 text-xs bg-gray-800 border border-gray-600 rounded-lg text-white focus:outline-none"
+          >
+            {Object.entries(CAT_INFO).map(([v, i]) => (
+              <option key={v} value={v}>{i.label}</option>
+            ))}
+          </select>
+          <button
+            onClick={aplicarCategoria}
+            disabled={aplicandoLote}
+            className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 rounded-lg font-medium disabled:opacity-50 whitespace-nowrap"
+          >
+            {aplicandoLote ? "Aplicando…" : "Aplicar categoría"}
+          </button>
+          <button
+            onClick={marcarEnGastos}
+            disabled={aplicandoLote}
+            className="px-3 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 rounded-lg font-medium disabled:opacity-50 whitespace-nowrap"
+          >
+            Marcar como En gastos
+          </button>
+          <button
+            onClick={() => setSeleccionados(new Set())}
+            disabled={aplicandoLote}
+            className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 rounded-lg disabled:opacity-50 whitespace-nowrap"
+          >
+            Cancelar
+          </button>
+        </div>
       )}
 
       {/* ── MODALES ── */}
@@ -8975,14 +9097,16 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
 }
 
 // ── Fila de movimiento (tabla desktop) ───────────────────────────────────────
-function FilaMovimiento({ m, cuenta, onEdit, onToGasto, onSaveConcepto, onConciliar }) {
+function FilaMovimiento({ m, cuenta, onEdit, onToGasto, onSaveConcepto, onConciliar, seleccionado, onToggleSeleccion }) {
   const [editConcepto, setEditConcepto] = useState(false);
   const [conceptoLocal, setConceptoLocal] = useState(m.concepto || "");
   const catResuelta = resolverCategoria(m);
   const esIngreso = CAT_INFO[catResuelta]?.esIngreso ?? (m.tipo === "ingreso");
-  const rowCls = esIngreso
-    ? "border-b border-gray-100 border-l-4 border-l-green-400 bg-green-50 hover:bg-green-100 group"
-    : "border-b border-gray-100 border-l-4 border-l-red-400 bg-red-50 hover:bg-red-100 group";
+  const rowCls = seleccionado
+    ? "border-b border-gray-100 border-l-4 border-l-blue-500 bg-blue-50 hover:bg-blue-100 group"
+    : esIngreso
+      ? "border-b border-gray-100 border-l-4 border-l-green-400 bg-green-50 hover:bg-green-100 group"
+      : "border-b border-gray-100 border-l-4 border-l-red-400 bg-red-50 hover:bg-red-100 group";
 
   const handleConceptoKey = (e) => {
     if (e.key === "Enter") { onSaveConcepto(conceptoLocal); setEditConcepto(false); }
@@ -8991,6 +9115,15 @@ function FilaMovimiento({ m, cuenta, onEdit, onToGasto, onSaveConcepto, onConcil
 
   return (
     <tr className={rowCls}>
+      {/* Checkbox */}
+      <td className="px-3 py-2.5 w-8">
+        <input
+          type="checkbox"
+          checked={!!seleccionado}
+          onChange={onToggleSeleccion}
+          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 focus:ring-offset-0 cursor-pointer"
+        />
+      </td>
       {/* Fecha */}
       <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">
         {m.fecha ? `${m.fecha.slice(8,10)}/${m.fecha.slice(5,7)}/${m.fecha.slice(0,4)}` : "—"}
