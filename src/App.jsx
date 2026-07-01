@@ -8905,18 +8905,22 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
         <div className="bg-green-50 border border-green-200 rounded-xl p-3">
           <p className="text-xs text-green-600 font-medium">📥 Ingresos</p>
           <p className="text-lg font-bold text-green-700 mt-1">{fmtMoney(sumIngr)}</p>
+          <p className="text-[11px] text-gray-400 mt-1">Transferencias recibidas y depósitos</p>
         </div>
         <div className="bg-red-50 border border-red-200 rounded-xl p-3">
           <p className="text-xs text-red-600 font-medium">📤 Egresos</p>
           <p className="text-lg font-bold text-red-700 mt-1">{fmtMoney(sumEgr)}</p>
+          <p className="text-[11px] text-gray-400 mt-1">Transferencias emitidas y pagos (incluye impuestos)</p>
         </div>
         <div className="bg-orange-50 border border-orange-200 rounded-xl p-3">
           <p className="text-xs text-orange-600 font-medium">🏛️ Impuestos + comisiones</p>
           <p className="text-lg font-bold text-orange-700 mt-1">{fmtMoney(sumImpCom)}</p>
+          <p className="text-[11px] text-gray-400 mt-1">Impuestos bancarios y comisiones (ya incluidos en egresos)</p>
         </div>
         <div className={`border rounded-xl p-3 ${saldoNeto >= 0 ? "bg-blue-50 border-blue-200" : "bg-red-50 border-red-200"}`}>
           <p className={`text-xs font-medium ${saldoNeto >= 0 ? "text-blue-600" : "text-red-600"}`}>💰 Saldo neto</p>
           <p className={`text-lg font-bold mt-1 ${saldoNeto >= 0 ? "text-blue-700" : "text-red-700"}`}>{fmtMoney(saldoNeto)}</p>
+          <p className="text-[11px] text-gray-400 mt-1">Ingresos menos egresos del período</p>
         </div>
       </div>
 
