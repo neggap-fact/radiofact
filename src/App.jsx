@@ -8740,6 +8740,7 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
   // ── selección múltiple ──
   const [seleccionados, setSeleccionados] = useState(new Set());
   const [catLote,       setCatLote]       = useState("otro");
+  const [tipLote,       setTipLote]       = useState("");
   const [aplicandoLote, setAplicandoLote] = useState(false);
 
   // mapa cuenta_id → cuenta
@@ -8802,9 +8803,11 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
     if (!seleccionados.size) return;
     setAplicandoLote(true);
     const ids = [...seleccionados];
-    const { error } = await supabase.from("movimientos_bancarios").update({ categoria: catLote }).in("id", ids);
+    const updates = { categoria: catLote };
+    if (tipLote) updates.tipo = tipLote;
+    const { error } = await supabase.from("movimientos_bancarios").update(updates).in("id", ids);
     if (error) { alert("Error: " + error.message); setAplicandoLote(false); return; }
-    setMovimientosLocales(prev => prev.map(m => seleccionados.has(m.id) ? { ...m, categoria: catLote } : m));
+    setMovimientosLocales(prev => prev.map(m => seleccionados.has(m.id) ? { ...m, ...updates } : m));
     setSeleccionados(new Set());
     setAplicandoLote(false);
   };
@@ -9048,6 +9051,15 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
           </span>
           <div className="w-px h-4 bg-gray-600"/>
           <select
+            value={tipLote}
+            onChange={e => setTipLote(e.target.value)}
+            className="px-2 py-1 text-xs bg-gray-800 border border-gray-600 rounded-lg text-white focus:outline-none"
+          >
+            <option value="">(Sin cambiar tipo)</option>
+            <option value="ingreso">📥 Ingreso</option>
+            <option value="egreso">📤 Egreso</option>
+          </select>
+          <select
             value={catLote}
             onChange={e => setCatLote(e.target.value)}
             className="px-2 py-1 text-xs bg-gray-800 border border-gray-600 rounded-lg text-white focus:outline-none"
@@ -9061,7 +9073,7 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
             disabled={aplicandoLote}
             className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 rounded-lg font-medium disabled:opacity-50 whitespace-nowrap"
           >
-            {aplicandoLote ? "Aplicando…" : "Aplicar categoría"}
+            {aplicandoLote ? "Aplicando…" : "Aplicar"}
           </button>
           <button
             onClick={marcarEnGastos}
@@ -9225,6 +9237,7 @@ function FilaMovimiento({ m, cuenta, onEdit, onToGasto, onSaveConcepto, onConcil
 
 // ── Modal editar movimiento (categoría, concepto, notas) ─────────────────────
 function EditarMovimientoBancarioModal({ movimiento: m, onClose, onSave }) {
+  const [tipo,      setTipo]      = useState(m.tipo || "egreso");
   const [categoria, setCategoria] = useState(m.categoria || "otro");
   const [concepto,  setConcepto]  = useState(m.concepto  || "");
   const [notas,     setNotas]     = useState(m.notas     || "");
@@ -9236,9 +9249,26 @@ function EditarMovimientoBancarioModal({ movimiento: m, onClose, onSave }) {
         <h3 className="font-semibold text-sm text-gray-800">✏️ Editar movimiento</h3>
         <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-600 space-y-0.5">
           <p className="font-medium">{m.fecha} · {(m.descripcion || "—").slice(0, 60)}</p>
-          <p className={`font-bold text-sm ${CAT_INFO[m.categoria]?.esIngreso ? "text-green-700" : "text-red-600"}`}>
-            {fmtMoney(parseFloat(m.importe) || 0)}
-          </p>
+          <p className="font-bold text-sm text-gray-700">{fmtMoney(parseFloat(m.importe) || 0)}</p>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600 block mb-1">Tipo</label>
+          <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setTipo("ingreso")}
+              className={`flex-1 px-3 py-2 text-sm font-medium transition-colors ${tipo === "ingreso" ? "bg-green-600 text-white" : "bg-white text-gray-600 hover:bg-green-50"}`}
+            >
+              📥 Ingreso
+            </button>
+            <button
+              type="button"
+              onClick={() => setTipo("egreso")}
+              className={`flex-1 px-3 py-2 text-sm font-medium transition-colors ${tipo === "egreso" ? "bg-red-500 text-white" : "bg-white text-gray-600 hover:bg-red-50"}`}
+            >
+              📤 Egreso
+            </button>
+          </div>
         </div>
         <div>
           <label className="text-xs font-medium text-gray-600 block mb-1">Categoría</label>
@@ -9262,7 +9292,7 @@ function EditarMovimientoBancarioModal({ movimiento: m, onClose, onSave }) {
         <div className="flex gap-2 pt-1">
           <button onClick={onClose} className="flex-1 px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">Cancelar</button>
           <button
-            onClick={async () => { setSaving(true); await onSave(m.id, { categoria, concepto, notas }); setSaving(false); }}
+            onClick={async () => { setSaving(true); await onSave(m.id, { tipo, categoria, concepto, notas }); setSaving(false); }}
             disabled={saving}
             className="flex-1 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium">
             {saving ? "Guardando…" : "Guardar"}
