@@ -43,6 +43,21 @@ const DEBUG_MODE = false; // Cambiar a false para emitir facturas reales a ARCA
 const MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const EXPENSE_CATS = ["Sueldos","Compras","Gastos Fijos","Gastos Variables","Gastos Externos","Proveedores","Impuestos","Gastos bancarios","Otros"];
 
+// Mapea la categoría libre que sugiere la IA al leer un ticket (ej. "Combustible",
+// "Comida") a una de las categorías reales del select (EXPENSE_CATS), porque el
+// campo del formulario es un <select> con opciones fijas, no texto libre.
+function mapearCategoriaSugerida(sugerida) {
+  if (!sugerida) return "Proveedores";
+  const s = sugerida.toLowerCase();
+  if (s.includes("impuesto")) return "Impuestos";
+  if (s.includes("banco") || s.includes("comisi")) return "Gastos bancarios";
+  if (s.includes("sueldo") || s.includes("haber")) return "Sueldos";
+  if (s.includes("combustible") || s.includes("insumo") || s.includes("papeler") || s.includes("compra")) return "Compras";
+  if (s.includes("comida") || s.includes("restaurant") || s.includes("almuerzo") || s.includes("variable")) return "Gastos Variables";
+  if (s.includes("servicio") || s.includes("fijo")) return "Gastos Fijos";
+  return "Otros";
+}
+
 // v3.5: Sub-categorías sugeridas según la categoría principal (global para ambos componentes)
 const SUBCATEGORIAS_SUGERIDAS = {
   "Gastos bancarios": ["Impuesto Ley 25.413", "Comisión bancaria", "IVA bancario", "Consolidado mensual", "Mantenimiento de cuenta"],
@@ -5624,10 +5639,12 @@ function ExpenseModal({data,onSave,onClose,plantillas=[],proveedores=[],tarjetas
 function CargarFacturaPDFModal({ onClose, setExpenses, openNuevoGasto }) {
   const [step, setStep] = useState(1);
   const [file, setFile] = useState(null);
+  const [tipoArchivo, setTipoArchivo] = useState(null); // "pdf" | "imagen"
   const [dragging, setDragging] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [advertenciaIA, setAdvertenciaIA] = useState(null);
   const [form, setForm] = useState({
     proveedor: "",
     cuit_proveedor: "",
@@ -5649,36 +5666,71 @@ function CargarFacturaPDFModal({ onClose, setExpenses, openNuevoGasto }) {
   const handleFile = (file) => {
     if (file && file.type === "application/pdf") {
       setFile(file);
+      setTipoArchivo("pdf");
       setError("");
     } else if (file) {
       setError("El archivo debe ser un PDF.");
     }
   };
 
+  const handleImagen = (file) => {
+    if (file && file.type.startsWith("image/")) {
+      setFile(file);
+      setTipoArchivo("imagen");
+      setError("");
+    } else if (file) {
+      setError("El archivo debe ser una imagen (JPG, PNG).");
+    }
+  };
+
   const procesar = async () => {
-    if (!file) { setError("Seleccioná un PDF primero."); return; }
+    if (!file) { setError("Seleccioná un PDF o una foto del ticket primero."); return; }
     setLoading(true);
     setError("");
+    setAdvertenciaIA(null);
     try {
-      const fd = new FormData();
-      fd.append("pdf", file);
-      const res = await fetch(`${BACKEND_URL}/procesar-factura-gasto`, { method: "POST", body: fd });
-      if (!res.ok) throw new Error(`Error ${res.status}`);
-      const data = await res.json();
-      setForm(prev => ({
-        ...prev,
-        proveedor:      data.proveedor || "",
-        cuit_proveedor: data.cuit_proveedor || "",
-        fecha:          data.fecha || todayStr(),
-        descripcion:    data.concepto || data.descripcion || "",
-        neto:           data.neto != null ? String(data.neto) : "",
-        iva:            data.iva != null ? String(data.iva) : "",
-        punto_venta:    data.punto_venta || "",
-        categoria:      data.categoria || "Proveedores",
-      }));
+      let data;
+      if (tipoArchivo === "imagen") {
+        const fd = new FormData();
+        fd.append("imagen", file);
+        const res = await fetch(`${BACKEND_URL}/procesar-ticket-gasto`, { method: "POST", body: fd });
+        data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+        setForm(prev => ({
+          ...prev,
+          proveedor:      data.proveedor || "",
+          cuit_proveedor: data.cuit_proveedor || "",
+          fecha:          data.fecha || todayStr(),
+          descripcion:    data.concepto || "",
+          neto:           data.neto != null ? String(data.neto) : (data.total != null ? String(data.total) : ""),
+          iva:            data.iva != null ? String(data.iva) : "0",
+          punto_venta:    "",
+          categoria:      mapearCategoriaSugerida(data.categoria_sugerida),
+        }));
+        if (data.advertencia) setAdvertenciaIA(data.advertencia);
+      } else {
+        const fd = new FormData();
+        fd.append("pdf", file);
+        const res = await fetch(`${BACKEND_URL}/procesar-factura-gasto`, { method: "POST", body: fd });
+        if (!res.ok) throw new Error(`Error ${res.status}`);
+        data = await res.json();
+        setForm(prev => ({
+          ...prev,
+          proveedor:      data.proveedor || "",
+          cuit_proveedor: data.cuit_proveedor || "",
+          fecha:          data.fecha || todayStr(),
+          descripcion:    data.concepto || data.descripcion || "",
+          neto:           data.neto != null ? String(data.neto) : "",
+          iva:            data.iva != null ? String(data.iva) : "",
+          punto_venta:    data.punto_venta || "",
+          categoria:      data.categoria || "Proveedores",
+        }));
+      }
       setStep(2);
-    } catch {
-      setError("No se pudo leer el PDF. Podés cargarlo manualmente.");
+    } catch (e) {
+      setError(tipoArchivo === "imagen"
+        ? "No se pudo leer el ticket. Podés cargarlo manualmente."
+        : "No se pudo leer el PDF. Podés cargarlo manualmente.");
     } finally {
       setLoading(false);
     }
@@ -5734,16 +5786,16 @@ function CargarFacturaPDFModal({ onClose, setExpenses, openNuevoGasto }) {
     <Modal title="Cargar factura de gasto" onClose={onClose} wide={step === 2}>
       {step === 1 && (
         <div className="space-y-4">
-          <p className="text-sm text-gray-500">Subí la factura en PDF — la IA va a leer los datos automáticamente</p>
+          <p className="text-sm text-gray-500">Subí la factura en PDF o sacá una foto del ticket — la IA va a leer los datos automáticamente</p>
           <div
-            className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${dragging ? "border-blue-400 bg-blue-50" : file ? "border-green-400 bg-green-50" : "border-gray-300 hover:border-blue-300 hover:bg-gray-50"}`}
+            className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${dragging ? "border-blue-400 bg-blue-50" : (tipoArchivo === "pdf" && file) ? "border-green-400 bg-green-50" : "border-gray-300 hover:border-blue-300 hover:bg-gray-50"}`}
             onDragOver={e => { e.preventDefault(); setDragging(true); }}
             onDragLeave={() => setDragging(false)}
             onDrop={e => { e.preventDefault(); setDragging(false); handleFile(e.dataTransfer.files[0]); }}
             onClick={() => document.getElementById("pdf-factura-input").click()}
           >
             <input id="pdf-factura-input" type="file" accept=".pdf" className="hidden" onChange={e => handleFile(e.target.files[0])} />
-            {file ? (
+            {tipoArchivo === "pdf" && file ? (
               <div>
                 <p className="text-green-700 font-medium text-sm">✓ {file.name}</p>
                 <p className="text-xs text-green-500 mt-1">{(file.size / 1024).toFixed(0)} KB</p>
@@ -5754,6 +5806,32 @@ function CargarFacturaPDFModal({ onClose, setExpenses, openNuevoGasto }) {
                 <p className="text-sm text-gray-500">Arrastrá el PDF aquí o hacé click para seleccionar</p>
               </div>
             )}
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex-1 border-t border-gray-200"/>
+            <span className="text-xs text-gray-400 font-medium">O</span>
+            <div className="flex-1 border-t border-gray-200"/>
+          </div>
+          <div className={`border-2 border-dashed rounded-xl p-6 text-center transition-colors ${tipoArchivo === "imagen" && file ? "border-green-400 bg-green-50" : "border-gray-300"}`}>
+            <input id="imagen-ticket-input" type="file" accept="image/*" capture="environment" className="hidden" onChange={e => handleImagen(e.target.files[0])} />
+            {tipoArchivo === "imagen" && file ? (
+              <div>
+                <p className="text-green-700 font-medium text-sm">✓ {file.name}</p>
+                <p className="text-xs text-green-500 mt-1">{(file.size / 1024).toFixed(0)} KB</p>
+              </div>
+            ) : (
+              <div>
+                <div className="text-3xl mb-2">📷</div>
+                <p className="text-sm text-gray-500 mb-3">Sacá una foto del ticket o elegí una de la galería</p>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => document.getElementById("imagen-ticket-input").click()}
+              className="mt-1 px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 font-medium text-gray-700"
+            >
+              📷 Sacar foto / elegir imagen
+            </button>
           </div>
           {error && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-3">
@@ -5778,9 +5856,9 @@ function CargarFacturaPDFModal({ onClose, setExpenses, openNuevoGasto }) {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
                   </svg>
-                  Leyendo factura...
+                  {tipoArchivo === "imagen" ? "Leyendo ticket..." : "Leyendo factura..."}
                 </>
-              ) : "Procesar factura"}
+              ) : (tipoArchivo === "imagen" ? "Leer ticket" : "Procesar factura")}
             </button>
           </div>
         </div>
@@ -5789,6 +5867,11 @@ function CargarFacturaPDFModal({ onClose, setExpenses, openNuevoGasto }) {
       {step === 2 && (
         <div>
           <p className="text-xs text-blue-600 bg-blue-50 px-3 py-2 rounded-lg mb-4">Revisá y editá los datos extraídos por la IA antes de guardar.</p>
+          {advertenciaIA && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg mb-4">
+              ⚠️ {advertenciaIA}
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-gray-600">Proveedor</label>
