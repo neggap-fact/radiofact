@@ -7421,6 +7421,22 @@ function ImportarExtractoBancarioModal({ cuentasBancarias, setCuentasBancarias, 
   const [resumen, setResumen] = useState(null);
   const [resultado, setResultado] = useState(null);
   const [erroresParseo, setErroresParseo] = useState(0);
+  // Saldo cargado a mano cuando el extracto no trae saldo_final
+  const [saldoManual, setSaldoManual] = useState("");
+  const [guardandoSaldoManual, setGuardandoSaldoManual] = useState(false);
+  const [saldoManualGuardado, setSaldoManualGuardado] = useState(null);
+
+  const actualizarSaldoManual = async () => {
+    const valor = parseFloat(saldoManual);
+    if (isNaN(valor)) { setError("Ingresá un saldo válido."); return; }
+    setGuardandoSaldoManual(true);
+    const { error: errSaldo } = await supabase.from("cuentas_bancarias").update({ saldo_actual: valor }).eq("id", cuentaId);
+    setGuardandoSaldoManual(false);
+    if (errSaldo) { setError("Error actualizando saldo: " + errSaldo.message); return; }
+    setCuentasBancarias(prev => prev.map(c => c.id === cuentaId ? { ...c, saldo_actual: valor } : c));
+    setSaldoManualGuardado(valor);
+    setError("");
+  };
 
   const handleFile = (f) => {
     if (f && (f.name.toLowerCase().endsWith(".csv") || f.type === "text/csv" || f.type === "application/vnd.ms-excel")) {
@@ -7503,6 +7519,19 @@ function ImportarExtractoBancarioModal({ cuentasBancarias, setCuentasBancarias, 
             {resultado.duplicados > 0 && <p><span className="text-amber-600">Duplicados ignorados:</span> <strong className="text-amber-600">{resultado.duplicados}</strong></p>}
             {erroresParseo > 0 && <p><span className="text-red-600">Filas con error de parseo:</span> <strong className="text-red-600">{erroresParseo}</strong></p>}
           </div>
+          {resumen?.saldo_final != null ? (
+            <p className="text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 inline-block">
+              💰 Saldo actualizado según extracto: <strong>{fmtMoney(resumen.saldo_final)}</strong>
+            </p>
+          ) : saldoManualGuardado != null ? (
+            <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-4 py-2 inline-block">
+              💰 Saldo actualizado a mano: <strong>{fmtMoney(saldoManualGuardado)}</strong>
+            </p>
+          ) : (
+            <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 inline-block">
+              ⚠️ El saldo de la cuenta no se actualizó (el extracto no incluía saldo final).
+            </p>
+          )}
         </div>
       </Modal>
     );
@@ -7541,11 +7570,43 @@ function ImportarExtractoBancarioModal({ cuentasBancarias, setCuentasBancarias, 
                 );
               })}
             </div>
-            <div className="border-t border-gray-200 mt-2 pt-2 space-y-0.5 text-xs text-gray-500">
-              {resumen.saldo_inicial != null && <div>Saldo inicial: <strong>{fmtMoney(resumen.saldo_inicial)}</strong></div>}
-              {resumen.saldo_final != null && <div>Saldo final: <strong>{fmtMoney(resumen.saldo_final)}</strong></div>}
-            </div>
+            {resumen.saldo_inicial != null && (
+              <div className="border-t border-gray-200 mt-2 pt-2 text-xs text-gray-500">
+                Saldo inicial: <strong>{fmtMoney(resumen.saldo_inicial)}</strong>
+              </div>
+            )}
           </div>
+          {/* Saldo final del extracto: el usuario lo valida visualmente antes de confirmar */}
+          {resumen.saldo_final != null ? (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-sm text-blue-800">
+              💰 Saldo final según extracto: <strong>{fmtMoney(resumen.saldo_final)}</strong>
+              <p className="text-xs text-blue-600 mt-0.5">Verificá que coincida con tu home banking antes de confirmar. Al importar, este valor reemplaza el saldo actual de la cuenta.</p>
+            </div>
+          ) : (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800 space-y-2">
+              <p>⚠️ El extracto no incluye saldo final. El saldo de la cuenta no se actualizará al importar.</p>
+              {saldoManualGuardado != null ? (
+                <p className="text-xs text-green-700 font-medium">✓ Saldo actualizado a mano: {fmtMoney(saldoManualGuardado)}</p>
+              ) : (
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="number"
+                    placeholder="Saldo real según tu banco"
+                    value={saldoManual}
+                    onChange={e => setSaldoManual(e.target.value)}
+                    className="flex-1 px-3 py-1.5 border border-amber-300 rounded-lg text-sm focus:outline-none"
+                  />
+                  <button
+                    onClick={actualizarSaldoManual}
+                    disabled={guardandoSaldoManual || !saldoManual}
+                    className="px-3 py-1.5 text-xs font-medium bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50 whitespace-nowrap"
+                  >
+                    {guardandoSaldoManual ? "Guardando..." : "Actualizar saldo"}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           {/* Tabla de movimientos */}
           <div className="overflow-auto max-h-64 rounded-lg border border-gray-200">
             <table className="w-full text-xs">
