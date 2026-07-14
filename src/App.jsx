@@ -5641,6 +5641,7 @@ function CargarFacturaPDFModal({ onClose, setExpenses, openNuevoGasto }) {
   const [file, setFile] = useState(null);
   const [tipoArchivo, setTipoArchivo] = useState(null); // "pdf" | "imagen"
   const [dragging, setDragging] = useState(false);
+  const [mostrarOpciones, setMostrarOpciones] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -5663,24 +5664,27 @@ function CargarFacturaPDFModal({ onClose, setExpenses, openNuevoGasto }) {
   const total = (parseFloat(form.neto) || 0) + (parseFloat(form.iva) || 0);
   const f = k => e => setForm(p => ({ ...p, [k]: e.target.value }));
 
-  const handleFile = (file) => {
-    if (file && file.type === "application/pdf") {
+  const handleAnyFile = (file) => {
+    if (!file) return;
+    if (file.type === "application/pdf") {
       setFile(file);
       setTipoArchivo("pdf");
       setError("");
-    } else if (file) {
-      setError("El archivo debe ser un PDF.");
-    }
-  };
-
-  const handleImagen = (file) => {
-    if (file && file.type.startsWith("image/")) {
+    } else if (file.type.startsWith("image/")) {
       setFile(file);
       setTipoArchivo("imagen");
       setError("");
-    } else if (file) {
-      setError("El archivo debe ser una imagen (JPG, PNG).");
+    } else {
+      setError("El archivo debe ser un PDF o una imagen (JPG, PNG).");
     }
+    setMostrarOpciones(false);
+  };
+
+  const quitarArchivo = () => {
+    setFile(null);
+    setTipoArchivo(null);
+    setError("");
+    setMostrarOpciones(false);
   };
 
   const procesar = async () => {
@@ -5786,52 +5790,61 @@ function CargarFacturaPDFModal({ onClose, setExpenses, openNuevoGasto }) {
     <Modal title="Cargar factura de gasto" onClose={onClose} wide={step === 2}>
       {step === 1 && (
         <div className="space-y-4">
-          <p className="text-sm text-gray-500">Subí la factura en PDF o sacá una foto del ticket — la IA va a leer los datos automáticamente</p>
+          <p className="text-sm text-gray-500">Subí la factura o el ticket del gasto — la IA va a leer los datos automáticamente</p>
           <div
-            className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${dragging ? "border-blue-400 bg-blue-50" : (tipoArchivo === "pdf" && file) ? "border-green-400 bg-green-50" : "border-gray-300 hover:border-blue-300 hover:bg-gray-50"}`}
+            className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${dragging ? "border-blue-400 bg-blue-50" : file ? "border-green-400 bg-green-50" : "border-gray-300"}`}
             onDragOver={e => { e.preventDefault(); setDragging(true); }}
             onDragLeave={() => setDragging(false)}
-            onDrop={e => { e.preventDefault(); setDragging(false); handleFile(e.dataTransfer.files[0]); }}
-            onClick={() => document.getElementById("pdf-factura-input").click()}
+            onDrop={e => { e.preventDefault(); setDragging(false); handleAnyFile(e.dataTransfer.files[0]); }}
           >
-            <input id="pdf-factura-input" type="file" accept=".pdf" className="hidden" onChange={e => handleFile(e.target.files[0])} />
-            {tipoArchivo === "pdf" && file ? (
+            {/* Inputs ocultos: uno con capture (fuerza cámara en mobile), otro sin capture (galería/explorador, PDF o imagen) */}
+            <input id="camara-input" type="file" accept="image/*" capture="environment" className="hidden" onChange={e => handleAnyFile(e.target.files[0])} />
+            <input id="archivo-input" type="file" accept=".pdf,image/*" className="hidden" onChange={e => handleAnyFile(e.target.files[0])} />
+
+            {file ? (
               <div>
                 <p className="text-green-700 font-medium text-sm">✓ {file.name}</p>
                 <p className="text-xs text-green-500 mt-1">{(file.size / 1024).toFixed(0)} KB</p>
+                <button type="button" onClick={quitarArchivo} className="mt-2 text-xs text-gray-500 underline hover:no-underline">
+                  Quitar y elegir otro
+                </button>
+              </div>
+            ) : !mostrarOpciones ? (
+              <div>
+                <div className="text-3xl mb-3">📎</div>
+                <button
+                  type="button"
+                  onClick={() => setMostrarOpciones(true)}
+                  className="px-5 py-2.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                >
+                  Cargar factura o ticket
+                </button>
+                <p className="text-xs text-gray-400 mt-3">o arrastrá un PDF/imagen acá</p>
               </div>
             ) : (
               <div>
-                <div className="text-3xl mb-2">📄</div>
-                <p className="text-sm text-gray-500">Arrastrá el PDF aquí o hacé click para seleccionar</p>
+                <p className="text-sm text-gray-500 mb-3">¿Cómo querés cargarlo?</p>
+                <div className="flex gap-2 justify-center flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => document.getElementById("camara-input").click()}
+                    className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                  >
+                    📷 Sacar foto
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => document.getElementById("archivo-input").click()}
+                    className="px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 font-medium text-gray-700"
+                  >
+                    🔍 Buscar archivo
+                  </button>
+                </div>
+                <button type="button" onClick={() => setMostrarOpciones(false)} className="mt-3 text-xs text-gray-400 underline hover:no-underline">
+                  Cancelar
+                </button>
               </div>
             )}
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="flex-1 border-t border-gray-200"/>
-            <span className="text-xs text-gray-400 font-medium">O</span>
-            <div className="flex-1 border-t border-gray-200"/>
-          </div>
-          <div className={`border-2 border-dashed rounded-xl p-6 text-center transition-colors ${tipoArchivo === "imagen" && file ? "border-green-400 bg-green-50" : "border-gray-300"}`}>
-            <input id="imagen-ticket-input" type="file" accept="image/*" capture="environment" className="hidden" onChange={e => handleImagen(e.target.files[0])} />
-            {tipoArchivo === "imagen" && file ? (
-              <div>
-                <p className="text-green-700 font-medium text-sm">✓ {file.name}</p>
-                <p className="text-xs text-green-500 mt-1">{(file.size / 1024).toFixed(0)} KB</p>
-              </div>
-            ) : (
-              <div>
-                <div className="text-3xl mb-2">📷</div>
-                <p className="text-sm text-gray-500 mb-3">Sacá una foto del ticket o elegí una de la galería</p>
-              </div>
-            )}
-            <button
-              type="button"
-              onClick={() => document.getElementById("imagen-ticket-input").click()}
-              className="mt-1 px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 font-medium text-gray-700"
-            >
-              📷 Sacar foto / elegir imagen
-            </button>
           </div>
           {error && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-3">
