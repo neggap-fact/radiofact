@@ -151,6 +151,15 @@ function maxFecha(a, b) {
   return a > b ? a : b;
 }
 
+// Los borradores fallidos guardan el error real de ARCA como prefijo del detalle
+// (ej. "[Error ARCA: mensaje] descripción original"). Separa ambas partes para
+// mostrar el error en un banner y dejar el detalle limpio para editar.
+function parseErrorDeDetalle(detalle) {
+  const m = (detalle || "").match(/^\[(?:Error ARCA|Error de conexión): (.+?)\] ([\s\S]*)$/);
+  if (m) return { error: m[1], detalleLimpio: m[2] };
+  return { error: null, detalleLimpio: detalle || "" };
+}
+
 // Cálculo automático default: mes ANTERIOR completo (lo más común).
 // El usuario después puede editar cualquier fecha o usar los botones rápidos del ReviewModal.
 // IMPORTANTE: Vto Pago nunca puede ser anterior a HOY (ARCA error 10036).
@@ -2987,6 +2996,11 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
   const [editarFacturaModal,setEditarFacturaModal]=useState(null);
   const [confirmarBorrarFacturaModal,setConfirmarBorrarFacturaModal]=useState(null);
   const [invDetalleModal,setInvDetalleModal]=useState(null);
+  // Parte 6: editar y reintentar emisión de facturas en Borrador
+  const [editarBorradorModal,setEditarBorradorModal]=useState(null);
+  const [emitiendoBorrador,setEmitiendoBorrador]=useState(false);
+  const [errorBorrador,setErrorBorrador]=useState(null);
+  const [vtoPagoErrorBorrador,setVtoPagoErrorBorrador]=useState(false);
   const billMonth=selMonth;
   const billYear=selYear;
   const pendingContracts=contracts.filter(ct=>{
@@ -3357,6 +3371,159 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
     alert("✓ Factura actualizada.");
   };
 
+  // ── Parte 6: editar y reintentar emisión de facturas en Borrador ──────────
+  // Precarga el modal con los campos de la factura + cliente asociado (si existe),
+  // y separa el último error de ARCA (guardado como prefijo del detalle) para
+  // mostrarlo en un banner en vez de dejarlo mezclado con la descripción.
+  const abrirEditorBorrador = (inv) => {
+    const toDash = (s) => (s && s.length === 8) ? `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}` : "";
+    const cli = clients.find(c => c.id === inv.clientId);
+    const { error, detalleLimpio } = parseErrorDeDetalle(inv.detalle);
+    setErrorBorrador(error);
+    setVtoPagoErrorBorrador(false);
+    setEditarBorradorModal({
+      ...inv,
+      razonSocial: inv.clientName || "",
+      cuit: inv.clientCuit || cli?.cuit || "",
+      email: inv.clientEmail || cli?.email || "",
+      domicilio: cli?.domicilio || "",
+      condicionIVA: cli?.condicionIVA || "Responsable Inscripto",
+      concepto: inv.concepto || 2,
+      montoNeto: inv.neto || "",
+      detalle: detalleLimpio,
+      fch_serv_desde: toDash(inv.fch_serv_desde) || todayStr(),
+      fch_serv_hasta: toDash(inv.fch_serv_hasta) || todayStr(),
+      fch_vto_pago:   toDash(inv.fch_vto_pago)   || sumarDias(todayStr(), 1),
+    });
+  };
+
+  const validarDatosBorrador = (datos) => {
+    if (!datos.razonSocial || !datos.cuit || !datos.detalle || !datos.montoNeto) {
+      setErrorBorrador("Completá todos los campos obligatorios (razón social, CUIT, detalle y monto neto).");
+      return false;
+    }
+    if (!datos.fch_vto_pago || datos.fch_vto_pago < todayStr()) {
+      setVtoPagoErrorBorrador(true);
+      setErrorBorrador("El vencimiento de pago no puede ser anterior a la fecha de la factura.");
+      return false;
+    }
+    setVtoPagoErrorBorrador(false);
+    return true;
+  };
+
+  // "Guardar borrador": persiste los cambios sin intentar emitir.
+  const guardarSoloBorrador = async (datos) => {
+    if (!validarDatosBorrador(datos)) return;
+    const neto = parseFloat(datos.montoNeto) || 0;
+    const iva = +(neto * 0.105).toFixed(2);
+    const total = +(neto + iva).toFixed(2);
+    const invActualizada = {
+      ...datos,
+      clientName: datos.razonSocial,
+      clientCuit: datos.cuit,
+      clientEmail: datos.email,
+      neto, iva, total,
+      fch_serv_desde: datos.fch_serv_desde.replace(/-/g,""),
+      fch_serv_hasta: datos.fch_serv_hasta.replace(/-/g,""),
+      fch_vto_pago:   datos.fch_vto_pago.replace(/-/g,""),
+    };
+    const uuid = await guardarFacturaSupabase(invActualizada, datos.clientId, datos.id);
+    if (!uuid) { setErrorBorrador("Error al guardar en la base de datos."); return; }
+    setInvoices(prev => prev.map(i => i.id === datos.id ? invActualizada : i));
+    setEditarBorradorModal(null);
+    alert("✓ Borrador guardado.");
+  };
+
+  // "Guardar y emitir": persiste los cambios y reintenta la emisión a ARCA.
+  // Éxito → Emitida + CAE. Fallo → sigue en Borrador con el error real visible.
+  const emitirBorrador = async (datos) => {
+    if (!validarDatosBorrador(datos)) return;
+    setEmitiendoBorrador(true);
+    const neto = parseFloat(datos.montoNeto) || 0;
+    const iva = +(neto * 0.105).toFixed(2);
+    const total = +(neto + iva).toFixed(2);
+    const cuitLimpio = datos.cuit.replace(/-/g,"");
+    const tipoFacturaArca = datos.tipoFactura === "A" ? 1 : 6;
+    const fchServDesde = datos.fch_serv_desde.replace(/-/g,"");
+    const fchServHasta = datos.fch_serv_hasta.replace(/-/g,"");
+    const fchVtoPago   = datos.fch_vto_pago.replace(/-/g,"");
+    const requestPayload = {
+      cuit_cliente: parseInt(cuitLimpio),
+      tipo_doc: 80,
+      tipo_factura: tipoFacturaArca,
+      punto_venta: datos.puntoVenta || 3,
+      monto_neto: neto,
+      monto_iva: iva,
+      monto_total: total,
+      concepto: parseInt(datos.concepto) || 2,
+      fch_serv_desde: fchServDesde,
+      fch_serv_hasta: fchServHasta,
+      fch_vto_pago:   fchVtoPago,
+      cliente: datos.razonSocial,
+      detalle: datos.detalle,
+      contrato_id: datos.contractId || undefined,
+    };
+    const invBase = {
+      ...datos,
+      clientName: datos.razonSocial,
+      clientCuit: datos.cuit,
+      clientEmail: datos.email,
+      neto, iva, total,
+      fch_serv_desde: fchServDesde,
+      fch_serv_hasta: fchServHasta,
+      fch_vto_pago:   fchVtoPago,
+    };
+    try {
+      const res = await fetch(`${BACKEND_URL}/facturar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestPayload),
+      });
+      const data = await res.json();
+      let invFinal;
+      if (data.exito) {
+        invFinal = {
+          ...invBase,
+          estado: "Emitida",
+          cae: data.datos.cae,
+          cae_vencimiento: data.datos.cae_vencimiento,
+          numero: `${datos.tipoFactura}-0003-${String(data.datos.numero).padStart(8,"0")}`,
+          fecha: data.datos.fecha,
+        };
+      } else {
+        invFinal = {
+          ...invBase,
+          estado: "Borrador",
+          detalle: `[Error ARCA: ${data.error}] ${datos.detalle}`,
+        };
+      }
+      const uuid = await guardarFacturaSupabase(invFinal, datos.clientId, datos.id);
+      if (!uuid) {
+        setErrorBorrador("La emisión se procesó pero hubo un error guardando en la base de datos.");
+        setEmitiendoBorrador(false);
+        return;
+      }
+      setInvoices(prev => prev.map(i => i.id === datos.id ? invFinal : i));
+      if (data.exito) {
+        setEditarBorradorModal(null);
+        alert(`✓ Factura emitida. CAE: ${data.datos.cae}`);
+      } else {
+        setErrorBorrador(data.error);
+        // Reabrir el editor con el detalle limpio (sin el prefijo de error) para seguir corrigiendo.
+        abrirEditorBorrador(invFinal);
+      }
+    } catch (e) {
+      // Persistir igual los cambios editados (con el error de conexión como nuevo prefijo)
+      // para no perder la corrección que el usuario ya hizo en el formulario.
+      const invConError = { ...invBase, estado: "Borrador", detalle: `[Error de conexión: ${e.message}] ${datos.detalle}` };
+      await guardarFacturaSupabase(invConError, datos.clientId, datos.id);
+      setInvoices(prev => prev.map(i => i.id === datos.id ? invConError : i));
+      setErrorBorrador("Error de conexión: " + e.message);
+      abrirEditorBorrador(invConError);
+    }
+    setEmitiendoBorrador(false);
+  };
+
   // ── v3.5: Borrar factura (solo Borrador o Pendiente aprobación) ──
   const borrarFactura = async (inv) => {
     if (inv.estado !== "Borrador" && inv.estado !== "Pendiente aprobación") {
@@ -3543,8 +3710,13 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
               <tr>{["Fecha","Número","Cliente","Neto","IVA","Total","Estado","CAE","PDF","","NC"].map(h=><th key={h} className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>)}</tr>
             </thead>
             <tbody>
-              {monthInvoices.map(inv=>(
-                <tr key={inv.id} className={`border-b border-gray-50 hover:bg-gray-50 ${inv.estado === "Anulada" ? "opacity-60 line-through" : ""} ${inv.oculta ? "opacity-50" : ""}`}>
+              {monthInvoices.map(inv=>{
+                const editableBorrador = puedeEditarOBorrar(inv) && inv.estado === "Borrador";
+                return (
+                <tr key={inv.id}
+                  onClick={editableBorrador ? () => abrirEditorBorrador(inv) : undefined}
+                  title={editableBorrador ? "Click para editar y reintentar la emisión" : undefined}
+                  className={`border-b border-gray-50 hover:bg-gray-50 ${inv.estado === "Anulada" ? "opacity-60 line-through" : ""} ${inv.oculta ? "opacity-50" : ""} ${editableBorrador ? "cursor-pointer hover:bg-blue-50" : ""}`}>
                   <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">
                     {inv.fecha ? `${inv.fecha.slice(6,8)}/${inv.fecha.slice(4,6)}/${inv.fecha.slice(0,4)}` : fmtDate(inv.month && inv.year ? `${inv.year}-${String(inv.month).padStart(2,"0")}-01` : "")}
                     {inv.oculta && <span className="ml-1 text-[9px] text-gray-400">(oculta)</span>}
@@ -3574,7 +3746,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
                     <div className="flex flex-col gap-1 items-start">
                       <EstadoBadge estado={inv.estado}/>
                       {canEdit && inv.estado==="Emitida" && inv.cae && (
-                        <button onClick={()=>setModalCobro(inv)}
+                        <button onClick={(e)=>{e.stopPropagation();setModalCobro(inv);}}
                           className="text-xs px-2 py-0.5 bg-green-600 text-white rounded hover:bg-green-700 font-medium">
                           💰 Cobrar
                         </button>
@@ -3585,7 +3757,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
                         </span>
                       )}
                       {currentUser.role==="webmaster" && inv.estado==="Pagada" && (
-                        <button onClick={()=>setModalEditarCobro(inv)}
+                        <button onClick={(e)=>{e.stopPropagation();setModalEditarCobro(inv);}}
                           className="text-[11px] px-1.5 py-0.5 bg-blue-50 text-blue-500 border border-blue-100 rounded hover:bg-blue-100 whitespace-nowrap leading-tight">
                           ✏️ cobro
                         </button>
@@ -3594,18 +3766,18 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
                   </td>
                   <td className="px-3 py-2.5">
                     {inv.cae?<span className="font-mono text-xs text-gray-400">{inv.cae.slice(0,8)}...</span>:
-                      canEdit&&<input placeholder="CAE" value={inv.cae||""} onChange={e=>updateInvoice(inv.id,{cae:e.target.value})} className="text-xs border border-gray-200 rounded px-1.5 py-1 w-24 focus:outline-none"/>}
+                      canEdit&&<input placeholder="CAE" value={inv.cae||""} onClick={e=>e.stopPropagation()} onChange={e=>updateInvoice(inv.id,{cae:e.target.value})} className="text-xs border border-gray-200 rounded px-1.5 py-1 w-24 focus:outline-none"/>}
                   </td>
                   <td className="px-3 py-2.5">
                     {inv.cae && (
-                      <button onClick={()=>descargarPDF(inv)} title="Descargar PDF" className="text-red-400 hover:text-red-600">
+                      <button onClick={(e)=>{e.stopPropagation();descargarPDF(inv);}} title="Descargar PDF" className="text-red-400 hover:text-red-600">
                         <Icon d={Icons.pdf} size={14}/>
                       </button>
                     )}
                   </td>
                   <td className="px-3 py-2.5">
                     <button
-                      onClick={()=>setEmailModal(inv)}
+                      onClick={(e)=>{e.stopPropagation();setEmailModal(inv);}}
                       title={inv.emailEnviado ? `Email enviado${inv.emailEnviadoFecha?` el ${new Date(inv.emailEnviadoFecha).toLocaleDateString("es-AR")} ${new Date(inv.emailEnviadoFecha).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"})}`:""}. Click para reenviar.` : "Enviar por email"}
                       className={`${inv.emailEnviado?"text-green-500":"text-gray-400 hover:text-blue-600"}`}
                     >
@@ -3616,7 +3788,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
                     <div className="flex items-center gap-1.5 flex-wrap">
                       {canEdit && inv.cae && inv.estado === "Emitida" && !inv.nc_id && (
                         <button
-                          onClick={()=>setNcModal(inv)}
+                          onClick={(e)=>{e.stopPropagation();setNcModal(inv);}}
                           title="Anular con nota de crédito"
                           className="text-gray-400 hover:text-red-600"
                         ><Icon d={Icons.creditNote} size={14}/></button>
@@ -3627,7 +3799,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
                       {/* v3.5: Editar factura pendiente */}
                       {puedeEditarOBorrar(inv) && inv.estado === "Pendiente aprobación" && (
                         <button
-                          onClick={()=>setEditarFacturaModal(inv)}
+                          onClick={(e)=>{e.stopPropagation();setEditarFacturaModal(inv);}}
                           title="Editar factura pendiente"
                           className="text-gray-400 hover:text-blue-600"
                         >✏️</button>
@@ -3635,7 +3807,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
                       {/* v3.5: Borrar factura en Borrador o Pendiente */}
                       {puedeEditarOBorrar(inv) && (
                         <button
-                          onClick={()=>setConfirmarBorrarFacturaModal(inv)}
+                          onClick={(e)=>{e.stopPropagation();setConfirmarBorrarFacturaModal(inv);}}
                           title={`Borrar factura ${inv.estado}`}
                           className="text-gray-400 hover:text-red-600"
                         >🗑️</button>
@@ -3643,7 +3815,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
                       {/* v3.5: Ocultar/mostrar emitida (no borra, solo oculta del listado) */}
                       {currentUser.role === "webmaster" && (inv.estado === "Emitida" || inv.estado === "Pagada") && (
                         <button
-                          onClick={()=>toggleOcultarFactura(inv)}
+                          onClick={(e)=>{e.stopPropagation();toggleOcultarFactura(inv);}}
                           title={inv.oculta ? "Mostrar en listado" : "Ocultar del listado"}
                           className="text-gray-400 hover:text-purple-600 text-xs"
                         >{inv.oculta ? "👁️" : "🚫"}</button>
@@ -3651,7 +3823,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
                     </div>
                   </td>
                 </tr>
-              ))}
+              );})}
             </tbody>
           </table>
         </div>
@@ -3670,8 +3842,9 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
             const fecha=inv.fecha
               ?`${inv.fecha.slice(6,8)}/${inv.fecha.slice(4,6)}/${inv.fecha.slice(0,4)}`
               :fmtDate(inv.month&&inv.year?`${inv.year}-${String(inv.month).padStart(2,"0")}-01`:"");
+            const editableBorrador = puedeEditarOBorrar(inv) && inv.estado === "Borrador";
             return(
-              <div key={inv.id} onClick={()=>setInvDetalleModal(inv)} className={`bg-white border border-gray-200 border-l-4 ${borderColor} rounded-lg p-3 shadow-sm cursor-pointer hover:bg-gray-50 transition-colors ${inv.estado==="Anulada"?"opacity-60":""} ${inv.oculta?"opacity-50":""}`}>
+              <div key={inv.id} onClick={()=>editableBorrador ? abrirEditorBorrador(inv) : setInvDetalleModal(inv)} className={`bg-white border border-gray-200 border-l-4 ${borderColor} rounded-lg p-3 shadow-sm cursor-pointer hover:bg-gray-50 transition-colors ${inv.estado==="Anulada"?"opacity-60":""} ${inv.oculta?"opacity-50":""} ${editableBorrador?"hover:bg-blue-50":""}`}>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-500">{fecha}</span>
                   <span className="font-bold text-gray-900">{fmtMoney(inv.neto)}</span>
@@ -3736,6 +3909,87 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
               onSave={()=>guardarEdicionFactura(editarFacturaModal)}
               saveLabel="Guardar cambios"
             />
+          </div>
+        </Modal>
+      )}
+
+      {/* Parte 6: editar y reintentar emisión de una factura en Borrador */}
+      {editarBorradorModal && (
+        <Modal title={`Editar borrador — ${editarBorradorModal.clientName}`} onClose={()=>{ if(!emitiendoBorrador){ setEditarBorradorModal(null); setErrorBorrador(null); } }} wide>
+          <div className="space-y-3">
+            {errorBorrador && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-800">
+                <p className="font-semibold mb-1">❌ Último error al emitir</p>
+                <p>{errorBorrador}</p>
+              </div>
+            )}
+            {editarBorradorModal.contractId && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 text-xs text-blue-700">
+                Esta factura está asociada a un contrato. Al reemitir se usan los datos editados acá, no el contrato original.
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                <Field label="Razón Social *" value={editarBorradorModal.razonSocial} onChange={(e)=>setEditarBorradorModal(p=>({...p,razonSocial:e.target.value}))}/>
+              </div>
+              <Field label="CUIT *" value={editarBorradorModal.cuit} onChange={(e)=>setEditarBorradorModal(p=>({...p,cuit:e.target.value}))}/>
+              <Field label="Email" type="email" value={editarBorradorModal.email} onChange={(e)=>setEditarBorradorModal(p=>({...p,email:e.target.value}))}/>
+              <div>
+                <label className="text-xs font-medium text-gray-600">Condición IVA</label>
+                <select value={editarBorradorModal.condicionIVA} onChange={(e)=>setEditarBorradorModal(p=>({...p,condicionIVA:e.target.value}))} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+                  {["Responsable Inscripto","Monotributista","Exento","Consumidor Final"].map(o=><option key={o}>{o}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">Tipo Factura</label>
+                <select value={editarBorradorModal.tipoFactura} onChange={(e)=>setEditarBorradorModal(p=>({...p,tipoFactura:e.target.value}))} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+                  <option value="A">Factura A</option>
+                  <option value="B">Factura B</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">Concepto</label>
+                <select value={editarBorradorModal.concepto} onChange={(e)=>setEditarBorradorModal(p=>({...p,concepto:e.target.value}))} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
+                  <option value={1}>Productos</option>
+                  <option value={2}>Servicios</option>
+                  <option value={3}>Productos y Servicios</option>
+                </select>
+              </div>
+              <Field label="Servicio desde" type="date" value={editarBorradorModal.fch_serv_desde} onChange={(e)=>setEditarBorradorModal(p=>({...p,fch_serv_desde:e.target.value}))}/>
+              <Field label="Servicio hasta" type="date" value={editarBorradorModal.fch_serv_hasta} onChange={(e)=>setEditarBorradorModal(p=>({...p,fch_serv_hasta:e.target.value}))}/>
+              <div className="col-span-2">
+                <Field label="Descripción del servicio *" value={editarBorradorModal.detalle} onChange={(e)=>setEditarBorradorModal(p=>({...p,detalle:e.target.value}))}/>
+              </div>
+              <Field label="Monto neto ($) *" type="number" value={editarBorradorModal.montoNeto} onChange={(e)=>setEditarBorradorModal(p=>({...p,montoNeto:e.target.value}))}/>
+              <div>
+                <label className="text-xs font-medium text-gray-600">Vto. de pago *</label>
+                <input
+                  type="date"
+                  value={editarBorradorModal.fch_vto_pago}
+                  onChange={(e)=>{setEditarBorradorModal(p=>({...p,fch_vto_pago:e.target.value}));setVtoPagoErrorBorrador(false);}}
+                  className={`w-full mt-1 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 ${vtoPagoErrorBorrador?"border-red-400 ring-1 ring-red-300":"border-gray-200 focus:ring-blue-200"}`}
+                />
+              </div>
+            </div>
+            {(() => {
+              const neto = parseFloat(editarBorradorModal.montoNeto)||0;
+              const iva = +(neto*0.105).toFixed(2);
+              const total = +(neto+iva).toFixed(2);
+              return (
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-gray-50 rounded-lg p-3"><p className="text-xs text-gray-400">Neto</p><p className="font-bold text-sm">{fmtMoney(neto)}</p></div>
+                  <div className="bg-orange-50 rounded-lg p-3"><p className="text-xs text-orange-400">IVA 10.5%</p><p className="font-bold text-sm text-orange-700">{fmtMoney(iva)}</p></div>
+                  <div className="bg-blue-50 rounded-lg p-3"><p className="text-xs text-blue-400">Total</p><p className="font-bold text-sm text-blue-700">{fmtMoney(total)}</p></div>
+                </div>
+              );
+            })()}
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={()=>{ if(!emitiendoBorrador){ setEditarBorradorModal(null); setErrorBorrador(null); } }} disabled={emitiendoBorrador} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg disabled:opacity-50">Cancelar</button>
+              <button onClick={()=>guardarSoloBorrador(editarBorradorModal)} disabled={emitiendoBorrador} className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50">Guardar borrador</button>
+              <button onClick={()=>emitirBorrador(editarBorradorModal)} disabled={emitiendoBorrador} className="px-4 py-2 text-sm font-semibold bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                {emitiendoBorrador ? "⏳ Emitiendo..." : "Guardar y emitir"}
+              </button>
+            </div>
           </div>
         </Modal>
       )}
