@@ -4118,6 +4118,18 @@ function ReviewModal({contracts,clients,billMonth,billYear,onApprove,onClose,onE
       console.warn("Aprobación ya en curso, ignorando click duplicado");
       return;
     }
+    // El comprobante se emite con fecha de HOY: el vencimiento de pago no puede
+    // quedar antes, o ARCA rechaza con el error [10036]. Se valida acá antes de
+    // llamar a ARCA en vez de dejar que el backend lo corrija en silencio.
+    const hoyLocal = toLocalDateStr(new Date());
+    for (const ctId of sel) {
+      const fch = fechas[ctId];
+      if (fch?.vtoPago && fch.vtoPago < hoyLocal) {
+        const cli = clients.find(c => c.id === contracts.find(c2 => c2.id === ctId)?.clientId);
+        alert(`El vencimiento de pago de "${cli?.razonSocial || ctId}" no puede ser anterior a hoy. Corregilo antes de emitir.`);
+        return;
+      }
+    }
     submittingRef.current = true;
     setSubmitting(true);
     try {
@@ -4297,6 +4309,12 @@ function ReviewModal({contracts,clients,billMonth,billYear,onApprove,onClose,onE
             textoOpcional={txt}
             onClose={() => setPreviewIndividual(null)}
             onConfirmar={async () => {
+              // Mismo chequeo que en la emisión por lote: el comprobante se emite con
+              // fecha de HOY, el vencimiento de pago no puede quedar antes (ARCA [10036]).
+              if (fch.vtoPago && fch.vtoPago < toLocalDateStr(new Date())) {
+                alert("El vencimiento de pago no puede ser anterior a la fecha de la factura. Corregilo antes de emitir.");
+                return;
+              }
               const fechasArca = {
                 fch_serv_desde: dateStrToArca(fch.servicioDesde),
                 fch_serv_hasta: dateStrToArca(fch.servicioHasta),
@@ -8220,6 +8238,7 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
     fechaDesde: todayISO,
     fechaHasta: todayISO,
     fechaDia: todayISO,
+    fch_vto_pago: sumarDias(todayISO, 1),
   };
   const [form, setForm] = useState(empty);
   const [emitiendo, setEmitiendo] = useState(false);
@@ -8228,6 +8247,7 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
   const [enviandoEmail, setEnviandoEmail] = useState(false);
   const [emailEnviado, setEmailEnviado] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [vtoPagoError, setVtoPagoError] = useState(false);
   // Guarda sincrónica: si ya hay una emisión en curso, ignora clicks adicionales.
   // Esto cubre el gap entre el click y el setState del React (que es asíncrono).
   const submittingRef = useRef(false);
@@ -8299,6 +8319,14 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
       alert("Completá todos los campos obligatorios");
       return;
     }
+    // El comprobante se emite con fecha de HOY (CbteFch): el vencimiento de pago
+    // nunca puede quedar antes, o ARCA rechaza con el error [10036].
+    if (!form.fch_vto_pago || form.fch_vto_pago < todayISO) {
+      setVtoPagoError(true);
+      alert("El vencimiento de pago no puede ser anterior a la fecha de la factura.");
+      return;
+    }
+    setVtoPagoError(false);
     // Guarda anti-doble-click: si ya estamos emitiendo, ignorar.
     if (submittingRef.current) {
       console.warn("Emisión ya en curso, ignorando click duplicado");
@@ -8362,6 +8390,7 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
           creado_por: currentUser.id,
           fch_serv_desde: form.tipoPeriodo === "rango" ? form.fechaDesde.replace(/-/g,"") : form.tipoPeriodo === "dia" ? form.fechaDia.replace(/-/g,"") : null,
           fch_serv_hasta: form.tipoPeriodo === "rango" ? form.fechaHasta.replace(/-/g,"") : form.tipoPeriodo === "dia" ? form.fechaDia.replace(/-/g,"") : null,
+          fch_vto_pago: form.fch_vto_pago.replace(/-/g,""),
         };
 
         const uuid = await guardarFacturaSupabase(inv, clientId);
@@ -8397,6 +8426,7 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
       anio: form.tipoPeriodo === "mes" ? parseInt(form.anio) : null,
       fch_serv_desde: form.tipoPeriodo === "rango" ? form.fechaDesde.replace(/-/g,"") : form.tipoPeriodo === "dia" ? form.fechaDia.replace(/-/g,"") : null,
       fch_serv_hasta: form.tipoPeriodo === "rango" ? form.fechaHasta.replace(/-/g,"") : form.tipoPeriodo === "dia" ? form.fechaDia.replace(/-/g,"") : null,
+      fch_vto_pago: form.fch_vto_pago.replace(/-/g,""),
       cliente: form.razonSocial,
       detalle: form.detalle,
     };
@@ -8467,6 +8497,7 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
           fechaPago: "",
           emailEnviado: false,
           creado_por: currentUser.id,
+          fch_vto_pago: form.fch_vto_pago.replace(/-/g,""),
         };
 
         // Si un intento anterior había dejado un borrador guardado (facturaIdActual),
@@ -8510,6 +8541,7 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
           fechaPago: "",
           emailEnviado: false,
           creado_por: currentUser.id,
+          fch_vto_pago: form.fch_vto_pago.replace(/-/g,""),
         };
         const uuidBorrador = await guardarFacturaSupabase(invBorrador, clienteIdBorrador, facturaIdActual);
         if (uuidBorrador) {
@@ -8611,6 +8643,18 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
         </div>
         <Field label="Descripción del servicio *" value={form.detalle} onChange={f("detalle")} placeholder="Publicidad radio — Abril 2026"/>
         <Field label="Monto neto ($) *" value={form.montoNeto} onChange={f("montoNeto")} type="number"/>
+        <div>
+          <label className="text-xs font-medium text-gray-600">Vto. de pago *</label>
+          <input
+            type="date"
+            value={form.fch_vto_pago}
+            onChange={e => { setForm(p=>({...p, fch_vto_pago: e.target.value})); setVtoPagoError(false); }}
+            className={`w-full mt-1 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 ${vtoPagoError ? "border-red-400 ring-1 ring-red-300" : "border-gray-200 focus:ring-blue-200"}`}
+          />
+          {vtoPagoError && (
+            <p className="text-xs text-red-600 mt-1">El vencimiento de pago no puede ser anterior a la fecha de la factura.</p>
+          )}
+        </div>
         <div className="grid grid-cols-3 gap-3">
           <div className="bg-gray-50 rounded-lg p-3">
             <p className="text-xs text-gray-400">Neto</p>
