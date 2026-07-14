@@ -599,8 +599,9 @@ export default function App() {
     cargarNotasCredito();
   },[]);
 
-  // Guardar factura en Supabase
-  const guardarFacturaSupabase = async (inv, clientId) => {
+  // Guardar factura en Supabase.
+  // idExistente: si viene, se hace UPDATE sobre ese registro en vez de crear uno nuevo (reintentos de emisión).
+  const guardarFacturaSupabase = async (inv, clientId, idExistente) => {
     const tipoComp = inv.tipoFactura === "A" ? 1 : 6;
     const payload = {
       contrato_id: inv.contractId || null,
@@ -634,6 +635,41 @@ export default function App() {
       aprobado_por:     inv.aprobado_por     || null,
       fecha_aprobacion: inv.fecha_aprobacion || null,
     };
+    // Reintento sobre una factura ya guardada (mismo borrador): UPDATE, nunca un INSERT nuevo.
+    if (idExistente) {
+      console.log("Actualizando factura existente en Supabase:", idExistente, payload);
+      const {data, error} = await supabase.from("facturas").update(payload).eq("id", idExistente).select();
+      if(error) {
+        console.error("Error Supabase al actualizar factura:", error);
+        return null;
+      }
+      return data && data[0] ? data[0].id : idExistente;
+    }
+
+    // Deduplicación defensiva: si ya existe un borrador del mismo cliente y monto
+    // creado en los últimos 5 minutos, actualizarlo en vez de insertar uno nuevo
+    // (cubre reintentos donde se perdió el id local, ej. refresh del formulario).
+    if (payload.estado === "Borrador" && payload.cliente_id) {
+      const haceCincoMin = new Date(Date.now() - 5*60*1000).toISOString();
+      const {data: existentes} = await supabase.from("facturas")
+        .select("id")
+        .eq("estado", "Borrador")
+        .eq("cliente_id", payload.cliente_id)
+        .eq("total", payload.total)
+        .gte("created_at", haceCincoMin)
+        .order("created_at", {ascending:false})
+        .limit(1);
+      if (existentes && existentes.length > 0) {
+        console.warn("Borrador duplicado detectado, se actualiza el existente en vez de crear uno nuevo:", existentes[0].id);
+        const {data, error} = await supabase.from("facturas").update(payload).eq("id", existentes[0].id).select();
+        if(error) {
+          console.error("Error Supabase al actualizar borrador duplicado:", error);
+          return null;
+        }
+        return data && data[0] ? data[0].id : existentes[0].id;
+      }
+    }
+
     console.log("Guardando factura en Supabase:", payload);
     const {data, error} = await supabase.from("facturas").insert(payload).select();
     if(error) {
@@ -3172,7 +3208,14 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
           });
         } else {
           inv.estado = "Borrador";
-          inv.error = data.error;
+          inv.detalle = `[Error ARCA: ${data.error}] ${inv.detalle || ""}`;
+          inv.clientCuit = client.cuit;
+          inv.creado_por = currentUser.id;
+          // Persistir el borrador fallido (la dedup defensiva de guardarFacturaSupabase
+          // evita crear una fila nueva si el usuario reintenta el mismo contrato/monto).
+          await guardarFacturaSupabase(inv, ct.clientId).then(uuid => {
+            if (uuid) inv.id = uuid;
+          });
           alert(`⚠️ Error en factura de ${client.razonSocial}: ${data.error}`);
         }
         results.push(inv);
@@ -3180,6 +3223,12 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
         await completarOperacionArca(opReg.id, { error: e.message }, false);
         const inv = buildInvoice(ct, texts[ctId] || "", fch);
         inv.estado = "Borrador";
+        inv.detalle = `[Error de conexión: ${e.message}] ${inv.detalle || ""}`;
+        inv.clientCuit = client.cuit;
+        inv.creado_por = currentUser.id;
+        await guardarFacturaSupabase(inv, ct.clientId).then(uuid => {
+          if (uuid) inv.id = uuid;
+        });
         results.push(inv);
         alert(`❌ Error de conexión para ${client?.razonSocial}`);
       }
@@ -8168,6 +8217,9 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
   // Guarda sincrónica: si ya hay una emisión en curso, ignora clicks adicionales.
   // Esto cubre el gap entre el click y el setState del React (que es asíncrono).
   const submittingRef = useRef(false);
+  // id del borrador ya guardado para esta factura en curso. Si un intento de emisión
+  // falla, se persiste UN borrador y este id se usa para el reintento (UPDATE, nunca INSERT nuevo).
+  const [facturaIdActual, setFacturaIdActual] = useState(null);
 
   const neto = parseFloat(form.montoNeto)||0;
   const iva = Math.round(neto*0.105*100)/100;
@@ -8403,10 +8455,14 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
           creado_por: currentUser.id,
         };
 
-        await guardarFacturaSupabase(inv, clientId).then(uuid => {
-          if (uuid) inv.id = uuid;
-        });
-        setInvoices(prev=>[inv,...prev]);
+        // Si un intento anterior había dejado un borrador guardado (facturaIdActual),
+        // lo actualizamos a "Emitida" en vez de crear una fila nueva.
+        const uuidFinal = await guardarFacturaSupabase(inv, clientId, facturaIdActual);
+        if (uuidFinal) inv.id = uuidFinal;
+        setFacturaIdActual(null);
+        setInvoices(prev => facturaIdActual
+          ? prev.map(i => i.id === facturaIdActual ? inv : i)
+          : [inv, ...prev]);
         // Guardamos email y cuit ANTES de limpiar el form
         const clientEmail = form.email;
         const clientCuitGuardado = form.cuit;
@@ -8417,6 +8473,38 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
         setResultado({exito:true, inv, clientEmail, clientCuitGuardado, clientDomicilioGuardado});
         setForm(empty);
       } else {
+        // Emisión rechazada por ARCA: persistir UN solo borrador con el error real.
+        // Reintentos posteriores (mismo facturaIdActual) hacen UPDATE, no INSERT.
+        const clienteIdBorrador = form.clienteId !== "nuevo" ? form.clienteId : null;
+        const invBorrador = {
+          id: facturaIdActual || `inv-directa-error-${Date.now()}`,
+          contractId: null,
+          clientId: clienteIdBorrador,
+          clientName: form.razonSocial,
+          clientEmail: form.email,
+          clientCuit: form.cuit,
+          tipoFactura: form.tipoFactura,
+          numero: null,
+          month: new Date().getMonth()+1,
+          year: new Date().getFullYear(),
+          periodo: `${MONTHS[new Date().getMonth()]} ${new Date().getFullYear()}`,
+          detalle: `[Error ARCA: ${data.error}] ${form.detalle}`,
+          neto, iva, total,
+          estado: "Borrador",
+          cae: null,
+          fecha: todayStr().replace(/-/g,""),
+          fechaPago: "",
+          emailEnviado: false,
+          creado_por: currentUser.id,
+        };
+        const uuidBorrador = await guardarFacturaSupabase(invBorrador, clienteIdBorrador, facturaIdActual);
+        if (uuidBorrador) {
+          invBorrador.id = uuidBorrador;
+          setFacturaIdActual(uuidBorrador);
+          setInvoices(prev => facturaIdActual
+            ? prev.map(i => i.id === facturaIdActual ? invBorrador : i)
+            : [invBorrador, ...prev]);
+        }
         setResultado({exito:false, error:data.error});
       }
     } catch(e) {
