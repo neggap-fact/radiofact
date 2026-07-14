@@ -3363,6 +3363,15 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
       alert("Solo se pueden borrar facturas en Borrador o Pendiente aprobación.");
       return;
     }
+    const esUUID = inv.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(inv.id);
+    if (!esUUID) {
+      // Nunca se guardó en Supabase (el id sigue siendo el temporal del frontend):
+      // no hay nada que borrar en la base, solo se quita del estado local.
+      setInvoices(prev => prev.filter(i => i.id !== inv.id));
+      setConfirmarBorrarFacturaModal(null);
+      alert("✓ Factura eliminada (no había llegado a guardarse en la base de datos).");
+      return;
+    }
     const { error } = await supabase.from("facturas").delete().eq("id", inv.id);
     if (error) {
       alert(`❌ Error al borrar: ${error.message}`);
@@ -3376,6 +3385,11 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
   // ── v3.5: Ocultar/mostrar factura emitida ──────────────────────
   const toggleOcultarFactura = async (inv) => {
     const nuevoEstado = !inv.oculta;
+    const esUUID = inv.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(inv.id);
+    if (!esUUID) {
+      alert("❌ Esta factura no llegó a guardarse en la base de datos. Borrala y volvé a emitirla.");
+      return;
+    }
     const { error } = await supabase.from("facturas").update({ oculta: nuevoEstado }).eq("id", inv.id);
     if (error) {
       alert(`❌ Error: ${error.message}`);
