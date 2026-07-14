@@ -4942,6 +4942,34 @@ function Expenses({expenses,setExpenses,currentUser,canEdit,plantillas,setPlanti
   const [descargandoPDF, setDescargandoPDF] = useState(false);
   const isWebmaster = currentUser?.role === "webmaster";
 
+  // Fix navegación mobile: al abrir un modal de carga de gasto, reservar una
+  // entrada de historial para que el botón/gesto "atrás" del celular cierre el
+  // modal (quedando en Gastos) en vez de saltar a la página anterior (Finanzas).
+  // Sin esto, el modal no ocupa un nivel de historial propio y "atrás" navega
+  // directo a la página de la que se vino a Gastos.
+  const gastoModalAbierto = !!modal || modalCargarFactura;
+  useEffect(() => {
+    if (!gastoModalAbierto) return;
+    window.history.pushState({ gastoModalAbierto: true }, "", window.location.hash);
+    const handlePopStateGasto = (e) => {
+      if (!e.state?.gastoModalAbierto) {
+        setModal(null);
+        setModalCargarFactura(false);
+      }
+    };
+    window.addEventListener("popstate", handlePopStateGasto);
+    return () => {
+      window.removeEventListener("popstate", handlePopStateGasto);
+      // Si el modal se cerró desde la app (botón Cancelar/X) y no por "atrás",
+      // la entrada reservada sigue activa: hay que sacarla del historial con
+      // un back() real (replaceState la deja como una entrada "expenses"
+      // extra, duplicada, que obligaría a tocar "atrás" dos veces para salir).
+      if (window.history.state?.gastoModalAbierto) {
+        window.history.back();
+      }
+    };
+  }, [gastoModalAbierto]);
+
   const empty={descripcion:"",categoria:"Gastos Fijos",subcategoria:"",monto:"",fecha:todayStr(),proveedor:"",comprobante:"",url_comprobante:"",pagado:true,notas:"",es_tarjeta:false,tarjeta_id:"",socio:"",es_externo:false,monto_neto:""};
   
   const filtered=expenses.filter(e=>{
