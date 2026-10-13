@@ -580,6 +580,7 @@ export default function App() {
             clientId: f.cliente_id,
             clientName: f.client_name || "",
             clientEmail: f.client_email || "",
+            clientCuit: f.cuit_cliente || "",
             tipoFactura: f.tipo_comprobante===1?"A":"B",
             numero: f.numero_comprobante ? `${f.tipo_comprobante===1?"A":"B"}-0003-${String(f.numero_comprobante).padStart(8,"0")}` : "",
             month: mes,
@@ -10143,6 +10144,12 @@ function ConciliarMovimientoModal({ movimiento: m, invoices, onClose, onConfirma
   const [resultado,   setResultado]   = useState(null);
   const [confirmando, setConfirmando] = useState(false);
   const [error,       setError]       = useState("");
+  // Conciliación manual de un cobro: factura elegida (de sugerencias o búsqueda)
+  // y cómo se clasifica la diferencia entre el total y lo acreditado.
+  const [busqueda,    setBusqueda]    = useState("");
+  const [seleccion,   setSeleccion]   = useState(null);
+  const [tipoDif,     setTipoDif]     = useState("retenciones");
+  const [detalleDif,  setDetalleDif]  = useState("");
 
   useEffect(() => {
     fetch(`${BACKEND_URL}/conciliar-movimiento`, {
@@ -10155,29 +10162,111 @@ function ConciliarMovimientoModal({ movimiento: m, invoices, onClose, onConfirma
       .catch(e => { setError("Error al buscar sugerencias: " + e.message); setCargando(false); });
   }, []);
 
-  const confirmar = async (sug) => {
-    setConfirmando(true);
-    const updates = sug.tipo === "cobro_factura"
-      ? { factura_id: sug.factura_id }
-      : { gasto_id: sug.gasto_id };
+  const importe = parseFloat(m.importe) || 0;
+  const esIngreso = m.tipo === "ingreso";
 
+  // Facturas no cobradas de los últimos 6 meses (respecto del movimiento), para elegir
+  // a mano aunque el monto o el CUIT no coincidan.
+  const facturasPendientes = (() => {
+    if (!esIngreso) return [];
+    const ref = m.fecha ? new Date(`${m.fecha}T00:00:00`) : new Date();
+    const lim = new Date(ref); lim.setMonth(lim.getMonth() - 6);
+    const limStr = lim.toISOString().slice(0, 10).replace(/-/g, "");
+    return (invoices || []).filter(inv =>
+      inv.cae && inv.estado !== "Pagada" && inv.estado !== "Anulada" && !inv.nc_id &&
+      (!inv.fecha || inv.fecha >= limStr)
+    );
+  })();
+  const q = busqueda.trim().toLowerCase();
+  const qNum = q.replace(/[^\d.,]/g, "").replace(/\./g, "").replace(",", ".");
+  const resultadosBusqueda = facturasPendientes
+    .filter(inv => {
+      if (!q) return true;
+      const cuit = (inv.clientCuit || "").replace(/[-\s]/g, "");
+      return (inv.clientName || "").toLowerCase().includes(q) ||
+        (inv.numero || "").toLowerCase().includes(q) ||
+        (cuit && cuit.includes(q.replace(/[-\s]/g, ""))) ||
+        (qNum && String(inv.total).includes(qNum));
+    })
+    .sort((a, b) => Math.abs(a.total - importe) - Math.abs(b.total - importe))
+    .slice(0, 20);
+
+  const elegirFactura = (inv) => {
+    setSeleccion(inv);
+    setTipoDif("retenciones");
+    setDetalleDif("");
+  };
+  const elegirSugerencia = (sug) => {
+    const inv = (invoices || []).find(i => i.id === sug.factura_id);
+    elegirFactura(inv || {
+      id: sug.factura_id, clientName: sug.cliente, clientCuit: sug.cuit_cliente,
+      numero: sug.numero, total: parseFloat(sug.total) || 0, estado: sug.estado,
+      montoCobrado: 0, retenciones: 0, retencionesDetalle: "",
+    });
+  };
+
+  // Lo que faltaba cobrar de la factura (descuenta cobros parciales previos)
+  const cobradoPrevio = seleccion ? (parseFloat(seleccion.montoCobrado) || 0) : 0;
+  const retPrevias    = seleccion ? (parseFloat(seleccion.retenciones) || 0) : 0;
+  const pendiente     = seleccion ? Math.round(((parseFloat(seleccion.total) || 0) - cobradoPrevio - retPrevias) * 100) / 100 : 0;
+  const diferencia    = Math.round((pendiente - importe) * 100) / 100;
+  const hayDifPositiva = diferencia > 0.009;
+  const hayDifNegativa = diferencia < -0.009;
+  const requiereDetalle = (hayDifPositiva && tipoDif !== "parcial") || hayDifNegativa;
+  const puedeConfirmarCobro = !!seleccion && !confirmando &&
+    (!hayDifNegativa || tipoDif === "excedente") &&
+    (!requiereDetalle || detalleDif.trim().length > 0);
+
+  // Escribe SOLO en facturas (monto_cobrado, retenciones, retenciones_detalle, fecha_pago,
+  // estado) y vincula el movimiento. Nunca toca cuentas_bancarias.saldo_actual.
+  const confirmarCobro = async () => {
+    if (!puedeConfirmarCobro) return;
+    setConfirmando(true);
+    const montoCobrado = Math.round((cobradoPrevio + importe) * 100) / 100;
+    let retenciones = retPrevias;
+    let detalle = seleccion.retencionesDetalle || "";
+    let saldada = true;
+    const agregarDetalle = (txt) => { detalle = detalle ? `${detalle} · ${txt}` : txt; };
+    if (hayDifPositiva) {
+      if (tipoDif === "parcial") {
+        saldada = false;
+      } else {
+        retenciones = Math.round((retenciones + diferencia) * 100) / 100;
+        agregarDetalle(tipoDif === "ajuste" ? `Ajuste: ${detalleDif.trim()}` : detalleDif.trim());
+      }
+    } else if (hayDifNegativa) {
+      agregarDetalle(`Excedente acreditado ${fmtMoney(-diferencia)}: ${detalleDif.trim()}`);
+    }
+    const cambiosDB = {
+      monto_cobrado: montoCobrado,
+      retenciones,
+      retenciones_detalle: detalle,
+      ...(saldada ? { estado: "Pagada", fecha_pago: m.fecha } : {}),
+    };
+    const { error: errFac } = await supabase.from("facturas").update(cambiosDB).eq("id", seleccion.id);
+    if (errFac) { alert("Error guardando el cobro: " + errFac.message); setConfirmando(false); return; }
+    const updates = { factura_id: seleccion.id };
+    const { error: errMov } = await supabase.from("movimientos_bancarios").update(updates).eq("id", m.id);
+    if (errMov) { alert("El cobro se guardó en la factura pero no se pudo vincular el movimiento: " + errMov.message); setConfirmando(false); return; }
+    onConfirmar(m.id, updates, {
+      id: seleccion.id,
+      changes: {
+        montoCobrado, retenciones, retencionesDetalle: detalle,
+        ...(saldada ? { estado: "Pagada", fechaPago: m.fecha } : {}),
+      },
+    });
+  };
+
+  // Gastos: vínculo directo como antes
+  const confirmarGasto = async (sug) => {
+    setConfirmando(true);
+    const updates = { gasto_id: sug.gasto_id };
     const { error: errMov } = await supabase
       .from("movimientos_bancarios").update(updates).eq("id", m.id);
     if (errMov) { alert("Error: " + errMov.message); setConfirmando(false); return; }
-
-    let facturaUpdate = null;
-    if (sug.tipo === "cobro_factura") {
-      const { error: errFac } = await supabase
-        .from("facturas").update({ estado: "Pagada", fecha_pago: m.fecha }).eq("id", sug.factura_id);
-      if (!errFac) {
-        facturaUpdate = { id: sug.factura_id, changes: { estado: "Pagada", fechaPago: m.fecha } };
-      }
-    }
-
-    onConfirmar(m.id, updates, facturaUpdate);
+    onConfirmar(m.id, updates, null);
   };
 
-  const esIngreso = m.tipo === "ingreso";
   const confianzaColor = (c) =>
     c >= 90 ? "bg-green-100 text-green-700" :
     c >= 60 ? "bg-yellow-100 text-yellow-700" :
@@ -10195,71 +10284,180 @@ function ConciliarMovimientoModal({ movimiento: m, invoices, onClose, onConfirma
         <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-600 space-y-0.5">
           <p className="font-medium text-gray-800">{m.fecha} · {(m.descripcion || "—").slice(0, 60)}</p>
           <p className={`font-bold text-sm ${esIngreso ? "text-green-700" : "text-red-600"}`}>
-            {esIngreso ? "+" : "-"}{fmtMoney(parseFloat(m.importe) || 0)}
+            {esIngreso ? "+" : "-"}{fmtMoney(importe)}
           </p>
           {resultado?.cuit_extraido && (
             <p className="text-gray-400">CUIT detectado: <span className="font-mono">{resultado.cuit_extraido}</span></p>
           )}
         </div>
 
-        {/* Estado */}
-        {cargando && <p className="text-sm text-gray-500 text-center py-4">Buscando coincidencias…</p>}
-        {error && <p className="text-sm text-red-600 text-center py-2">{error}</p>}
-
-        {!cargando && !error && resultado && (
-          resultado.sugerencias.length === 0 ? (
-            <p className="text-sm text-gray-400 text-center py-4">No se encontraron sugerencias de conciliación.</p>
-          ) : (
-            <div className="space-y-2">
-              <p className="text-xs text-gray-500 font-medium">{resultado.sugerencias.length} sugerencia{resultado.sugerencias.length !== 1 ? "s" : ""} encontrada{resultado.sugerencias.length !== 1 ? "s" : ""}:</p>
-              {resultado.sugerencias.map((sug, i) => (
-                <div key={i} className="border border-gray-200 rounded-lg p-3 flex items-center justify-between gap-3 hover:bg-gray-50">
-                  <div className="flex-1 min-w-0">
-                    {sug.tipo === "cobro_factura" ? (
-                      <>
-                        <p className="text-xs font-semibold text-gray-800">
-                          Factura #{sug.numero} — {sug.cliente || sug.cuit_cliente || "—"}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-0.5">
-                          {fmtMoney(parseFloat(sug.total)||0)} · {sug.estado}
-                          {sug.cuit_cliente && <span className="ml-2 text-gray-400 font-mono">{sug.cuit_cliente}</span>}
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        <p className="text-xs font-semibold text-gray-800">
-                          {sug.descripcion || "Gasto"} — {sug.proveedor || "—"}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-0.5">
-                          {fmtMoney(parseFloat(sug.monto)||0)} · {sug.categoria}
-                          {sug.cuit_proveedor && <span className="ml-2 text-gray-400 font-mono">{sug.cuit_proveedor}</span>}
-                        </p>
-                      </>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${confianzaColor(sug.confianza)}`}>
-                      {sug.confianza}%
-                    </span>
-                    <button
-                      onClick={() => confirmar(sug)}
-                      disabled={confirmando}
-                      className="text-xs px-3 py-1.5 bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50 font-medium"
-                    >
-                      Confirmar
-                    </button>
-                  </div>
-                </div>
-              ))}
+        {seleccion ? (
+          /* Panel de confirmación del cobro elegido */
+          <div className="space-y-3">
+            <div className="border border-violet-200 bg-violet-50 rounded-lg p-3 text-xs space-y-1">
+              <p className="font-semibold text-gray-800">Factura {seleccion.numero || "—"} — {seleccion.clientName || "—"}</p>
+              <div className="flex justify-between"><span className="text-gray-500">Total factura</span><span>{fmtMoney(parseFloat(seleccion.total) || 0)}</span></div>
+              {(cobradoPrevio > 0 || retPrevias > 0) && (
+                <div className="flex justify-between"><span className="text-gray-500">Ya cobrado / retenido antes</span><span>- {fmtMoney(cobradoPrevio + retPrevias)}</span></div>
+              )}
+              <div className="flex justify-between"><span className="text-gray-500">Monto acreditado</span><span className="text-green-700">{fmtMoney(importe)}</span></div>
+              <div className="flex justify-between font-semibold border-t border-violet-200 pt-1">
+                <span>Diferencia</span>
+                <span className={hayDifPositiva ? "text-orange-600" : hayDifNegativa ? "text-red-600" : "text-green-700"}>
+                  {hayDifPositiva || hayDifNegativa ? fmtMoney(diferencia) : "Sin diferencia ✓"}
+                </span>
+              </div>
             </div>
-          )
-        )}
 
-        <div className="flex justify-end pt-1">
-          <button onClick={onClose} className="text-xs px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">
-            Cancelar
-          </button>
-        </div>
+            {hayDifPositiva && (
+              <div className="space-y-2 text-xs">
+                <p className="font-medium text-gray-700">¿Qué es la diferencia de {fmtMoney(diferencia)}?</p>
+                {[
+                  ["retenciones", "Retenciones (la factura queda saldada)"],
+                  ["parcial",     "Cobro parcial (queda saldo pendiente)"],
+                  ["ajuste",      "Otro ajuste / descuento (la factura queda saldada)"],
+                ].map(([v, label]) => (
+                  <label key={v} className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="tipoDif" checked={tipoDif === v} onChange={() => setTipoDif(v)} />
+                    {label}
+                  </label>
+                ))}
+                {tipoDif !== "parcial" && (
+                  <input
+                    value={detalleDif}
+                    onChange={e => setDetalleDif(e.target.value)}
+                    placeholder={tipoDif === "retenciones" ? "Detalle (ej. Ganancias $X, IIBB $Y, SUSS $Z)" : "Detalle del ajuste"}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs focus:outline-none"
+                  />
+                )}
+              </div>
+            )}
+
+            {hayDifNegativa && (
+              <div className="space-y-2 text-xs bg-red-50 border border-red-200 rounded-lg p-3">
+                <p className="text-red-700 font-medium">⚠️ Se acreditó {fmtMoney(-diferencia)} MÁS de lo que faltaba cobrar de esta factura.</p>
+                <p className="text-red-600">Revisá si el pago corresponde a otra factura o a varias. Si igual corresponde a esta, indicá qué pasó con el excedente:</p>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={tipoDif === "excedente"} onChange={e => setTipoDif(e.target.checked ? "excedente" : "retenciones")} />
+                  Registrar como cobro total y anotar el excedente
+                </label>
+                {tipoDif === "excedente" && (
+                  <input
+                    value={detalleDif}
+                    onChange={e => setDetalleDif(e.target.value)}
+                    placeholder="Qué es el excedente (ej. pago a cuenta, intereses)"
+                    className="w-full px-3 py-2 border border-red-200 rounded-lg text-xs focus:outline-none bg-white"
+                  />
+                )}
+              </div>
+            )}
+
+            <p className="text-[11px] text-gray-400">El saldo de la cuenta bancaria no se modifica: solo cambia al importar extractos.</p>
+            <div className="flex justify-between gap-2">
+              <button onClick={() => setSeleccion(null)} className="text-xs px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">← Elegir otra</button>
+              <button
+                onClick={confirmarCobro}
+                disabled={!puedeConfirmarCobro}
+                className="text-xs px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50 font-medium"
+              >
+                {confirmando ? "Guardando…" : "Confirmar conciliación"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Sugerencias automáticas */}
+            {cargando && <p className="text-sm text-gray-500 text-center py-4">Buscando coincidencias…</p>}
+            {error && <p className="text-sm text-red-600 text-center py-2">{error}</p>}
+
+            {!cargando && !error && resultado && (
+              (resultado.sugerencias || []).length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-2">No se encontraron sugerencias automáticas.</p>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-xs text-gray-500 font-medium">{resultado.sugerencias.length} sugerencia{resultado.sugerencias.length !== 1 ? "s" : ""} encontrada{resultado.sugerencias.length !== 1 ? "s" : ""}:</p>
+                  {resultado.sugerencias.map((sug, i) => (
+                    <div key={i} className="border border-gray-200 rounded-lg p-3 flex items-center justify-between gap-3 hover:bg-gray-50">
+                      <div className="flex-1 min-w-0">
+                        {sug.tipo === "cobro_factura" ? (
+                          <>
+                            <p className="text-xs font-semibold text-gray-800">
+                              Factura #{sug.numero} — {sug.cliente || sug.cuit_cliente || "—"}
+                            </p>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              {fmtMoney(parseFloat(sug.total)||0)} · {sug.estado}
+                              {sug.fecha_emision && <span className="ml-2 text-gray-400">{sug.fecha_emision}</span>}
+                              {sug.cuit_cliente && <span className="ml-2 text-gray-400 font-mono">{sug.cuit_cliente}</span>}
+                            </p>
+                            {sug.nota && <p className="text-[11px] text-amber-600 mt-0.5">{sug.nota}</p>}
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-xs font-semibold text-gray-800">
+                              {sug.descripcion || "Gasto"} — {sug.proveedor || "—"}
+                            </p>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              {fmtMoney(parseFloat(sug.monto)||0)} · {sug.categoria}
+                              {sug.cuit_proveedor && <span className="ml-2 text-gray-400 font-mono">{sug.cuit_proveedor}</span>}
+                            </p>
+                          </>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${confianzaColor(sug.confianza)}`}>
+                          {sug.confianza}%
+                        </span>
+                        <button
+                          onClick={() => sug.tipo === "cobro_factura" ? elegirSugerencia(sug) : confirmarGasto(sug)}
+                          disabled={confirmando}
+                          className="text-xs px-3 py-1.5 bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50 font-medium"
+                        >
+                          {sug.tipo === "cobro_factura" ? "Elegir" : "Confirmar"}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            )}
+
+            {/* Búsqueda manual: siempre disponible para ingresos */}
+            {esIngreso && (
+              <div className="space-y-2 border-t border-gray-100 pt-3">
+                <p className="text-xs text-gray-500 font-medium">Buscar factura a mano (no cobradas, últimos 6 meses):</p>
+                <input
+                  value={busqueda}
+                  onChange={e => setBusqueda(e.target.value)}
+                  placeholder="Cliente, número, CUIT o monto"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-violet-300"
+                />
+                <div className="max-h-56 overflow-y-auto space-y-1">
+                  {resultadosBusqueda.length === 0 ? (
+                    <p className="text-xs text-gray-400 text-center py-2">No hay facturas pendientes que coincidan.</p>
+                  ) : resultadosBusqueda.map(inv => (
+                    <button
+                      key={inv.id}
+                      onClick={() => elegirFactura(inv)}
+                      className="w-full text-left border border-gray-100 rounded-lg px-3 py-2 hover:bg-violet-50 text-xs flex justify-between gap-2"
+                    >
+                      <span className="min-w-0 truncate">
+                        <span className="font-medium text-gray-800">{inv.numero || "—"}</span> · {inv.clientName || "—"}
+                        <span className="text-gray-400"> · {periodoFacturadoTexto(inv)}</span>
+                      </span>
+                      <span className="shrink-0 font-semibold text-gray-700">{fmtMoney(inv.total)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-1">
+              <button onClick={onClose} className="text-xs px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">
+                Cancelar
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
