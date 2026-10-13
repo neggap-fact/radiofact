@@ -7709,7 +7709,7 @@ function ImportarExtractoBancarioModal({ cuentasBancarias, setCuentasBancarias, 
             </div>
           ) : (
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800 space-y-2">
-              <p>⚠️ El extracto no incluye saldo final. El saldo de la cuenta no se actualizará al importar.</p>
+              <p>⚠️ {resumen.advertencia_saldo || "El extracto no incluye saldo final."} El saldo de la cuenta no se actualizará al importar.</p>
               {saldoManualGuardado != null ? (
                 <p className="text-xs text-green-700 font-medium">✓ Saldo actualizado a mano: {fmtMoney(saldoManualGuardado)}</p>
               ) : (
