@@ -8670,7 +8670,7 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
   const todayISO = hoy.toISOString().split("T")[0];
   const empty = {
     razonSocial:"", cuit:"", domicilio:"", condicionIVA:"Responsable Inscripto", tipoFactura:"B", email:"",
-    detalle:"", montoNeto:"", concepto:2,
+    detalle:"", montoNeto:"", montoTotal:"", modoFijar:"neto", concepto:2,
     clienteId:"nuevo",
     tipoPeriodo:"mes",
     mes: hoy.getMonth() + 1,
@@ -8694,10 +8694,38 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
   // id del borrador ya guardado para esta factura en curso. Si un intento de emisión
   // falla, se persiste UN borrador y este id se usa para el reintento (UPDATE, nunca INSERT nuevo).
   const [facturaIdActual, setFacturaIdActual] = useState(null);
+  // Modo "Total": el neto/iva exactos se traen del backend (/calcular-importes)
+  // para que neto+iva sumen justo el total pedido, sin el centavo de redondeo
+  // que deja neto*alicuota. Se recalculan con un pequeño debounce mientras se tipea.
+  const [importesTotal, setImportesTotal] = useState({neto:0, iva:0, total:0});
+  const [calculandoTotal, setCalculandoTotal] = useState(false);
 
-  const neto = parseFloat(form.montoNeto)||0;
-  const iva = Math.round(neto*0.105*100)/100;
-  const total = Math.round((neto+iva)*100)/100;
+  useEffect(() => {
+    if (form.modoFijar !== "total") return;
+    const totalIngresado = parseFloat(form.montoTotal) || 0;
+    if (totalIngresado <= 0) { setImportesTotal({neto:0, iva:0, total:0}); return; }
+    setCalculandoTotal(true);
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/calcular-importes`, {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({ monto_total: totalIngresado }),
+        });
+        const data = await res.json();
+        if (data.exito) setImportesTotal({ neto: data.neto, iva: data.iva, total: data.total });
+      } catch (e) {
+        console.error("Error calculando importes desde el total:", e);
+      } finally {
+        setCalculandoTotal(false);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [form.modoFijar, form.montoTotal]);
+
+  const neto = form.modoFijar === "total" ? importesTotal.neto : (parseFloat(form.montoNeto)||0);
+  const iva = form.modoFijar === "total" ? importesTotal.iva : Math.round(neto*0.105*100)/100;
+  const total = form.modoFijar === "total" ? importesTotal.total : Math.round((neto+iva)*100)/100;
 
   const f = k => e => setForm(p => ({...p, [k]: e.target.value}));
 
@@ -8755,7 +8783,8 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
   };
 
   const emitir = async () => {
-    if(!form.razonSocial||!form.cuit||!form.detalle||!form.montoNeto) {
+    const montoValido = form.modoFijar === "total" ? !!form.montoTotal : !!form.montoNeto;
+    if(!form.razonSocial||!form.cuit||!form.detalle||!montoValido) {
       alert("Completá todos los campos obligatorios");
       return;
     }
@@ -8861,6 +8890,7 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
       monto_neto: neto,
       monto_iva: iva,
       monto_total: total,
+      fijar_total: form.modoFijar === "total",
       concepto: parseInt(form.concepto),
       mes: form.tipoPeriodo === "mes" ? parseInt(form.mes) : null,
       anio: form.tipoPeriodo === "mes" ? parseInt(form.anio) : null,
@@ -9082,7 +9112,30 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
           </select>
         </div>
         <Field label="Descripción del servicio *" value={form.detalle} onChange={f("detalle")} placeholder="Publicidad radio — Abril 2026"/>
-        <Field label="Monto neto ($) *" value={form.montoNeto} onChange={f("montoNeto")} type="number"/>
+        <div>
+          <label className="text-xs font-medium text-gray-600">Fijar</label>
+          <div className="mt-1 inline-flex rounded-lg border border-gray-200 overflow-hidden text-sm">
+            <button
+              type="button"
+              onClick={() => setForm(p=>({...p, modoFijar:"neto"}))}
+              className={`px-3 py-1.5 font-medium ${form.modoFijar==="neto" ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}
+            >
+              Neto
+            </button>
+            <button
+              type="button"
+              onClick={() => setForm(p=>({...p, modoFijar:"total"}))}
+              className={`px-3 py-1.5 font-medium border-l border-gray-200 ${form.modoFijar==="total" ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}
+            >
+              Total
+            </button>
+          </div>
+        </div>
+        {form.modoFijar === "neto" ? (
+          <Field label="Monto neto ($) *" value={form.montoNeto} onChange={f("montoNeto")} type="number"/>
+        ) : (
+          <Field label="Monto total ($) *" value={form.montoTotal} onChange={f("montoTotal")} type="number"/>
+        )}
         <div>
           <label className="text-xs font-medium text-gray-600">Vto. de pago *</label>
           <input
@@ -9098,15 +9151,15 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
         <div className="grid grid-cols-3 gap-3">
           <div className="bg-gray-50 rounded-lg p-3">
             <p className="text-xs text-gray-400">Neto</p>
-            <p className="font-bold text-sm">{fmtMoney(neto)}</p>
+            <p className="font-bold text-sm">{calculandoTotal ? "…" : fmtMoney(neto)}</p>
           </div>
           <div className="bg-orange-50 rounded-lg p-3">
             <p className="text-xs text-orange-400">IVA 10.5%</p>
-            <p className="font-bold text-sm text-orange-700">{fmtMoney(iva)}</p>
+            <p className="font-bold text-sm text-orange-700">{calculandoTotal ? "…" : fmtMoney(iva)}</p>
           </div>
           <div className="bg-blue-50 rounded-lg p-3">
             <p className="text-xs text-blue-400">Total</p>
-            <p className="font-bold text-sm text-blue-700">{fmtMoney(total)}</p>
+            <p className="font-bold text-sm text-blue-700">{calculandoTotal ? "…" : fmtMoney(total)}</p>
           </div>
         </div>
       </div>
@@ -9164,7 +9217,8 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
         <button
           onClick={() => {
             // Validar antes de abrir el modal
-            if(!form.razonSocial||!form.cuit||!form.detalle||!form.montoNeto) {
+            const montoValido = form.modoFijar === "total" ? !!form.montoTotal : !!form.montoNeto;
+            if(!form.razonSocial||!form.cuit||!form.detalle||!montoValido) {
               alert("Completá todos los campos obligatorios");
               return;
             }
