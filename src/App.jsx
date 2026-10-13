@@ -446,6 +446,7 @@ export default function App() {
   const [contracts, setContracts] = useState(INIT_CONTRACTS);
   const [invoices, setInvoices] = useState([]);
   const [creditNotes, setCreditNotes] = useState([]);
+  const [ncLoadError, setNcLoadError] = useState("");
   const [emailNCModal, setEmailNCModal] = useState(null);
   const [expenses, setExpenses] = useState(INIT_EXPENSES);
   const [plantillasGastos, setPlantillasGastos] = useState([]);
@@ -623,7 +624,14 @@ export default function App() {
   useEffect(()=>{
     async function cargarNotasCredito() {
       const {data,error} = await supabase.from("notas_credito").select("*").order("created_at",{ascending:false});
-      if(!error && data) {
+      // Antes un error de carga dejaba el listado vacío sin aviso.
+      if (error) {
+        console.error("Error cargando notas de crédito:", error);
+        setNcLoadError(error.message || "Error desconocido");
+        return;
+      }
+      setNcLoadError("");
+      if(data) {
         setCreditNotes(data.map(nc=>({
           id: nc.id,
           factura_id: nc.factura_id,
@@ -854,8 +862,8 @@ Ya tiene CAE ${inv.cae} en ARCA: anotalo y cargala con "Factura manual" o "Sincr
     };
     const {data, error} = await supabase.from("notas_credito").insert(payload).select().single();
     if(error) {
-      console.error("Error guardando NC:", error);
-      return null;
+      console.error("Error guardando NC:", error, payload);
+      return { error };
     }
     return data;
   };
@@ -1005,8 +1013,10 @@ Ya tiene CAE ${inv.cae} en ARCA: anotalo y cargala con "Factura manual" o "Sincr
           : todayStr(),
       };
       const ncSaved = await guardarNotaCreditoSupabase(ncObj);
-      if (!ncSaved) {
-        alert("⚠️ La NC se emitió en ARCA pero hubo un error al guardarla en el sistema. CAE: " + data.datos.cae);
+      if (!ncSaved || ncSaved.error) {
+        alert(`⚠️ La NC se emitió en ARCA pero NO se guardó en el sistema (por eso no va a aparecer en el listado).\n` +
+          `Error: ${ncSaved?.error?.message || "desconocido"}\n` +
+          `CAE: ${data.datos.cae} · Número: ${data.datos.numero}\nAnotá estos datos antes de cerrar.`);
         return false;
       }
 
@@ -1392,6 +1402,7 @@ Ya tiene CAE ${inv.cae} en ARCA: anotalo y cargala con "Factura manual" o "Sincr
           {page==="factura-directa"&&<FacturaDirecta clients={clients} setClients={setClients} invoices={invoices} setInvoices={setInvoices} canEdit={canEdit} descargarPDF={descargarPDF} guardarFacturaSupabase={guardarFacturaSupabase} currentUser={currentUser}/>}
           {page==="notas-credito"&&<CreditNotes
             creditNotes={creditNotes}
+            loadError={ncLoadError}
             invoices={invoices}
             clients={clients}
             canEdit={canEdit}
@@ -6565,7 +6576,7 @@ function PlantillasGastosModal({plantillas,setPlantillas,onClose}){
 }
 
 // ── MÓDULO NOTAS DE CRÉDITO ─────────────────────────────────────────────────
-function CreditNotes({creditNotes, invoices, clients, canEdit, onEmitir, onDescargarPDF, onEnviarEmail}) {
+function CreditNotes({creditNotes, loadError, invoices, clients, canEdit, onEmitir, onDescargarPDF, onEnviarEmail}) {
   const [search, setSearch] = useState("");
   const [emitirModal, setEmitirModal] = useState(null); // factura seleccionada para emitir NC
 
@@ -6579,7 +6590,8 @@ function CreditNotes({creditNotes, invoices, clients, canEdit, onEmitir, onDesca
   );
 
   // NCs ya emitidas, ordenadas por fecha desc
-  const ncOrdenadas = [...creditNotes].sort((a,b) => (b.fecha_emision||"").localeCompare(a.fecha_emision||""));
+  const ncOrdenadas = [...creditNotes].sort((a,b) =>
+    (b.fecha_emision||"").localeCompare(a.fecha_emision||"") || ((b.numero_comprobante||0) - (a.numero_comprobante||0)));
 
   const fmtFechaISO = (iso) => {
     if (!iso) return "";
@@ -6648,8 +6660,13 @@ function CreditNotes({creditNotes, invoices, clients, canEdit, onEmitir, onDesca
           <h3 className="font-semibold text-sm">Notas de crédito emitidas</h3>
           <span className="text-xs text-gray-400">{ncOrdenadas.length} NC</span>
         </div>
+        {loadError && (
+          <div className="mx-4 my-3 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+            ❌ No se pudieron cargar las notas de crédito: {loadError}
+          </div>
+        )}
         {ncOrdenadas.length === 0 ? (
-          <div className="text-center py-12 text-gray-400 text-sm">Aún no se emitieron notas de crédito.</div>
+          <div className="text-center py-12 text-gray-400 text-sm">{loadError ? "" : "Aún no se emitieron notas de crédito."}</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
