@@ -82,6 +82,26 @@ function mapearCategoriaSugerida(sugerida) {
   return "Otros";
 }
 
+// Traducción categoría de movimiento bancario → categoría (y subcategoría) de gasto.
+// Se usa UNA sola vez al crear el gasto desde un movimiento ("→ Gasto" o en lote);
+// después cada registro es independiente y se edita por separado.
+// Para ajustar un caso, cambiar solo esta tabla.
+const CATEGORIA_MOV_A_GASTO = {
+  sueldos:                { categoria: "Sueldos" },
+  impuesto_banco:         { categoria: "Impuestos" },
+  iva:                    { categoria: "Impuestos", subcategoria: "IVA" },
+  pago_impuesto:          { categoria: "Impuestos" },
+  comision:               { categoria: "Gastos bancarios", subcategoria: "Comisión bancaria" },
+  servicio:               { categoria: "Gastos Fijos", subcategoria: "Servicios" },
+  pago_servicio:          { categoria: "Gastos Fijos", subcategoria: "Servicios" },
+  transferencia_emitida:  { categoria: "Otros" },  // ambiguo: no asumir Proveedores
+  otro:                   { categoria: "Otros" },
+};
+function categoriaGastoDesdeMovimiento(categoriaMov) {
+  const r = CATEGORIA_MOV_A_GASTO[categoriaMov] || { categoria: "Otros" };
+  return { categoria: r.categoria, subcategoria: r.subcategoria || "" };
+}
+
 // v3.5: Sub-categorías sugeridas según la categoría principal (global para ambos componentes)
 const SUBCATEGORIAS_SUGERIDAS = {
   "Gastos bancarios": ["Impuesto Ley 25.413", "Comisión bancaria", "IVA bancario", "Consolidado mensual", "Mantenimiento de cuenta"],
@@ -9573,10 +9593,11 @@ function MovimientosBancarios({ cuentasBancarias = [], setMovimientosBancarios, 
     const targets = movimientosLocales.filter(m => seleccionados.has(m.id) && !m.gasto_id && m.tipo !== "ingreso");
     let procesados = 0;
     for (const mov of targets) {
+      const catGasto = categoriaGastoDesdeMovimiento(mov.categoria);
       const nuevoGasto = {
-        descripcion: mov.descripcion || "",
-        categoria: "Gastos bancarios",
-        subcategoria: "",
+        descripcion: mov.concepto || mov.descripcion || "",
+        categoria: catGasto.categoria,
+        subcategoria: catGasto.subcategoria,
         monto: parseFloat(mov.importe) || 0,
         fecha: mov.fecha,
         proveedor: cuentaMap[mov.cuenta_id]?.banco || cuentaMap[mov.cuenta_id]?.nombre || "",
@@ -10060,10 +10081,11 @@ function EditarMovimientoBancarioModal({ movimiento: m, onClose, onSave }) {
 
 // ── Modal convertir movimiento → gasto ───────────────────────────────────────
 function ConvertirAGastoModal({ movimiento: m, cuenta, onClose, onSave }) {
+  const catInicial = categoriaGastoDesdeMovimiento(m.categoria);
   const [form, setForm] = useState({
     descripcion: m.concepto || m.descripcion || "",
-    categoria:   "Gastos bancarios",
-    subcategoria: "",
+    categoria:   catInicial.categoria,
+    subcategoria: catInicial.subcategoria,
     proveedor:   cuenta?.banco || cuenta?.nombre || "",
     monto:       String(m.importe || ""),
     fecha:       m.fecha || todayStr(),
