@@ -41,6 +41,30 @@ const BACKEND_URL = "https://radiofact-backend-production.up.railway.app";
 const DEBUG_MODE = false; // Cambiar a false para emitir facturas reales a ARCA
 
 const MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+
+// Primer y último día REAL de un mes (YYYYMMDD), contemplando meses de 28/29/30/31 días.
+function rangoMesCompleto(mes, anio) {
+  const m = parseInt(mes), a = parseInt(anio);
+  const mm = String(m).padStart(2, "0");
+  const ultimo = new Date(a, m, 0).getDate();
+  return { desde: `${a}${mm}01`, hasta: `${a}${mm}${String(ultimo).padStart(2, "0")}` };
+}
+
+// Texto del período facturado a partir de fechas de servicio YYYYMMDD:
+// "Julio 2026" si cubren el mes completo, "01/07/2026 al 15/07/2026" si es un rango.
+function periodoDesdeFechas(desde, hasta) {
+  if (!desde || !hasta || desde.length !== 8 || hasta.length !== 8) return "";
+  const mes = parseInt(desde.slice(4, 6)), anio = parseInt(desde.slice(0, 4));
+  const r = rangoMesCompleto(mes, anio);
+  if (desde === r.desde && hasta === r.hasta) return `${MONTHS[mes - 1]} ${anio}`;
+  const fmt = f => `${f.slice(6, 8)}/${f.slice(4, 6)}/${f.slice(0, 4)}`;
+  return desde === hasta ? fmt(desde) : `${fmt(desde)} al ${fmt(hasta)}`;
+}
+
+// Período realmente facturado de una factura (no el mes en que se emitió).
+function periodoFacturadoTexto(inv) {
+  return periodoDesdeFechas(inv?.fch_serv_desde, inv?.fch_serv_hasta) || inv?.periodo || "";
+}
 const EXPENSE_CATS = ["Sueldos","Compras","Gastos Fijos","Gastos Variables","Gastos Externos","Proveedores","Impuestos","Gastos bancarios","Otros"];
 
 // Mapea la categoría libre que sugiere la IA al leer un ticket (ej. "Combustible",
@@ -4047,7 +4071,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
           onClose={()=>setEditContractModal(null)}
         />
       )}
-      {emailModal&&<EmailModal invoice={emailModal} config={config} clients={clients} onClose={()=>setEmailModal(null)} onGuardarEmailsAdicionales={actualizarEmailsCliente} onSent={async(destinatariosEnviados)=>{
+      {emailModal&&<EmailModal invoice={emailModal} config={config} clients={clients} onClose={()=>setEmailModal(null)} onGuardarEmailsAdicionales={actualizarEmailsCliente} onSent={async(destinatariosEnviados, asuntoEnviado)=>{
         try {
           // Actualizar state local inmediatamente para feedback visual
           const ahora = new Date().toISOString();
@@ -4060,7 +4084,7 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
               cliente_id: emailModal.clientId,
               factura_id: emailModal.id,
               destinatarios: destinatariosEnviados || [emailModal.clientEmail],
-              asunto: `Factura ${emailModal.numero} — ${emailModal.periodo}`,
+              asunto: asuntoEnviado || `Factura ${emailModal.numero} — ${periodoFacturadoTexto(emailModal)}`,
               cuerpo: "(envío de factura con PDF adjunto)",
               tipo: "factura",
               exito: true,
@@ -4740,7 +4764,8 @@ function EmailLibreModal({ cliente, onClose, onEnviado, registrarEnHistorial }) 
 }
 
 function EmailModal({invoice,config,clients,onClose,onSent,onGuardarEmailsAdicionales}){
-  const body=config.emailTemplate.replace("{cliente}",invoice.clientName).replace("{numero}",invoice.numero).replace("{periodo}",invoice.periodo).replace("{total}",fmtMoney(invoice.total)).replace("{empresa}",config.empresa);
+  const periodoReal = periodoFacturadoTexto(invoice);
+  const body=config.emailTemplate.replace("{cliente}",invoice.clientName).replace("{numero}",invoice.numero).replace("{periodo}",periodoReal).replace("{total}",fmtMoney(invoice.total)).replace("{empresa}",config.empresa);
   const client = clients?.find(c=>c.id===invoice.clientId);
   // Construir destinatarios iniciales: email principal + emails adicionales del cliente
   const destinatariosIniciales = (() => {
@@ -4756,6 +4781,7 @@ function EmailModal({invoice,config,clients,onClose,onSent,onGuardarEmailsAdicio
   })();
   const [destinatarios,setDestinatarios]=useState(destinatariosIniciales);
   const [msg,setMsg]=useState(body);
+  const [asunto,setAsunto]=useState(`Factura ${invoice.numero} — ${periodoReal}`);
   const [sending,setSending]=useState(false);
   const [error,setError]=useState("");
 
@@ -4774,6 +4800,7 @@ function EmailModal({invoice,config,clients,onClose,onSent,onGuardarEmailsAdicio
   const send=async()=>{
     const dests = destinatarios.split(/[,;]/).map(s=>s.trim()).filter(Boolean);
     if (dests.length === 0) { setError("Ingresá al menos un email"); return; }
+    if (!asunto.trim()) { setError("Falta el asunto"); return; }
     // Validación básica de formato
     const invalidos = dests.filter(e => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
     if (invalidos.length > 0) { setError("Email inválido: " + invalidos.join(", ")); return; }
@@ -4805,7 +4832,7 @@ function EmailModal({invoice,config,clients,onClose,onSent,onGuardarEmailsAdicio
           fch_serv_hasta: invoice.fch_serv_hasta || "",
           fch_vto_pago:   invoice.fch_vto_pago   || "",
           emailDestino: dests,
-          emailAsunto: `Factura ${invoice.numero} — ${invoice.periodo}`,
+          emailAsunto: asunto.trim(),
           emailCuerpo: msg,
         }),
       });
@@ -4822,7 +4849,7 @@ function EmailModal({invoice,config,clients,onClose,onSent,onGuardarEmailsAdicio
             await onGuardarEmailsAdicionales(client.id, dests[0], dests.slice(1).join(", "));
           }
         }
-        onSent(dests);
+        onSent(dests, asunto.trim());
       }
       else { setError(data.error || "Error al enviar"); }
     } catch(e) {
@@ -4844,7 +4871,15 @@ function EmailModal({invoice,config,clients,onClose,onSent,onGuardarEmailsAdicio
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-300"
             />
           </div>
-          <p><strong>Asunto:</strong> Factura {invoice.numero} — {invoice.periodo}</p>
+          <div>
+            <label className="font-bold text-gray-700 block mb-1">Asunto:</label>
+            <input
+              type="text"
+              value={asunto}
+              onChange={e=>setAsunto(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-300"
+            />
+          </div>
         </div>
         <div>
           <label className="text-xs font-medium text-gray-600">Cuerpo del mensaje</label>
@@ -8693,6 +8728,7 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
   const [emitiendo, setEmitiendo] = useState(false);
   const [resultado, setResultado] = useState(null);
   const [emailTexto, setEmailTexto] = useState("");
+  const [emailAsunto, setEmailAsunto] = useState("");
   const [enviandoEmail, setEnviandoEmail] = useState(false);
   const [emailEnviado, setEmailEnviado] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
@@ -8738,6 +8774,31 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
 
   const f = k => e => setForm(p => ({...p, [k]: e.target.value}));
 
+  // Período facturado: ÚNICA fuente de verdad para la descripción sugerida, el
+  // período guardado en la factura (PDF: "Período Facturado Desde/Hasta") y el
+  // asunto del email. Para "Mes completo" se usa el primer y el último día real del mes.
+  const periodoSel = (() => {
+    if (form.tipoPeriodo === "mes") {
+      const r = rangoMesCompleto(form.mes, form.anio);
+      return { desde: r.desde, hasta: r.hasta, texto: `${MONTHS[parseInt(form.mes)-1]} ${form.anio}` };
+    }
+    const desde = ((form.tipoPeriodo === "rango" ? form.fechaDesde : form.fechaDia) || "").replace(/-/g,"");
+    const hasta = ((form.tipoPeriodo === "rango" ? form.fechaHasta : form.fechaDia) || "").replace(/-/g,"");
+    return { desde, hasta, texto: periodoDesdeFechas(desde, hasta) };
+  })();
+
+  // Si la descripción contiene el período anterior (ej. "Publicidad radio — Junio 2026"),
+  // al cambiar Mes/Año se actualiza sola para que nunca quede un mes viejo precargado.
+  const periodoTextoPrevRef = useRef(periodoSel.texto);
+  useEffect(() => {
+    const prev = periodoTextoPrevRef.current;
+    periodoTextoPrevRef.current = periodoSel.texto;
+    if (!prev || !periodoSel.texto || prev === periodoSel.texto) return;
+    setForm(p => p.detalle && p.detalle.includes(prev) ? {...p, detalle: p.detalle.split(prev).join(periodoSel.texto)} : p);
+  }, [periodoSel.texto]);
+
+  const aniosDisponibles = Array.from({length: 4}, (_, i) => hoy.getFullYear() - 2 + i);
+
   const clienteSeleccionado = clients.find(c=>c.id===form.clienteId);
 
   const handleClienteChange = (id) => {
@@ -8777,8 +8838,11 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
           empresa: "LA VANGUARDIA NOTICIAS",
           empresaCuit: "30-71644424-0",
           empresaDomicilio: "Gobernador Gregores 1370, Caleta Olivia",
+          fch_serv_desde: inv.fch_serv_desde || "",
+          fch_serv_hasta: inv.fch_serv_hasta || "",
+          fch_vto_pago:   inv.fch_vto_pago   || "",
           emailDestino: emailDestino,
-          emailAsunto: `Factura ${inv.numero} — ${inv.periodo}`,
+          emailAsunto: (emailAsunto || "").trim() || `Factura ${inv.numero} — ${periodoFacturadoTexto(inv)}`,
           emailCuerpo: emailTexto,
         }),
       });
@@ -8855,9 +8919,7 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
           numero: null,
           month: new Date().getMonth()+1,
           year: new Date().getFullYear(),
-          periodo: form.tipoPeriodo === "mes"
-            ? `${MONTHS[parseInt(form.mes)-1]} ${form.anio}`
-            : `${MONTHS[new Date().getMonth()]} ${new Date().getFullYear()}`,
+          periodo: periodoSel.texto,
           detalle: form.detalle,
           neto, iva, total,
           estado: "Pendiente aprobación",
@@ -8866,8 +8928,8 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
           fechaPago: "",
           emailEnviado: false,
           creado_por: currentUser.id,
-          fch_serv_desde: form.tipoPeriodo === "rango" ? form.fechaDesde.replace(/-/g,"") : form.tipoPeriodo === "dia" ? form.fechaDia.replace(/-/g,"") : null,
-          fch_serv_hasta: form.tipoPeriodo === "rango" ? form.fechaHasta.replace(/-/g,"") : form.tipoPeriodo === "dia" ? form.fechaDia.replace(/-/g,"") : null,
+          fch_serv_desde: periodoSel.desde,
+          fch_serv_hasta: periodoSel.hasta,
           fch_vto_pago: form.fch_vto_pago.replace(/-/g,""),
         };
 
@@ -8903,8 +8965,8 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
       concepto: parseInt(form.concepto),
       mes: form.tipoPeriodo === "mes" ? parseInt(form.mes) : null,
       anio: form.tipoPeriodo === "mes" ? parseInt(form.anio) : null,
-      fch_serv_desde: form.tipoPeriodo === "rango" ? form.fechaDesde.replace(/-/g,"") : form.tipoPeriodo === "dia" ? form.fechaDia.replace(/-/g,"") : null,
-      fch_serv_hasta: form.tipoPeriodo === "rango" ? form.fechaHasta.replace(/-/g,"") : form.tipoPeriodo === "dia" ? form.fechaDia.replace(/-/g,"") : null,
+      fch_serv_desde: periodoSel.desde,
+      fch_serv_hasta: periodoSel.hasta,
       fch_vto_pago: form.fch_vto_pago.replace(/-/g,""),
       cliente: form.razonSocial,
       detalle: form.detalle,
@@ -8966,7 +9028,7 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
           numero: `${form.tipoFactura}-0003-${String(data.datos.numero).padStart(8,"0")}`,
           month: new Date().getMonth()+1,
           year: new Date().getFullYear(),
-          periodo: `${MONTHS[new Date().getMonth()]} ${new Date().getFullYear()}`,
+          periodo: periodoSel.texto,
           detalle: form.detalle,
           neto, iva, total,
           estado: "Emitida",
@@ -8976,6 +9038,8 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
           fechaPago: "",
           emailEnviado: false,
           creado_por: currentUser.id,
+          fch_serv_desde: periodoSel.desde,
+          fch_serv_hasta: periodoSel.hasta,
           fch_vto_pago: form.fch_vto_pago.replace(/-/g,""),
         };
 
@@ -8992,6 +9056,7 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
         const clientCuitGuardado = form.cuit;
         const clientDomicilioGuardado = form.domicilio;
         setEmailTexto(`Estimado/a ${form.razonSocial},\n\nAdjunto encontrará la factura ${inv.numero} correspondiente a:\n${form.detalle}\n\nNeto: ${fmtMoney(neto)}\nIVA 10.5%: ${fmtMoney(iva)}\nTotal: ${fmtMoney(total)}\n\nCAE: ${data.datos.cae}\n\nQuedamos a su disposición.\n\nLA VANGUARDIA NOTICIAS`);
+        setEmailAsunto(`Factura ${inv.numero} — ${periodoSel.texto}`);
         setEmailEnviado(false);
         // Guardamos email en resultado para poder usarlo después de limpiar el form
         setResultado({exito:true, inv, clientEmail, clientCuitGuardado, clientDomicilioGuardado});
@@ -9011,7 +9076,7 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
           numero: null,
           month: new Date().getMonth()+1,
           year: new Date().getFullYear(),
-          periodo: `${MONTHS[new Date().getMonth()]} ${new Date().getFullYear()}`,
+          periodo: periodoSel.texto,
           detalle: `[Error ARCA: ${data.error}] ${form.detalle}`,
           neto, iva, total,
           estado: "Borrador",
@@ -9020,6 +9085,8 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
           fechaPago: "",
           emailEnviado: false,
           creado_por: currentUser.id,
+          fch_serv_desde: periodoSel.desde,
+          fch_serv_hasta: periodoSel.hasta,
           fch_vto_pago: form.fch_vto_pago.replace(/-/g,""),
         };
         const uuidBorrador = await guardarFacturaSupabase(invBorrador, clienteIdBorrador, facturaIdActual);
@@ -9098,7 +9165,7 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
             <div>
               <label className="text-xs font-medium text-gray-600">Año</label>
               <select value={form.anio} onChange={f("anio")} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none">
-                {[2024,2025,2026,2027].map(y=><option key={y}>{y}</option>)}
+                {aniosDisponibles.map(y=><option key={y} value={y}>{y}</option>)}
               </select>
             </div>
           </div>
@@ -9120,7 +9187,18 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
             <option value={3}>Productos y Servicios</option>
           </select>
         </div>
-        <Field label="Descripción del servicio *" value={form.detalle} onChange={f("detalle")} placeholder="Publicidad radio — Abril 2026"/>
+        <div>
+          <Field label="Descripción del servicio *" value={form.detalle} onChange={f("detalle")} placeholder={`Publicidad radio — ${periodoSel.texto || "período"}`}/>
+          {periodoSel.texto && !form.detalle.includes(periodoSel.texto) && (
+            <button
+              type="button"
+              onClick={() => setForm(p => ({...p, detalle: p.detalle.trim() ? `${p.detalle.trim()} — ${periodoSel.texto}` : `Publicidad radio — ${periodoSel.texto}`}))}
+              className="mt-1 text-xs text-blue-600 hover:underline"
+            >
+              + {form.detalle.trim() ? `Agregar "${periodoSel.texto}" a la descripción` : `Usar "Publicidad radio — ${periodoSel.texto}"`}
+            </button>
+          )}
+        </div>
         <div>
           <label className="text-xs font-medium text-gray-600">Fijar</label>
           <div className="mt-1 inline-flex rounded-lg border border-gray-200 overflow-hidden text-sm">
@@ -9195,6 +9273,15 @@ function FacturaDirecta({clients, setClients, invoices, setInvoices, canEdit, de
               {resultado.clientEmail && (
                 <div className="mt-4 pt-4 border-t border-green-200 space-y-2">
                   <p className="text-xs font-semibold text-green-800">📧 Enviar por email a: {resultado.clientEmail}</p>
+                  <div>
+                    <label className="text-xs font-medium text-green-800">Asunto</label>
+                    <input
+                      type="text"
+                      value={emailAsunto}
+                      onChange={e=>setEmailAsunto(e.target.value)}
+                      className="w-full mt-1 px-3 py-2 border border-green-200 rounded-lg text-xs focus:outline-none bg-white"
+                    />
+                  </div>
                   <textarea
                     value={emailTexto}
                     onChange={e=>setEmailTexto(e.target.value)}
