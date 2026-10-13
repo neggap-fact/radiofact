@@ -698,6 +698,13 @@ export default function App() {
     const {data, error} = await supabase.from("facturas").insert(payload).select();
     if(error) {
       console.error("Error Supabase al guardar factura:", error);
+      // Sin UUID real la factura queda solo en memoria con un id temporal
+      // (inv-...): cualquier borrar/editar/cobrar posterior fallaría. Avisar fuerte,
+      // sobre todo si ya tiene CAE (existe en ARCA pero no en la base).
+      alert(`❌ La factura${inv.numero ? " " + inv.numero : ""} NO se guardó en la base de datos: ${error.message}` +
+        (inv.cae ? `
+
+Ya tiene CAE ${inv.cae} en ARCA: anotalo y cargala con "Factura manual" o "Sincronizar ARCA".` : ""));
       return null;
     }
     console.log("Factura guardada OK:", data);
@@ -1584,9 +1591,9 @@ function Clients({clients,setClients,contracts,invoices,currentUser,canEdit,regi
       await supabase.from("clientes").update(supabaseData).eq("id", data.id);
       setClients(prev=>prev.map(c=>c.id===data.id?data:c));
     } else {
-      const {data:newClient} = await supabase.from("clientes").insert(supabaseData).select().single();
+      const {data:newClient, error:errCliente} = await supabase.from("clientes").insert(supabaseData).select().single();
       if(newClient) setClients(prev=>[...prev,{...data,id:newClient.id}]);
-      else setClients(prev=>[...prev,{...data,id:`c-${Date.now()}`}]);
+      else { alert(`❌ No se pudo guardar el cliente: ${errCliente?.message || "error desconocido"}`); return; }
     }
     setModal(null);
   };
@@ -4083,7 +4090,8 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
           onSave={async (inv) => {
             try {
               const uuid = await guardarFacturaSupabase(inv, inv.clientId);
-              if (uuid) inv.id = uuid;
+              if (!uuid) return false;
+              inv.id = uuid;
               setInvoices(prev => [inv, ...prev]);
               return true;
             } catch (e) {
@@ -4103,7 +4111,8 @@ function Billing({clients,contracts,setContracts,invoices,setInvoices,notificati
           onImportar={async (inv) => {
             try {
               const uuid = await guardarFacturaSupabase(inv, inv.clientId);
-              if (uuid) inv.id = uuid;
+              if (!uuid) return false;
+              inv.id = uuid;
               setInvoices(prev => [inv, ...prev]);
               return true;
             } catch (e) {
